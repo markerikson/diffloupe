@@ -230,9 +230,16 @@ export function buildIntentPrompt(
   // Putting the task at the end (after context) often works better
   // because it's fresh in the model's "attention"
   sections.push("---");
-  sections.push(
-    "Analyze this diff and provide the intent analysis. Focus on WHY, not just WHAT."
-  );
+  sections.push(`Analyze this diff and provide the intent analysis. Focus on WHY, not just WHAT.
+
+REQUIRED OUTPUT FIELDS (all are mandatory):
+- summary: string - 1-2 sentence summary of what the change does
+- purpose: string - the WHY behind this change
+- scope: "feature" | "bugfix" | "refactor" | "config" | "docs" | "test" | "mixed"
+- affectedAreas: string[] - high-level areas of the codebase touched
+
+OPTIONAL FIELDS:
+- suggestedReviewOrder: string[] - suggested order to review files`);
 
   return sections.join("\n");
 }
@@ -279,24 +286,38 @@ export async function deriveIntent(
   // Build the prompt with diff content (and stated intent if provided)
   const userPrompt = buildIntentPrompt(diff, classified, statedIntent);
 
-  // Use TanStack AI's chat() with structured output
-  // The outputSchema tells it to:
-  // 1. Use Claude's native JSON mode
-  // 2. Validate response against our ArkType schema
-  // 3. Return typed data
-  const result = await chat({
-    adapter: anthropicText("claude-sonnet-4-5"),
-    systemPrompts: [SYSTEM_PROMPT],
-    messages: [{ role: "user", content: userPrompt }],
-    // Wrap schema for TanStack AI compatibility (ArkType schemas are functions,
-    // but TanStack AI expects typeof === 'object' for Standard Schema detection)
-    outputSchema: wrapSchema(DerivedIntentSchema),
-    // Lower temperature for more consistent, focused analysis
-    temperature: 0.3,
-    // Don't stream - we want the final structured result
-    stream: false,
-  });
+  try {
+    // Use TanStack AI's chat() with structured output
+    // The outputSchema tells it to:
+    // 1. Use Claude's native JSON mode
+    // 2. Validate response against our ArkType schema
+    // 3. Return typed data
+    const result = await chat({
+      adapter: anthropicText("claude-sonnet-4-5"),
+      systemPrompts: [SYSTEM_PROMPT],
+      messages: [{ role: "user", content: userPrompt }],
+      // Wrap schema for TanStack AI compatibility (ArkType schemas are functions,
+      // but TanStack AI expects typeof === 'object' for Standard Schema detection)
+      outputSchema: wrapSchema(DerivedIntentSchema),
+      // Lower temperature for more consistent, focused analysis
+      temperature: 0.3,
+      // Don't stream - we want the final structured result
+      stream: false,
+    });
 
-  // Result is already validated and typed as DerivedIntent
-  return result;
+    // Result is already validated and typed as DerivedIntent
+    return result;
+  } catch (error) {
+    // Enhance validation errors with debugging info
+    if (error instanceof Error && error.message.includes("Validation failed")) {
+      const enhancedError = new Error(
+        `${error.message}\n\nThis usually means the LLM response was missing required fields. ` +
+        `Check that the diff wasn't too large (${diff.files.length} files, ` +
+        `${classified.filter(c => c.tier <= 2).length} analyzed).`
+      );
+      enhancedError.cause = error;
+      throw enhancedError;
+    }
+    throw error;
+  }
 }

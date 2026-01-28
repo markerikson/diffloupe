@@ -269,7 +269,19 @@ Requirements:
 2. Only flag issues that have concrete evidence - no generic warnings
 3. If the change looks safe, it's okay to return an empty risks array
 4. Order risks by severity (critical/high first)
-5. Set confidence based on how much context you have`);
+5. Set confidence based on how much context you have
+
+REQUIRED OUTPUT FIELDS (all are mandatory):
+- overallRisk: "low" | "medium" | "high" | "critical" - the highest severity among all risks (use "low" if no risks)
+- summary: string - 1-2 sentence actionable summary
+- risks: array of risk objects (can be empty array [] if no risks found)
+- confidence: "high" | "medium" | "low" - how confident you are in this assessment
+
+Each risk object MUST have:
+- severity: "low" | "medium" | "high" | "critical"
+- category: string (e.g., "security", "breaking-change", "performance")
+- description: string - what the risk is
+- evidence: string - specific code/line from the diff`);
 
   return sections.join("\n");
 }
@@ -317,20 +329,34 @@ export async function assessRisks(
   // Build the prompt with diff content (and stated intent if provided)
   const userPrompt = buildRiskPrompt(diff, classified, statedIntent);
 
-  // Use TanStack AI's chat() with structured output
-  const result = await chat({
-    adapter: anthropicText("claude-sonnet-4-5"),
-    systemPrompts: [SYSTEM_PROMPT],
-    messages: [{ role: "user", content: userPrompt }],
-    // Wrap schema for TanStack AI compatibility (ArkType schemas are functions,
-    // but TanStack AI expects typeof === 'object' for Standard Schema detection)
-    outputSchema: wrapSchema(RiskAssessmentSchema),
-    // Lower temperature for consistent, focused analysis
-    // Slightly higher than intent (0.3) because we want it to consider
-    // edge cases, but still deterministic
-    temperature: 0.4,
-    stream: false,
-  });
+  try {
+    // Use TanStack AI's chat() with structured output
+    const result = await chat({
+      adapter: anthropicText("claude-sonnet-4-5"),
+      systemPrompts: [SYSTEM_PROMPT],
+      messages: [{ role: "user", content: userPrompt }],
+      // Wrap schema for TanStack AI compatibility (ArkType schemas are functions,
+      // but TanStack AI expects typeof === 'object' for Standard Schema detection)
+      outputSchema: wrapSchema(RiskAssessmentSchema),
+      // Lower temperature for consistent, focused analysis
+      // Slightly higher than intent (0.3) because we want it to consider
+      // edge cases, but still deterministic
+      temperature: 0.4,
+      stream: false,
+    });
 
-  return result;
+    return result;
+  } catch (error) {
+    // Enhance validation errors with debugging info
+    if (error instanceof Error && error.message.includes("Validation failed")) {
+      const enhancedError = new Error(
+        `${error.message}\n\nThis usually means the LLM response was missing required fields. ` +
+        `Check that the diff wasn't too large (${diff.files.length} files, ` +
+        `${classified.filter(c => c.tier <= 2).length} analyzed).`
+      );
+      enhancedError.cause = error;
+      throw enhancedError;
+    }
+    throw error;
+  }
 }
