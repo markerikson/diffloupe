@@ -103,6 +103,26 @@ Use these categories for consistency:
 - data-integrity: Race conditions, partial updates, validation gaps
 - maintainability: Complexity, coupling, undocumented behavior (use sparingly)
 
+## When Stated Intent is Provided
+
+If the author has stated their intent, consider whether risks relate to:
+- Gaps between stated intent and actual implementation
+- Security/safety issues in how the stated goal is achieved
+- Missing validation or error handling for the stated use case
+
+## Context Limitations
+
+You are analyzing a diff, not the complete codebase. This means:
+- Imports may reference files that exist but aren't shown in the diff
+- Functions may be defined in files you can't see
+- Types may be declared elsewhere
+- New files created in this change may appear as imports but not as full file contents
+
+When you see something that MIGHT be an issue but could be fine with full context:
+- Don't flag it as critical/high severity
+- Either skip it entirely, or note it as low severity with "may be resolved by unseen context"
+- Focus on issues that are clearly evident FROM the diff itself
+
 ## Output Quality
 
 - Order risks by severity (critical first)
@@ -171,10 +191,14 @@ function formatHunk(hunk: DiffHunk): string {
  *
  * - **Explicit "Nothing Found" Instruction**: Tells the model it's okay to
  *   report no risks, reducing the pressure to manufacture issues.
+ *
+ * - **Stated intent context**: When provided, the model considers risks in
+ *   relation to the stated goal (e.g., security issues in achieving that goal).
  */
 export function buildRiskPrompt(
   diff: ParsedDiff,
-  classified: ClassifiedFile[]
+  classified: ClassifiedFile[],
+  statedIntent?: string
 ): string {
   // Filter to only Tier 1 and Tier 2 files
   const relevantFiles = classified.filter((cf) => cf.tier <= 2);
@@ -222,6 +246,18 @@ export function buildRiskPrompt(
   for (const cf of relevantFiles) {
     sections.push(formatDiffFile(cf.file));
     sections.push(""); // blank line between files
+  }
+
+  // Stated intent section (if provided)
+  if (statedIntent) {
+    sections.push("## Author's Stated Intent");
+    sections.push("");
+    sections.push(statedIntent);
+    sections.push("");
+    sections.push(
+      "Consider whether any risks relate to gaps between this stated intent and the actual implementation."
+    );
+    sections.push("");
   }
 
   // Task instruction at the end
@@ -275,10 +311,11 @@ Requirements:
  */
 export async function assessRisks(
   diff: ParsedDiff,
-  classified: ClassifiedFile[]
+  classified: ClassifiedFile[],
+  statedIntent?: string
 ): Promise<RiskAssessment> {
-  // Build the prompt with diff content
-  const userPrompt = buildRiskPrompt(diff, classified);
+  // Build the prompt with diff content (and stated intent if provided)
+  const userPrompt = buildRiskPrompt(diff, classified, statedIntent);
 
   // Use TanStack AI's chat() with structured output
   const result = await chat({

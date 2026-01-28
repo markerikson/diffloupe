@@ -7,7 +7,7 @@
  */
 
 import pc from "picocolors";
-import type { DerivedIntent, Risk, RiskAssessment, RiskSeverity } from "../types/analysis";
+import type { DerivedIntent, IntentAlignment, Risk, RiskAssessment, RiskSeverity } from "../types/analysis";
 
 /**
  * Color a risk severity level appropriately
@@ -22,6 +22,20 @@ function colorSeverity(severity: RiskSeverity): string {
       return pc.red(severity);
     case "critical":
       return pc.bold(pc.magenta(severity));
+  }
+}
+
+/**
+ * Color an alignment level appropriately
+ */
+function colorAlignment(alignment: IntentAlignment["alignment"]): string {
+  switch (alignment) {
+    case "aligned":
+      return pc.green(alignment.toUpperCase());
+    case "partial":
+      return pc.yellow(alignment.toUpperCase());
+    case "misaligned":
+      return pc.red(alignment.toUpperCase());
   }
 }
 
@@ -70,11 +84,17 @@ function formatScope(scope: string): string {
  * Shows:
  * - Stated intent (if provided)
  * - Intent summary (1-2 lines)
+ * - Intent alignment (if stated intent provided)
  * - Overall risk level with color
  * - Top 3 risks (one line each)
  * - File count affected
  */
-export function formatSummary(intent: DerivedIntent, risks: RiskAssessment, statedIntent?: string): string {
+export function formatSummary(
+  intent: DerivedIntent,
+  risks: RiskAssessment,
+  statedIntent?: string,
+  alignment?: IntentAlignment
+): string {
   const lines: string[] = [];
 
   // Stated intent section (if provided)
@@ -88,6 +108,25 @@ export function formatSummary(intent: DerivedIntent, risks: RiskAssessment, stat
   lines.push(pc.bold("Derived Intent"));
   lines.push(`${formatScope(intent.scope)} ${intent.summary}`);
   lines.push("");
+
+  // Intent alignment section (if we have stated intent and alignment)
+  if (alignment) {
+    lines.push(`${pc.bold("Intent Alignment")}: ${colorAlignment(alignment.alignment)}`);
+    lines.push(`  ${alignment.summary}`);
+
+    // Show key mismatches/missing/unstated in summary
+    const keyIssues = [
+      ...alignment.mismatches.slice(0, 2),
+      ...alignment.missing.slice(0, 1),
+      ...alignment.unstated.slice(0, 1),
+    ];
+    if (keyIssues.length > 0) {
+      for (const issue of keyIssues) {
+        lines.push(pc.dim(`  > ${issue}`));
+      }
+    }
+    lines.push("");
+  }
 
   // Risk section
   const overallColor = colorSeverity(risks.overallRisk);
@@ -116,15 +155,31 @@ export function formatSummary(intent: DerivedIntent, risks: RiskAssessment, stat
 }
 
 /**
+ * Format a list of items with a prefix indicator
+ */
+function formatItemList(items: string[], emptyMessage = "(none)"): string[] {
+  if (items.length === 0) {
+    return [pc.dim(`  ${emptyMessage}`)];
+  }
+  return items.map((item) => `  ${pc.blue(">")} ${item}`);
+}
+
+/**
  * Format for verbose output (full detail)
  *
  * Shows:
  * - Stated intent (if provided)
  * - Full intent with purpose and scope
+ * - Intent alignment (if stated intent provided)
  * - Suggested review order
  * - All risks with severity, category, description, evidence, mitigation
  */
-export function formatVerbose(intent: DerivedIntent, risks: RiskAssessment, statedIntent?: string): string {
+export function formatVerbose(
+  intent: DerivedIntent,
+  risks: RiskAssessment,
+  statedIntent?: string,
+  alignment?: IntentAlignment
+): string {
   const lines: string[] = [];
   const divider = pc.dim("─".repeat(60));
 
@@ -163,6 +218,34 @@ export function formatVerbose(intent: DerivedIntent, risks: RiskAssessment, stat
     intent.suggestedReviewOrder.forEach((file, i) => {
       lines.push(`  ${pc.dim(`${i + 1}.`)} ${pc.blue(file)}`);
     });
+    lines.push("");
+  }
+
+  // Intent alignment section (if we have stated intent and alignment)
+  if (alignment) {
+    lines.push(divider);
+    lines.push(pc.bold(pc.cyan(`INTENT ALIGNMENT: ${colorAlignment(alignment.alignment)}`)));
+    lines.push(divider);
+    lines.push("");
+
+    lines.push(`${pc.bold("Confidence:")} ${alignment.confidence}`);
+    lines.push(`${pc.bold("Summary:")} ${alignment.summary}`);
+    lines.push("");
+
+    lines.push(pc.bold("Matches:"));
+    lines.push(...formatItemList(alignment.matches));
+    lines.push("");
+
+    lines.push(pc.bold("Mismatches:"));
+    lines.push(...formatItemList(alignment.mismatches));
+    lines.push("");
+
+    lines.push(pc.bold("Missing (stated but not implemented):"));
+    lines.push(...formatItemList(alignment.missing));
+    lines.push("");
+
+    lines.push(pc.bold("Unstated Changes (scope creep):"));
+    lines.push(...formatItemList(alignment.unstated));
     lines.push("");
   }
 

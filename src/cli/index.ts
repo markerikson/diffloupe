@@ -1,12 +1,13 @@
 import { Command } from "commander";
 import pc from "picocolors";
-import type { DerivedIntent, RiskAssessment } from "../types/analysis";
+import type { DerivedIntent, IntentAlignment, RiskAssessment } from "../types/analysis";
 import { formatSummary, formatVerbose } from "./output";
 import { getDiff } from "../services/git.js";
 import { parseDiff } from "../services/diff-parser.js";
 import { classifyDiff } from "../services/diff-loader.js";
 import { deriveIntent } from "../prompts/intent.js";
 import { assessRisks } from "../prompts/risks.js";
+import { alignIntent } from "../prompts/alignment.js";
 import { hasAPIKey } from "../services/llm.js";
 import { GitError } from "../types/git.js";
 import { LLMAPIKeyError, LLMGenerationError } from "../types/llm.js";
@@ -63,14 +64,15 @@ function outputResults(
   intent: DerivedIntent,
   risks: RiskAssessment,
   options: AnalyzeOptions,
-  statedIntent?: string
+  statedIntent?: string,
+  alignment?: IntentAlignment
 ): void {
   if (options.json) {
-    console.log(JSON.stringify({ intent, risks, statedIntent }, null, 2));
+    console.log(JSON.stringify({ intent, risks, statedIntent, alignment }, null, 2));
   } else if (options.verbose) {
-    console.log(formatVerbose(intent, risks, statedIntent));
+    console.log(formatVerbose(intent, risks, statedIntent, alignment));
   } else {
-    console.log(formatSummary(intent, risks, statedIntent));
+    console.log(formatSummary(intent, risks, statedIntent, alignment));
   }
 }
 
@@ -194,14 +196,22 @@ program
       );
 
       // Step 3: Run intent and risk analysis in parallel
+      // Pass stated intent as context to both prompts
       const [intent, risks] = await Promise.all([
-        deriveIntent(parsed, classified),
-        assessRisks(parsed, classified),
+        deriveIntent(parsed, classified, statedIntent),
+        assessRisks(parsed, classified, statedIntent),
       ]);
 
-      // Step 4: Output results
+      // Step 4: Run alignment analysis if stated intent is provided
+      let alignment: IntentAlignment | undefined;
+      if (statedIntent) {
+        console.log(pc.dim("Analyzing intent alignment..."));
+        alignment = await alignIntent(statedIntent, intent, parsed, classified);
+      }
+
+      // Step 5: Output results
       console.log(""); // blank line before results
-      outputResults(intent, risks, opts, statedIntent);
+      outputResults(intent, risks, opts, statedIntent, alignment);
     } catch (error) {
       // Handle specific error types with friendly messages
       if (error instanceof GitError) {

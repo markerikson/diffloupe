@@ -201,4 +201,37 @@ describe("buildIntentPrompt", () => {
     expect(prompt).toContain("Total files changed: 0");
     expect(prompt).toContain("Files included for analysis: 0");
   });
+
+  it("includes stated intent when provided", () => {
+    const file = createDiffFile("src/auth.ts");
+    const diff: ParsedDiff = { files: [file] };
+    const classified = [classify(file, 1, "source code")];
+    const statedIntent = "Fix null pointer exception in user authentication";
+
+    const prompt = buildIntentPrompt(diff, classified, statedIntent);
+
+    expect(prompt).toContain("## Author's Stated Intent");
+    expect(prompt).toContain("Fix null pointer exception in user authentication");
+    expect(prompt).toContain("derive intent from the actual code changes");
+  });
+
+  it("omits stated intent section when not provided", () => {
+    const file = createDiffFile("src/auth.ts");
+    const diff: ParsedDiff = { files: [file] };
+    const classified = [classify(file, 1, "source code")];
+
+    const prompt = buildIntentPrompt(diff, classified);
+
+    expect(prompt).not.toContain("## Author's Stated Intent");
+  });
+
+  it("handles undefined stated intent", () => {
+    const file = createDiffFile("src/auth.ts");
+    const diff: ParsedDiff = { files: [file] };
+    const classified = [classify(file, 1, "source code")];
+
+    const prompt = buildIntentPrompt(diff, classified, undefined);
+
+    expect(prompt).not.toContain("## Author's Stated Intent");
+  });
 });

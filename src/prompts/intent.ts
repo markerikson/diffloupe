@@ -68,6 +68,14 @@ Your goal is to determine:
 - **Consider the reviewer**: What would help someone understand this change quickly?
 - **Suggest reading order**: Which files should a reviewer look at first?
 
+## When Stated Intent is Provided
+
+If the author has provided their stated intent, use it as additional context:
+- It may clarify ambiguous changes
+- It may reveal the "why" behind the change
+- But derive intent from the CODE, not just the stated intent
+- The stated intent could be incomplete or misleading
+
 ## Scope Definitions
 
 - **feature**: New functionality or capability
@@ -76,7 +84,17 @@ Your goal is to determine:
 - **config**: Build, tooling, CI/CD, or environment changes
 - **docs**: Documentation updates only
 - **test**: Test additions or modifications only
-- **mixed**: Combines multiple categories (common in real changes)`;
+- **mixed**: Combines multiple categories (common in real changes)
+
+## Context Limitations
+
+You are analyzing a diff, not the complete codebase. This means:
+- Imports may reference files that exist but aren't shown in the diff
+- Functions may be defined in files you can't see
+- Types may be declared elsewhere
+- New files created in this change may appear as imports but not as full file contents
+
+Focus on understanding the intent from what IS visible in the diff. Don't flag concerns about code you can't see - assume referenced files and symbols exist unless there's clear evidence otherwise.`;
 
 /**
  * Format a single diff file for inclusion in the prompt.
@@ -146,10 +164,15 @@ function formatHunk(hunk: DiffHunk): string {
  *   so it knows it's seeing a curated view.
  *
  * - **Clear task statement**: End with an explicit request for analysis.
+ *
+ * - **Stated intent context**: When provided, we include the author's stated
+ *   intent as additional context. This helps clarify ambiguous changes but
+ *   the LLM should still derive intent from the actual code.
  */
 export function buildIntentPrompt(
   diff: ParsedDiff,
-  classified: ClassifiedFile[]
+  classified: ClassifiedFile[],
+  statedIntent?: string
 ): string {
   // Filter to only Tier 1 and Tier 2 files
   // Tier 3 (lock files, generated code, binaries) adds noise without value
@@ -189,6 +212,18 @@ export function buildIntentPrompt(
   for (const cf of relevantFiles) {
     sections.push(formatDiffFile(cf.file));
     sections.push(""); // blank line between files
+  }
+
+  // Stated intent section (if provided)
+  if (statedIntent) {
+    sections.push("## Author's Stated Intent");
+    sections.push("");
+    sections.push(statedIntent);
+    sections.push("");
+    sections.push(
+      "Use this as context for understanding the change, but derive intent from the actual code changes."
+    );
+    sections.push("");
   }
 
   // Clear task instruction at the end
@@ -238,10 +273,11 @@ export function buildIntentPrompt(
  */
 export async function deriveIntent(
   diff: ParsedDiff,
-  classified: ClassifiedFile[]
+  classified: ClassifiedFile[],
+  statedIntent?: string
 ): Promise<DerivedIntent> {
-  // Build the prompt with diff content
-  const userPrompt = buildIntentPrompt(diff, classified);
+  // Build the prompt with diff content (and stated intent if provided)
+  const userPrompt = buildIntentPrompt(diff, classified, statedIntent);
 
   // Use TanStack AI's chat() with structured output
   // The outputSchema tells it to:

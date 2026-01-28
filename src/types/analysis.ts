@@ -217,3 +217,62 @@ export const RiskAssessmentSchema = type({
   confidence: "'high' | 'medium' | 'low'",
 });
 export type RiskAssessment = typeof RiskAssessmentSchema.infer;
+
+/**
+ * Schema for intent alignment analysis.
+ *
+ * This compares stated intent (what the author says they're doing)
+ * with derived intent (what the code actually does) to surface:
+ * - Scope creep (implemented but not stated)
+ * - Incomplete implementation (stated but not implemented)
+ * - Mislabeled changes (code does something different than claimed)
+ *
+ * ## Alignment Levels
+ *
+ * - **aligned**: Code does what author claims, nothing significant extra
+ * - **partial**: Some aspects match, others differ or are missing
+ * - **misaligned**: Code does something substantially different than stated
+ */
+export const IntentAlignmentSchema = type({
+  /**
+   * Overall alignment assessment.
+   */
+  alignment: "'aligned' | 'partial' | 'misaligned'",
+
+  /**
+   * Confidence in the alignment assessment.
+   * Lower when stated intent is vague or diff is complex.
+   */
+  confidence: "'high' | 'medium' | 'low'",
+
+  /**
+   * Brief summary of the alignment (1-2 sentences).
+   * Should highlight the key finding for quick scanning.
+   */
+  summary: "string",
+
+  /**
+   * What parts of stated intent ARE correctly implemented.
+   * Be specific - cite actual changes that match the intent.
+   */
+  matches: "string[]",
+
+  /**
+   * What the code does DIFFERENTLY than stated.
+   * Changes that contradict or diverge from claimed intent.
+   */
+  mismatches: "string[]",
+
+  /**
+   * What was stated but NOT implemented (incomplete work).
+   * Things the author said they'd do but didn't.
+   */
+  missing: "string[]",
+
+  /**
+   * What was implemented but NOT mentioned (scope creep).
+   * Changes that weren't part of the stated intent.
+   */
+  unstated: "string[]",
+});
+export type IntentAlignment = typeof IntentAlignmentSchema.infer;

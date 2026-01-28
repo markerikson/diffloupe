@@ -8,7 +8,7 @@
 
 import { describe, it, expect } from "bun:test";
 import { type } from "arktype";
-import { DerivedIntentSchema, ChangeScopeSchema } from "./analysis.js";
+import { DerivedIntentSchema, ChangeScopeSchema, IntentAlignmentSchema } from "./analysis.js";
 
 describe("ChangeScopeSchema", () => {
   it("accepts valid scope values", () => {
@@ -104,5 +104,127 @@ describe("DerivedIntentSchema", () => {
     const result = DerivedIntentSchema(emptyAreas);
     // Currently allows empty arrays - document this behavior
     expect(result).toEqual(emptyAreas);
+  });
+});
+
+describe("IntentAlignmentSchema", () => {
+  it("accepts valid complete alignment", () => {
+    const validAlignment = {
+      alignment: "aligned" as const,
+      confidence: "high" as const,
+      summary: "Code does what the author claims",
+      matches: ["Added rate limiting as stated"],
+      mismatches: [],
+      missing: [],
+      unstated: [],
+    };
+
+    const result = IntentAlignmentSchema(validAlignment);
+    expect(result).toEqual(validAlignment);
+  });
+
+  it("accepts partial alignment with all fields populated", () => {
+    const partialAlignment = {
+      alignment: "partial" as const,
+      confidence: "medium" as const,
+      summary: "Core feature implemented, but includes unstated changes",
+      matches: ["Null check added as stated"],
+      mismatches: ["Error format differs from stated"],
+      missing: ["Logging not implemented"],
+      unstated: ["Error messages refactored"],
+    };
+
+    const result = IntentAlignmentSchema(partialAlignment);
+    expect(result).toEqual(partialAlignment);
+  });
+
+  it("accepts misaligned with evidence", () => {
+    const misaligned = {
+      alignment: "misaligned" as const,
+      confidence: "high" as const,
+      summary: "Code does something different than claimed",
+      matches: [],
+      mismatches: ["Stated bugfix, but code adds new feature"],
+      missing: ["The stated fix was not applied"],
+      unstated: [],
+    };
+
+    const result = IntentAlignmentSchema(misaligned);
+    expect(result).toEqual(misaligned);
+  });
+
+  it("rejects invalid alignment level", () => {
+    const invalidAlignment = {
+      alignment: "mostly-aligned", // invalid
+      confidence: "high",
+      summary: "Some summary",
+      matches: [],
+      mismatches: [],
+      missing: [],
+      unstated: [],
+    };
+
+    const result = IntentAlignmentSchema(invalidAlignment);
+    expect(result instanceof type.errors).toBe(true);
+  });
+
+  it("rejects invalid confidence level", () => {
+    const invalidConfidence = {
+      alignment: "aligned",
+      confidence: "very-high", // invalid
+      summary: "Some summary",
+      matches: [],
+      mismatches: [],
+      missing: [],
+      unstated: [],
+    };
+
+    const result = IntentAlignmentSchema(invalidConfidence);
+    expect(result instanceof type.errors).toBe(true);
+  });
+
+  it("rejects missing required fields", () => {
+    const missingSummary = {
+      alignment: "aligned",
+      confidence: "high",
+      // summary missing
+      matches: [],
+      mismatches: [],
+      missing: [],
+      unstated: [],
+    };
+
+    const result = IntentAlignmentSchema(missingSummary);
+    expect(result instanceof type.errors).toBe(true);
+  });
+
+  it("rejects wrong type for arrays", () => {
+    const wrongType = {
+      alignment: "aligned",
+      confidence: "high",
+      summary: "Some summary",
+      matches: "not an array", // should be string[]
+      mismatches: [],
+      missing: [],
+      unstated: [],
+    };
+
+    const result = IntentAlignmentSchema(wrongType);
+    expect(result instanceof type.errors).toBe(true);
+  });
+
+  it("allows empty arrays for all list fields", () => {
+    const emptyArrays = {
+      alignment: "aligned" as const,
+      confidence: "high" as const,
+      summary: "Everything is fine",
+      matches: [],
+      mismatches: [],
+      missing: [],
+      unstated: [],
+    };
+
+    const result = IntentAlignmentSchema(emptyArrays);
+    expect(result).toEqual(emptyArrays);
   });
 });

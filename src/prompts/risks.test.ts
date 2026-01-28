@@ -260,4 +260,37 @@ describe("buildRiskPrompt", () => {
     // Should detect .spec.ts as test file
     expect(prompt).toContain("test file(s) were in excluded category");
   });
+
+  it("includes stated intent when provided", () => {
+    const file = createDiffFile("src/auth.ts");
+    const diff: ParsedDiff = { files: [file] };
+    const classified = [classify(file, 1, "source code")];
+    const statedIntent = "Fix authentication bypass vulnerability";
+
+    const prompt = buildRiskPrompt(diff, classified, statedIntent);
+
+    expect(prompt).toContain("## Author's Stated Intent");
+    expect(prompt).toContain("Fix authentication bypass vulnerability");
+    expect(prompt).toContain("gaps between this stated intent and the actual implementation");
+  });
+
+  it("omits stated intent section when not provided", () => {
+    const file = createDiffFile("src/auth.ts");
+    const diff: ParsedDiff = { files: [file] };
+    const classified = [classify(file, 1, "source code")];
+
+    const prompt = buildRiskPrompt(diff, classified);
+
+    expect(prompt).not.toContain("## Author's Stated Intent");
+  });
+
+  it("handles undefined stated intent", () => {
+    const file = createDiffFile("src/auth.ts");
+    const diff: ParsedDiff = { files: [file] };
+    const classified = [classify(file, 1, "source code")];
+
+    const prompt = buildRiskPrompt(diff, classified, undefined);
+
+    expect(prompt).not.toContain("## Author's Stated Intent");
+  });
 });
