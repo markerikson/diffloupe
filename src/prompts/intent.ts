@@ -168,11 +168,15 @@ function formatHunk(hunk: DiffHunk): string {
  * - **Stated intent context**: When provided, we include the author's stated
  *   intent as additional context. This helps clarify ambiguous changes but
  *   the LLM should still derive intent from the actual code.
+ *
+ * - **Repository context**: When provided, shows files in directories touched
+ *   by the diff, helping the LLM know what files exist beyond the diff.
  */
 export function buildIntentPrompt(
   diff: ParsedDiff,
   classified: ClassifiedFile[],
-  statedIntent?: string
+  statedIntent?: string,
+  repositoryContext?: string
 ): string {
   // Filter to only Tier 1 and Tier 2 files
   // Tier 3 (lock files, generated code, binaries) adds noise without value
@@ -195,6 +199,12 @@ export function buildIntentPrompt(
   }
 
   sections.push(""); // blank line
+
+  // Repository context section - files in touched directories
+  if (repositoryContext) {
+    sections.push(repositoryContext);
+    sections.push(""); // blank line
+  }
 
   // File list summary - quick overview before the details
   sections.push("## Files Changed");
@@ -281,10 +291,11 @@ OPTIONAL FIELDS:
 export async function deriveIntent(
   diff: ParsedDiff,
   classified: ClassifiedFile[],
-  statedIntent?: string
+  statedIntent?: string,
+  repositoryContext?: string
 ): Promise<DerivedIntent> {
-  // Build the prompt with diff content (and stated intent if provided)
-  const userPrompt = buildIntentPrompt(diff, classified, statedIntent);
+  // Build the prompt with diff content (and stated intent/context if provided)
+  const userPrompt = buildIntentPrompt(diff, classified, statedIntent, repositoryContext);
 
   try {
     // Use TanStack AI's chat() with structured output

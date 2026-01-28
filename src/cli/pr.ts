@@ -16,7 +16,9 @@ import {
   fetchPrDiff,
   fetchPrMetadata,
   assemblePrIntent,
+  fetchSiblingFilesFromGitHub,
 } from "../services/github.js";
+import { getChangedDirectories, formatContextSection } from "../services/context.js";
 import { parseDiff } from "../services/diff-parser.js";
 import { classifyDiff } from "../services/diff-loader.js";
 import { deriveIntent } from "../prompts/intent.js";
@@ -116,6 +118,31 @@ function outputResults(
 }
 
 /**
+ * Get current repository name from gh CLI.
+ */
+async function getCurrentRepo(): Promise<string> {
+  const proc = Bun.spawn(["gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, _stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+
+  if (exitCode !== 0) {
+    throw new GitHubError(
+      "Could not determine current repository. Use -R owner/repo to specify.",
+      "NOT_IN_REPO"
+    );
+  }
+
+  return stdout.trim();
+}
+
+/**
  * Parse PR identifier which can be:
  * - A number: 123
  * - owner/repo#number: reduxjs/redux-toolkit#4567
@@ -200,15 +227,30 @@ export function createPRCommand(): Command {
         // Step 5: Assemble stated intent from PR metadata
         const statedIntent = assemblePrIntent(prMetadata);
 
+        // Step 5.5: Gather repository context (sibling files in touched directories)
+        // For PRs we fetch from GitHub API using the base branch tree
+        const directories = getChangedDirectories(parsed);
+        const repoName = repo || await getCurrentRepo();
+        const siblings = await fetchSiblingFilesFromGitHub(directories, prMetadata.baseRefName, repoName);
+        
+        // Check if context gathering failed (siblings array may have .warning property)
+        const warning = (siblings as { warning?: string }).warning;
+        if (warning) {
+          console.log(pc.yellow(`⚠ ${warning}`));
+          console.log(pc.dim("  Analysis will continue but may flag false positives about missing files."));
+        }
+        
+        const repositoryContext = formatContextSection(siblings);
+
         // Step 6: Run intent and risk analysis in parallel
         const [intent, risks] = await Promise.all([
-          deriveIntent(parsed, classified, statedIntent),
-          assessRisks(parsed, classified, statedIntent),
+          deriveIntent(parsed, classified, statedIntent, repositoryContext),
+          assessRisks(parsed, classified, statedIntent, repositoryContext),
         ]);
 
         // Step 7: Run alignment analysis
         console.log(pc.dim("Analyzing intent alignment..."));
-        const alignment = await alignIntent(statedIntent, intent, parsed, classified);
+        const alignment = await alignIntent(statedIntent, intent, parsed, classified, repositoryContext);
 
         // Step 8: Output results
         console.log(""); // blank line before results

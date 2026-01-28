@@ -194,11 +194,15 @@ function formatHunk(hunk: DiffHunk): string {
  *
  * - **Stated intent context**: When provided, the model considers risks in
  *   relation to the stated goal (e.g., security issues in achieving that goal).
+ *
+ * - **Repository context**: When provided, shows files in directories touched
+ *   by the diff, helping avoid false positives about missing files.
  */
 export function buildRiskPrompt(
   diff: ParsedDiff,
   classified: ClassifiedFile[],
-  statedIntent?: string
+  statedIntent?: string,
+  repositoryContext?: string
 ): string {
   // Filter to only Tier 1 and Tier 2 files
   const relevantFiles = classified.filter((cf) => cf.tier <= 2);
@@ -229,6 +233,12 @@ export function buildRiskPrompt(
   }
 
   sections.push(""); // blank line
+
+  // Repository context section - files in touched directories
+  if (repositoryContext) {
+    sections.push(repositoryContext);
+    sections.push(""); // blank line
+  }
 
   // File list summary
   sections.push("## Files Changed");
@@ -324,10 +334,11 @@ Each risk object MUST have:
 export async function assessRisks(
   diff: ParsedDiff,
   classified: ClassifiedFile[],
-  statedIntent?: string
+  statedIntent?: string,
+  repositoryContext?: string
 ): Promise<RiskAssessment> {
-  // Build the prompt with diff content (and stated intent if provided)
-  const userPrompt = buildRiskPrompt(diff, classified, statedIntent);
+  // Build the prompt with diff content (and stated intent/context if provided)
+  const userPrompt = buildRiskPrompt(diff, classified, statedIntent, repositoryContext);
 
   try {
     // Use TanStack AI's chat() with structured output

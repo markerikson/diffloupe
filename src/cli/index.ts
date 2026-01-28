@@ -5,6 +5,7 @@ import { formatSummary, formatVerbose } from "./output";
 import { getDiff } from "../services/git.js";
 import { parseDiff } from "../services/diff-parser.js";
 import { classifyDiff } from "../services/diff-loader.js";
+import { gatherContext } from "../services/context.js";
 import { deriveIntent } from "../prompts/intent.js";
 import { assessRisks } from "../prompts/risks.js";
 import { alignIntent } from "../prompts/alignment.js";
@@ -198,18 +199,21 @@ program
         pc.dim(`Found ${parsed.files.length} file(s), analyzing with AI...`)
       );
 
+      // Step 2.5: Gather repository context (sibling files in touched directories)
+      const repositoryContext = await gatherContext(parsed, opts.cwd);
+
       // Step 3: Run intent and risk analysis in parallel
-      // Pass stated intent as context to both prompts
+      // Pass stated intent and repository context to both prompts
       const [intent, risks] = await Promise.all([
-        deriveIntent(parsed, classified, statedIntent),
-        assessRisks(parsed, classified, statedIntent),
+        deriveIntent(parsed, classified, statedIntent, repositoryContext),
+        assessRisks(parsed, classified, statedIntent, repositoryContext),
       ]);
 
       // Step 4: Run alignment analysis if stated intent is provided
       let alignment: IntentAlignment | undefined;
       if (statedIntent) {
         console.log(pc.dim("Analyzing intent alignment..."));
-        alignment = await alignIntent(statedIntent, intent, parsed, classified);
+        alignment = await alignIntent(statedIntent, intent, parsed, classified, repositoryContext);
       }
 
       // Step 5: Output results

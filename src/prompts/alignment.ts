@@ -131,12 +131,14 @@ function formatHunk(hunk: DiffHunk): string {
  * @param derivedIntent - What the LLM determined from the diff
  * @param diff - The actual diff for evidence
  * @param classified - Classified files for filtering
+ * @param repositoryContext - Optional context showing files in touched directories
  */
 export function buildAlignmentPrompt(
   statedIntent: string,
   derivedIntent: DerivedIntent,
   _diff: ParsedDiff,
-  classified: ClassifiedFile[]
+  classified: ClassifiedFile[],
+  repositoryContext?: string
 ): string {
   const sections: string[] = [];
 
@@ -154,6 +156,12 @@ export function buildAlignmentPrompt(
   sections.push(`**Scope:** ${derivedIntent.scope}`);
   sections.push(`**Affected Areas:** ${derivedIntent.affectedAreas.join(", ")}`);
   sections.push("");
+
+  // Repository context section - files in touched directories
+  if (repositoryContext) {
+    sections.push(repositoryContext);
+    sections.push("");
+  }
 
   // Section 3: Diff content for evidence
   sections.push("## Diff Content (for evidence)");
@@ -202,9 +210,10 @@ export async function alignIntent(
   statedIntent: string,
   derivedIntent: DerivedIntent,
   diff: ParsedDiff,
-  classified: ClassifiedFile[]
+  classified: ClassifiedFile[],
+  repositoryContext?: string
 ): Promise<IntentAlignment> {
-  const userPrompt = buildAlignmentPrompt(statedIntent, derivedIntent, diff, classified);
+  const userPrompt = buildAlignmentPrompt(statedIntent, derivedIntent, diff, classified, repositoryContext);
 
   const result = await chat({
     adapter: anthropicText("claude-sonnet-4-5"),
