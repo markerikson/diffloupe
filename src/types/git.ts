@@ -1,6 +1,7 @@
 /** Target formats for getting diffs */
 export type DiffTarget =
   | "staged"
+  | "unstaged"
   | "HEAD"
   | `branch:${string}`
   | `commit:${string}`

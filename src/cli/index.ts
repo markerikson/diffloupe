@@ -21,6 +21,7 @@ export interface AnalyzeOptions {
   intent?: string;
   intentFile?: string;
   demo?: boolean;
+  cwd?: string;
 }
 
 /**
@@ -131,12 +132,13 @@ const mockRisks: RiskAssessment = {
 program
   .command("analyze")
   .description("Analyze code changes with AI assistance")
-  .argument("[target]", "What to diff: staged, HEAD, HEAD~N, or commit range", "staged")
+  .argument("[target]", "What to diff: staged, unstaged, HEAD, branch:name, commit:hash, or range:a..b", "staged")
   .option("-v, --verbose", "Show detailed output", false)
   .option("--json", "Output results as JSON", false)
   .option("-f, --force", "Skip cache and force fresh analysis", false)
   .option("-i, --intent <intent>", "Describe the intent of the changes")
   .option("--intent-file <path>", "Read intent from a file")
+  .option("-C, --cwd <path>", "Run as if git was started in <path>")
   .option("--demo", "Show demo output with mock data", false)
   .action(async (target: string, options: Omit<AnalyzeOptions, "target">) => {
     const opts: AnalyzeOptions = { target, ...options };
@@ -172,7 +174,7 @@ program
     try {
       // Step 1: Get the diff
       console.log(pc.dim(`Fetching ${opts.target} diff...`));
-      const diffResult = await getDiff(opts.target);
+      const diffResult = await getDiff(opts.target, opts.cwd);
 
       // Handle empty diff
       if (!diffResult.hasChanges) {

@@ -10,6 +10,11 @@ function parseTarget(target: string): { args: string[]; description: string } {
     return { args: ["--cached"], description: "staged changes" };
   }
 
+  // unstaged - working tree changes only (not staged)
+  if (target === "unstaged") {
+    return { args: [], description: "unstaged changes" };
+  }
+
   // HEAD - all uncommitted changes
   if (target === "HEAD") {
     return { args: ["HEAD"], description: "all uncommitted changes" };
@@ -48,7 +53,7 @@ function parseTarget(target: string): { args: string[]; description: string } {
   }
 
   throw new GitError(
-    `Unknown target format: ${target}. Use staged, HEAD, branch:name, commit:hash, or range:a..b`,
+    `Unknown target format: ${target}. Use staged, unstaged, HEAD, branch:name, commit:hash, or range:a..b`,
     "INVALID_TARGET"
   );
 }
@@ -72,6 +77,7 @@ async function getGit(cwd?: string): Promise<SimpleGit> {
  *
  * @param target - What to diff:
  *   - "staged" (default) - staged changes
+ *   - "unstaged" - working tree changes only (not staged)
  *   - "HEAD" - all uncommitted changes
  *   - "branch:main" - compare current to branch
  *   - "commit:abc123" - specific commit
