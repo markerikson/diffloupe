@@ -5,11 +5,12 @@
   "scripts": {
     "dev": "bun run --watch src/index.ts",
     "build": "bun build src/index.ts --outdir=dist --target=bun",
-    "typecheck": "tsc --noEmit",
-    "lint": "eslint src/"
+    "typecheck": "tsgo --noEmit",
+    "lint": "oxlint src/"
   },
   "devDependencies": {
+    "@typescript/native-preview": "^7.0.0-dev.20260127.1",
     "bun-types": "^1.3.7",
-    "typescript": "^5.9.3"
+    "oxlint": "^1.42.0"
   }
 }
