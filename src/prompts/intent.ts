@@ -303,6 +303,9 @@ export async function deriveIntent(
       temperature: 0.3,
       // Don't stream - we want the final structured result
       stream: false,
+      // Ensure enough tokens for detailed intent analysis -
+      // default 1024 tokens can truncate responses causing validation failures
+      maxTokens: 4096,
     });
 
     // Result is already validated and typed as DerivedIntent

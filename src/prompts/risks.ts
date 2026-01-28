@@ -343,6 +343,9 @@ export async function assessRisks(
       // edge cases, but still deterministic
       temperature: 0.4,
       stream: false,
+      // Risk analysis can produce detailed output with multiple risks -
+      // default 1024 tokens can truncate responses causing validation failures
+      maxTokens: 8192,
     });
 
     return result;

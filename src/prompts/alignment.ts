@@ -214,6 +214,9 @@ export async function alignIntent(
     // Lower temperature for consistent analysis
     temperature: 0.3,
     stream: false,
+    // Ensure enough tokens for alignment analysis -
+    // default 1024 tokens can truncate responses causing validation failures
+    maxTokens: 4096,
   });
 
   return result;
