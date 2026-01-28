@@ -6,7 +6,9 @@ import { describe, expect, test } from "bun:test";
 import {
   getChangedDirectories,
   formatContextSection,
+  formatNewFilesSection,
   type SiblingFile,
+  type FileContent,
 } from "./context.js";
 import type { ParsedDiff, DiffFile } from "../types/diff.js";
 
@@ -169,5 +171,113 @@ describe("formatContextSection", () => {
     const intentIndex = lines.findIndex((l) => l.includes("intent.ts"));
     const risksIndex = lines.findIndex((l) => l.includes("risks.ts"));
     expect(intentIndex).toBeLessThan(risksIndex);
+  });
+});
+
+describe("formatNewFilesSection", () => {
+  test("formats file contents with language hints", () => {
+    const files: FileContent[] = [
+      {
+        path: "src/services/context.ts",
+        content: 'export function foo() { return "bar"; }',
+        lineCount: 1,
+        truncated: false,
+      },
+    ];
+
+    const result = formatNewFilesSection(files);
+
+    expect(result).toContain("## New Files (Full Source)");
+    expect(result).toContain("### src/services/context.ts");
+    expect(result).toContain("```typescript");
+    expect(result).toContain('export function foo() { return "bar"; }');
+    expect(result).toContain("```");
+  });
+
+  test("shows truncation notice for large files", () => {
+    const files: FileContent[] = [
+      {
+        path: "src/large-file.ts",
+        content: "// truncated content\n// ... truncated",
+        lineCount: 500,
+        truncated: true,
+      },
+    ];
+
+    const result = formatNewFilesSection(files);
+
+    expect(result).toContain("(truncated, 500 lines shown)");
+  });
+
+  test("maps common extensions to languages", () => {
+    const cases: Array<{ ext: string; lang: string }> = [
+      { ext: "js", lang: "javascript" },
+      { ext: "jsx", lang: "javascript" },
+      { ext: "ts", lang: "typescript" },
+      { ext: "tsx", lang: "typescript" },
+      { ext: "py", lang: "python" },
+      { ext: "rs", lang: "rust" },
+      { ext: "go", lang: "go" },
+    ];
+
+    for (const { ext, lang } of cases) {
+      const files: FileContent[] = [
+        {
+          path: `test.${ext}`,
+          content: "code",
+          lineCount: 1,
+          truncated: false,
+        },
+      ];
+      const result = formatNewFilesSection(files);
+      expect(result).toContain("```" + lang);
+    }
+  });
+
+  test("handles unknown extensions gracefully", () => {
+    const files: FileContent[] = [
+      {
+        path: "config.xyz",
+        content: "some content",
+        lineCount: 1,
+        truncated: false,
+      },
+    ];
+
+    const result = formatNewFilesSection(files);
+
+    // Should have empty language (just "```")
+    expect(result).toContain("```\n");
+  });
+
+  test("returns empty string for no files", () => {
+    const result = formatNewFilesSection([]);
+    expect(result).toBe("");
+  });
+
+  test("formats multiple files", () => {
+    const files: FileContent[] = [
+      {
+        path: "src/a.ts",
+        content: "const a = 1;",
+        lineCount: 1,
+        truncated: false,
+      },
+      {
+        path: "src/b.py",
+        content: "b = 2",
+        lineCount: 1,
+        truncated: false,
+      },
+    ];
+
+    const result = formatNewFilesSection(files);
+
+    expect(result).toContain("### src/a.ts");
+    expect(result).toContain("```typescript");
+    expect(result).toContain("const a = 1;");
+    expect(result).toContain("### src/b.py");
+    expect(result).toContain("```python");
+    expect(result).toContain("b = 2");
   });
 });

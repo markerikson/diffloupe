@@ -10,7 +10,8 @@
  */
 
 import simpleGit from "simple-git";
-import { dirname } from "path";
+import { dirname, join } from "path";
+import { readFile } from "fs/promises";
 import type { ParsedDiff } from "../types/diff.js";
 
 /** Status of a sibling file in the repository */
@@ -20,6 +21,14 @@ export type SiblingFileStatus = "existing" | "new" | "modified" | "deleted";
 export interface SiblingFile {
   path: string;
   status: SiblingFileStatus;
+}
+
+/** Content of a new file for context inclusion */
+export interface FileContent {
+  path: string;
+  content: string;
+  lineCount: number;
+  truncated: boolean;
 }
 
 /**
@@ -137,6 +146,136 @@ export async function getSiblingFiles(
   return result;
 }
 
+/** Maximum lines per file to include in context */
+const MAX_LINES_PER_FILE = 500;
+
+/** Maximum total lines across all new files */
+const MAX_TOTAL_LINES = 2000;
+
+/**
+ * Read contents of new files for inclusion in context.
+ *
+ * New files (staged additions) are loaded so the LLM can verify imports
+ * resolve to real implementations. Files are truncated if too large.
+ *
+ * @param newFiles - Paths of new files to read
+ * @param cwd - Working directory (defaults to process.cwd())
+ */
+export async function getNewFileContents(
+  newFiles: string[],
+  cwd?: string
+): Promise<FileContent[]> {
+  if (newFiles.length === 0) {
+    return [];
+  }
+
+  const workDir = cwd || process.cwd();
+  const results: FileContent[] = [];
+  let totalLines = 0;
+
+  // Read files sequentially to respect budget limit - each file may consume remaining budget
+  // eslint-disable-next-line no-await-in-loop
+  for (const filePath of newFiles) {
+    // Stop if we've hit the total limit
+    if (totalLines >= MAX_TOTAL_LINES) {
+      break;
+    }
+
+    try {
+      const fullPath = join(workDir, filePath);
+      const content = await readFile(fullPath, "utf-8");
+      const lines = content.split("\n");
+      const lineCount = lines.length;
+
+      // Truncate if file is too large
+      const remainingBudget = MAX_TOTAL_LINES - totalLines;
+      const maxLines = Math.min(MAX_LINES_PER_FILE, remainingBudget);
+      const truncated = lineCount > maxLines;
+
+      const finalContent = truncated
+        ? lines.slice(0, maxLines).join("\n") + "\n// ... truncated"
+        : content;
+
+      results.push({
+        path: filePath,
+        content: finalContent,
+        lineCount: truncated ? maxLines : lineCount,
+        truncated,
+      });
+
+      totalLines += truncated ? maxLines : lineCount;
+    } catch {
+      // Skip files that can't be read (deleted, permissions, etc.)
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Format new file contents into a context section for prompts.
+ *
+ * @example
+ * ```
+ * ## New Files (Full Source)
+ *
+ * ### src/services/context.ts
+ * ```typescript
+ * // file contents here
+ * ```
+ * ```
+ */
+export function formatNewFilesSection(files: FileContent[]): string {
+  if (files.length === 0) {
+    return "";
+  }
+
+  const lines: string[] = ["## New Files (Full Source)", ""];
+
+  for (const file of files) {
+    const ext = file.path.split(".").pop() || "";
+    const lang = getLanguageFromExtension(ext);
+    const truncatedNote = file.truncated ? ` (truncated, ${file.lineCount} lines shown)` : "";
+
+    lines.push(`### ${file.path}${truncatedNote}`);
+    lines.push("```" + lang);
+    lines.push(file.content);
+    lines.push("```");
+    lines.push("");
+  }
+
+  return lines.join("\n");
+}
+
+function getLanguageFromExtension(ext: string): string {
+  const map: Record<string, string> = {
+    ts: "typescript",
+    tsx: "typescript",
+    js: "javascript",
+    jsx: "javascript",
+    py: "python",
+    rs: "rust",
+    go: "go",
+    rb: "ruby",
+    java: "java",
+    kt: "kotlin",
+    swift: "swift",
+    c: "c",
+    cpp: "cpp",
+    h: "c",
+    hpp: "cpp",
+    cs: "csharp",
+    json: "json",
+    yaml: "yaml",
+    yml: "yaml",
+    md: "markdown",
+    sql: "sql",
+    sh: "bash",
+    bash: "bash",
+  };
+  return map[ext] || "";
+}
+
 /**
  * Format sibling files into a context section for prompts.
  *
@@ -212,7 +351,8 @@ function getStatusLabel(status: SiblingFileStatus): string {
  * Gather repository context for a diff.
  *
  * This is the main entry point - given a diff, returns formatted context
- * showing what files exist in the touched directories.
+ * showing what files exist in the touched directories, plus full source
+ * of new files.
  *
  * @param diff - The parsed diff to gather context for
  * @param cwd - Working directory (defaults to process.cwd())
@@ -223,5 +363,27 @@ export async function gatherContext(
 ): Promise<string> {
   const directories = getChangedDirectories(diff);
   const siblings = await getSiblingFiles(directories, cwd);
-  return formatContextSection(siblings);
+
+  // Collect new file paths from siblings
+  const newFilePaths = siblings
+    .filter((s) => s.status === "new")
+    .map((s) => s.path);
+
+  // Load new file contents
+  const newFileContents = await getNewFileContents(newFilePaths, cwd);
+
+  // Build context: sibling listing + new file source
+  const sections: string[] = [];
+
+  const siblingSection = formatContextSection(siblings);
+  if (siblingSection) {
+    sections.push(siblingSection);
+  }
+
+  const newFilesSection = formatNewFilesSection(newFileContents);
+  if (newFilesSection) {
+    sections.push(newFilesSection);
+  }
+
+  return sections.join("\n");
 }
