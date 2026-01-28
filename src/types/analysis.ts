@@ -100,3 +100,120 @@ export const DerivedIntentSchema = type({
 
 /** TypeScript type extracted from the schema */
 export type DerivedIntent = typeof DerivedIntentSchema.infer;
+
+/**
+ * Risk severity levels for potential issues in a diff.
+ *
+ * ## Calibration Philosophy
+ *
+ * Risk severity should be calibrated to avoid "crying wolf":
+ * - **low**: Worth noting but unlikely to cause problems
+ * - **medium**: Should be reviewed carefully, may need changes
+ * - **high**: Likely to cause issues if not addressed
+ * - **critical**: Must be addressed before merge (security, data loss, etc.)
+ *
+ * Most risks should be low/medium. High/critical should be rare and specific.
+ */
+export const RiskSeveritySchema = type("'low' | 'medium' | 'high' | 'critical'");
+export type RiskSeverity = typeof RiskSeveritySchema.infer;
+
+/**
+ * Confidence level for the assessment.
+ *
+ * Acknowledges that LLM analysis has uncertainty:
+ * - **high**: Clear evidence in the diff, straightforward analysis
+ * - **medium**: Some inference required, context may be missing
+ * - **low**: Speculative, based on patterns that may not apply
+ */
+export const ConfidenceLevelSchema = type("'high' | 'medium' | 'low'");
+export type ConfidenceLevel = typeof ConfidenceLevelSchema.infer;
+
+/**
+ * Schema for a single identified risk.
+ *
+ * Key design principle: Every risk must cite SPECIFIC EVIDENCE from the diff.
+ * Vague warnings like "this could be slow" without pointing to actual code
+ * are not useful and contribute to alert fatigue.
+ */
+export const RiskSchema = type({
+  /**
+   * How severe is this risk?
+   * See RiskSeveritySchema for calibration guidance.
+   */
+  severity: "'low' | 'medium' | 'high' | 'critical'",
+
+  /**
+   * Category of risk for grouping and filtering.
+   * Examples: "security", "breaking-change", "performance", "error-handling",
+   * "backwards-compatibility", "test-coverage", "data-integrity"
+   */
+  category: "string",
+
+  /**
+   * What the risk is - clear, specific description.
+   * Good: "Removed null check could cause NPE when user.email is undefined"
+   * Bad: "Error handling could be improved"
+   */
+  description: "string",
+
+  /**
+   * What in the diff suggests this risk - MUST cite specific code/changes.
+   * Good: "Line 45 removes `if (user?.email)` guard before `.toLowerCase()`"
+   * Bad: "The code changes how errors are handled"
+   */
+  evidence: "string",
+
+  /**
+   * Which file(s) this risk relates to. Optional because some risks
+   * may span multiple files or be about the overall change.
+   */
+  "file?": "string",
+
+  /**
+   * How to address this risk. Optional because not all risks have
+   * clear mitigations, and sometimes just flagging is enough.
+   */
+  "mitigation?": "string",
+});
+export type Risk = typeof RiskSchema.infer;
+
+/**
+ * Schema for the complete risk assessment of a diff.
+ *
+ * ## Design Philosophy
+ *
+ * 1. **Overall risk is the MAX severity**, not average - one critical risk
+ *    makes the whole change high-risk regardless of other low risks.
+ *
+ * 2. **Summary should be actionable** - "2 high-severity security risks require
+ *    attention before merge" is more useful than "Some issues found".
+ *
+ * 3. **Confidence acknowledges uncertainty** - better to say "medium confidence,
+ *    missing test context" than to claim certainty when context is limited.
+ */
+export const RiskAssessmentSchema = type({
+  /**
+   * Highest severity among all identified risks.
+   * If no risks, this should be "low".
+   */
+  overallRisk: "'low' | 'medium' | 'high' | 'critical'",
+
+  /**
+   * 1-2 sentence actionable summary.
+   * Good: "2 high-severity risks: auth bypass in login.ts:45 and unvalidated input in api.ts:23"
+   * Bad: "Some potential issues were found in this change"
+   */
+  summary: "string",
+
+  /**
+   * Array of identified risks, ordered by severity (critical first).
+   */
+  risks: RiskSchema.array(),
+
+  /**
+   * How confident is this assessment?
+   * Should be lower when: limited context, generated code, unfamiliar patterns.
+   */
+  confidence: "'high' | 'medium' | 'low'",
+});
+export type RiskAssessment = typeof RiskAssessmentSchema.infer;
