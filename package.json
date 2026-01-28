@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "bun run --watch src/index.ts",
     "build": "bun build src/index.ts --outdir=dist --target=bun",
+    "test": "bun test",
     "typecheck": "tsgo --noEmit",
     "lint": "oxlint src/"
   },
