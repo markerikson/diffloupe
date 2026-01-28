@@ -6,6 +6,7 @@
     "diffloupe": "./src/index.ts"
   },
   "scripts": {
+    "start": "bun run src/index.ts",
     "dev": "bun run --watch src/index.ts",
     "build": "bun build src/index.ts --outdir=dist --target=bun",
     "test": "bun test",
