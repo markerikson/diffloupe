@@ -143,14 +143,81 @@ async function getCurrentRepo(): Promise<string> {
 }
 
 /**
+ * Parse a GitHub PR URL and extract owner, repo, and PR number.
+ * Supports:
+ * - https://github.com/owner/repo/pull/123
+ * - https://github.com/owner/repo/pull/123/files (with trailing path)
+ * - http://github.com/... (http variant)
+ * - github.com/owner/repo/pull/123 (without protocol)
+ *
+ * Returns null if not a valid GitHub PR URL.
+ */
+export function parseGitHubPRUrl(
+  url: string
+): { owner: string; repo: string; prNumber: number } | null {
+  // Normalize: add https:// if no protocol
+  let normalized = url;
+  if (!normalized.startsWith("http://") && !normalized.startsWith("https://")) {
+    normalized = `https://${normalized}`;
+  }
+
+  // Try to parse as URL
+  let parsed: URL;
+  try {
+    parsed = new URL(normalized);
+  } catch {
+    return null;
+  }
+
+  // Must be github.com
+  if (parsed.hostname !== "github.com") {
+    return null;
+  }
+
+  // Path should be /owner/repo/pull/number[/...]
+  // Remove leading slash and split
+  const parts = parsed.pathname.slice(1).split("/");
+
+  // Need at least: owner, repo, "pull", number
+  if (parts.length < 4 || parts[2] !== "pull") {
+    return null;
+  }
+
+  const owner = parts[0];
+  const repo = parts[1];
+  const prNumberStr = parts[3];
+
+  if (!owner || !repo || !prNumberStr) {
+    return null;
+  }
+
+  const prNumber = parseInt(prNumberStr, 10);
+  if (isNaN(prNumber)) {
+    return null;
+  }
+
+  return { owner, repo, prNumber };
+}
+
+/**
  * Parse PR identifier which can be:
  * - A number: 123
  * - owner/repo#number: reduxjs/redux-toolkit#4567
+ * - GitHub URL: https://github.com/owner/repo/pull/123
  */
-function parsePRIdentifier(
+export function parsePRIdentifier(
   identifier: string,
   repoOption: string | undefined
 ): { prNumber: number; repo: string | undefined } {
+  // Check for GitHub URL format first
+  const urlParsed = parseGitHubPRUrl(identifier);
+  if (urlParsed) {
+    return {
+      repo: `${urlParsed.owner}/${urlParsed.repo}`,
+      prNumber: urlParsed.prNumber,
+    };
+  }
+
   // Check for owner/repo#number format
   const crossRepoMatch = identifier.match(/^([^#]+)#(\d+)$/);
   if (crossRepoMatch && crossRepoMatch[1] && crossRepoMatch[2]) {
@@ -164,7 +231,7 @@ function parsePRIdentifier(
   const num = parseInt(identifier, 10);
   if (isNaN(num)) {
     throw new Error(
-      `Invalid PR identifier: ${identifier}. Use a number or owner/repo#number format.`
+      `Invalid PR identifier: ${identifier}. Use a number, owner/repo#number, or GitHub URL.`
     );
   }
 
@@ -177,7 +244,7 @@ function parsePRIdentifier(
 export function createPRCommand(): Command {
   return new Command("pr")
     .description("Analyze a GitHub PR")
-    .argument("<identifier>", "PR number or owner/repo#number")
+    .argument("<identifier>", "PR number, owner/repo#number, or GitHub URL")
     .option("-R, --repo <repo>", "Repository in owner/repo format")
     .option("-v, --verbose", "Show detailed output", false)
     .option("--json", "Output results as JSON", false)

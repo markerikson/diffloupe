@@ -133,3 +133,38 @@ export async function getStagedFiles(cwd?: string): Promise<string[]> {
   const status = await git.status();
   return status.staged;
 }
+
+/**
+ * Get the commit message for a given commit hash
+ * Returns subject + body (if any) formatted nicely
+ *
+ * @param commitHash - Full or short commit hash (e.g., "abc123" or "HEAD")
+ * @param cwd - Working directory (defaults to process.cwd())
+ */
+export async function getCommitMessage(
+  commitHash: string,
+  cwd?: string
+): Promise<string> {
+  const git = await getGit(cwd);
+
+  try {
+    // %s = subject, %b = body
+    // Using %B would give subject+body together but we want to format them
+    const result = await git.show([commitHash, "--format=%s%n%n%b", "-s"]);
+    // -s suppresses diff output, just show commit info
+
+    // Trim trailing whitespace/newlines but preserve structure
+    return result.trim();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+
+    if (
+      message.includes("unknown revision") ||
+      message.includes("bad revision")
+    ) {
+      throw new GitError(`Commit not found: ${commitHash}`, "COMMIT_NOT_FOUND");
+    }
+
+    throw new GitError(`Git error: ${message}`, "GIT_ERROR");
+  }
+}

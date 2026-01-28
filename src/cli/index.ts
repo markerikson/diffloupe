@@ -2,7 +2,7 @@ import { Command } from "commander";
 import pc from "picocolors";
 import type { DerivedIntent, IntentAlignment, RiskAssessment } from "../types/analysis";
 import { formatSummary, formatVerbose } from "./output";
-import { getDiff } from "../services/git.js";
+import { getDiff, getCommitMessage } from "../services/git.js";
 import { parseDiff } from "../services/diff-parser.js";
 import { classifyDiff } from "../services/diff-loader.js";
 import { gatherContext } from "../services/context.js";
@@ -29,7 +29,8 @@ export interface AnalyzeOptions {
  * Reads stated intent from multiple sources in priority order:
  * 1. --intent "string" CLI arg
  * 2. --intent-file <path> - read from file
- * 3. stdin if piped (non-TTY)
+ * 3. For commit: targets, use the commit message
+ * 4. stdin if piped (non-TTY)
  */
 async function resolveStatedIntent(options: AnalyzeOptions): Promise<string | undefined> {
   // Priority 1: CLI argument
@@ -47,7 +48,20 @@ async function resolveStatedIntent(options: AnalyzeOptions): Promise<string | un
     return content.trim() || undefined;
   }
 
-  // Priority 3: stdin if piped (non-TTY)
+  // Priority 3: For commit: targets, use the commit message
+  // This comes before stdin check because commit message is a more
+  // intentional/explicit source for commit targets
+  if (options.target.startsWith("commit:")) {
+    const commitHash = options.target.slice(7);
+    if (commitHash) {
+      const message = await getCommitMessage(commitHash, options.cwd);
+      // Format nicely: "Commit <short-hash>: <message>"
+      const shortHash = commitHash.length > 7 ? commitHash.slice(0, 7) : commitHash;
+      return `Commit ${shortHash}: ${message}`;
+    }
+  }
+
+  // Priority 4: stdin if piped (non-TTY)
   // Note: Bun.stdin.text() blocks until EOF. This is standard behavior for piped
   // input (e.g., `echo "intent" | diffloupe analyze`), but could hang if stdin
   // is opened but never closed. Not adding a timeout for now since this matches
