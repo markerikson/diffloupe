@@ -12,16 +12,17 @@ import type { DerivedIntent, IntentAlignment, Risk, RiskAssessment, RiskSeverity
 /**
  * Color a risk severity level appropriately
  */
-function colorSeverity(severity: RiskSeverity): string {
+function colorSeverity(severity: RiskSeverity, uppercase = false): string {
+  const label = uppercase ? severity.toUpperCase() : severity;
   switch (severity) {
     case "low":
-      return pc.green(severity);
+      return pc.green(label);
     case "medium":
-      return pc.yellow(severity);
+      return pc.yellow(label);
     case "high":
-      return pc.red(severity);
+      return pc.red(label);
     case "critical":
-      return pc.bold(pc.magenta(severity));
+      return pc.bold(pc.magenta(label));
   }
 }
 
@@ -40,12 +41,21 @@ function colorAlignment(alignment: IntentAlignment["alignment"]): string {
 }
 
 /**
+ * Format short label badge for quick scanning
+ * e.g., [CRITICAL:breaking-change]
+ */
+function formatRiskBadge(risk: Risk): string {
+  const severityColored = colorSeverity(risk.severity, true);
+  return `[${severityColored}:${pc.cyan(risk.category)}]`;
+}
+
+/**
  * Format a single risk as a one-liner for summary view
  */
 function formatRiskOneLine(risk: Risk): string {
-  const severity = colorSeverity(risk.severity);
+  const badge = formatRiskBadge(risk);
   const file = risk.file ? pc.dim(` (${risk.file})`) : "";
-  return `  ${severity}: ${risk.description}${file}`;
+  return `  ${badge} ${risk.description}${file}`;
 }
 
 /**
@@ -53,12 +63,11 @@ function formatRiskOneLine(risk: Risk): string {
  */
 function formatRiskVerbose(risk: Risk, index: number): string {
   const lines: string[] = [];
+  const badge = formatRiskBadge(risk);
 
-  lines.push(`${pc.bold(`Risk #${index + 1}`)}`);
-  lines.push(`  Severity: ${colorSeverity(risk.severity)}`);
-  lines.push(`  Category: ${pc.cyan(risk.category)}`);
+  lines.push(`${badge} ${pc.bold(`Risk #${index + 1}`)}`);
   if (risk.file) {
-    lines.push(`  File:     ${pc.blue(risk.file)}`);
+    lines.push(`  File: ${pc.blue(risk.file)}`);
   }
   lines.push(`  ${risk.description}`);
   lines.push("");
