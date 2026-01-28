@@ -40,6 +40,7 @@ import {
   type Risk,
   type RiskSeverity,
 } from "../types/analysis.js";
+import { wrapSchema } from "../utils/schema-compat.js";
 
 // Re-export types for convenience
 export type { RiskAssessment, Risk, RiskSeverity };
@@ -284,7 +285,9 @@ export async function assessRisks(
     adapter: anthropicText("claude-sonnet-4-5"),
     systemPrompts: [SYSTEM_PROMPT],
     messages: [{ role: "user", content: userPrompt }],
-    outputSchema: RiskAssessmentSchema,
+    // Wrap schema for TanStack AI compatibility (ArkType schemas are functions,
+    // but TanStack AI expects typeof === 'object' for Standard Schema detection)
+    outputSchema: wrapSchema(RiskAssessmentSchema),
     // Lower temperature for consistent, focused analysis
     // Slightly higher than intent (0.3) because we want it to consider
     // edge cases, but still deterministic

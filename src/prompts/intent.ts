@@ -36,6 +36,7 @@ import { anthropicText } from "@tanstack/ai-anthropic";
 import type { ParsedDiff, DiffFile, DiffHunk } from "../types/diff.js";
 import type { ClassifiedFile } from "../types/loader.js";
 import { DerivedIntentSchema, type DerivedIntent, type ChangeScope } from "../types/analysis.js";
+import { wrapSchema } from "../utils/schema-compat.js";
 
 // Re-export types for convenience
 export type { DerivedIntent, ChangeScope };
@@ -251,7 +252,9 @@ export async function deriveIntent(
     adapter: anthropicText("claude-sonnet-4-5"),
     systemPrompts: [SYSTEM_PROMPT],
     messages: [{ role: "user", content: userPrompt }],
-    outputSchema: DerivedIntentSchema,
+    // Wrap schema for TanStack AI compatibility (ArkType schemas are functions,
+    // but TanStack AI expects typeof === 'object' for Standard Schema detection)
+    outputSchema: wrapSchema(DerivedIntentSchema),
     // Lower temperature for more consistent, focused analysis
     temperature: 0.3,
     // Don't stream - we want the final structured result
