@@ -17,7 +17,43 @@ export interface AnalyzeOptions {
   json: boolean;
   force: boolean;
   intent?: string;
+  intentFile?: string;
   demo?: boolean;
+}
+
+/**
+ * Reads stated intent from multiple sources in priority order:
+ * 1. --intent "string" CLI arg
+ * 2. --intent-file <path> - read from file
+ * 3. stdin if piped (non-TTY)
+ */
+async function resolveStatedIntent(options: AnalyzeOptions): Promise<string | undefined> {
+  // Priority 1: CLI argument
+  if (options.intent) {
+    return options.intent.trim();
+  }
+
+  // Priority 2: File path
+  if (options.intentFile) {
+    const file = Bun.file(options.intentFile);
+    if (!(await file.exists())) {
+      throw new Error(`Intent file not found: ${options.intentFile}`);
+    }
+    const content = await file.text();
+    return content.trim() || undefined;
+  }
+
+  // Priority 3: stdin if piped (non-TTY)
+  // Note: Bun.stdin.text() blocks until EOF. This is standard behavior for piped
+  // input (e.g., `echo "intent" | diffloupe analyze`), but could hang if stdin
+  // is opened but never closed. Not adding a timeout for now since this matches
+  // typical CLI tool behavior.
+  if (!process.stdin.isTTY) {
+    const text = await Bun.stdin.text();
+    return text.trim() || undefined;
+  }
+
+  return undefined;
 }
 
 /**
@@ -26,14 +62,15 @@ export interface AnalyzeOptions {
 function outputResults(
   intent: DerivedIntent,
   risks: RiskAssessment,
-  options: AnalyzeOptions
+  options: AnalyzeOptions,
+  statedIntent?: string
 ): void {
   if (options.json) {
-    console.log(JSON.stringify({ intent, risks }, null, 2));
+    console.log(JSON.stringify({ intent, risks, statedIntent }, null, 2));
   } else if (options.verbose) {
-    console.log(formatVerbose(intent, risks));
+    console.log(formatVerbose(intent, risks, statedIntent));
   } else {
-    console.log(formatSummary(intent, risks));
+    console.log(formatSummary(intent, risks, statedIntent));
   }
 }
 
@@ -96,13 +133,25 @@ program
   .option("--json", "Output results as JSON", false)
   .option("-f, --force", "Skip cache and force fresh analysis", false)
   .option("-i, --intent <intent>", "Describe the intent of the changes")
+  .option("--intent-file <path>", "Read intent from a file")
   .option("--demo", "Show demo output with mock data", false)
   .action(async (target: string, options: Omit<AnalyzeOptions, "target">) => {
     const opts: AnalyzeOptions = { target, ...options };
 
+    // Resolve stated intent from all sources early (before API key check)
+    // This allows --intent-file errors to surface before the API key error
+    let statedIntent: string | undefined;
+    try {
+      statedIntent = await resolveStatedIntent(opts);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(pc.red(`Error: ${message}`));
+      process.exit(1);
+    }
+
     // Demo mode: use mock data
     if (opts.demo) {
-      outputResults(mockIntent, mockRisks, opts);
+      outputResults(mockIntent, mockRisks, opts, statedIntent);
       return;
     }
 
@@ -152,7 +201,7 @@ program
 
       // Step 4: Output results
       console.log(""); // blank line before results
-      outputResults(intent, risks, opts);
+      outputResults(intent, risks, opts, statedIntent);
     } catch (error) {
       // Handle specific error types with friendly messages
       if (error instanceof GitError) {

@@ -68,16 +68,24 @@ function formatScope(scope: string): string {
  * Format for default (summary) output
  *
  * Shows:
+ * - Stated intent (if provided)
  * - Intent summary (1-2 lines)
  * - Overall risk level with color
  * - Top 3 risks (one line each)
  * - File count affected
  */
-export function formatSummary(intent: DerivedIntent, risks: RiskAssessment): string {
+export function formatSummary(intent: DerivedIntent, risks: RiskAssessment, statedIntent?: string): string {
   const lines: string[] = [];
 
-  // Intent section
-  lines.push(pc.bold("Intent"));
+  // Stated intent section (if provided)
+  if (statedIntent) {
+    lines.push(pc.bold("Stated Intent"));
+    lines.push(pc.cyan(statedIntent));
+    lines.push("");
+  }
+
+  // Derived intent section
+  lines.push(pc.bold("Derived Intent"));
   lines.push(`${formatScope(intent.scope)} ${intent.summary}`);
   lines.push("");
 
@@ -111,17 +119,28 @@ export function formatSummary(intent: DerivedIntent, risks: RiskAssessment): str
  * Format for verbose output (full detail)
  *
  * Shows:
+ * - Stated intent (if provided)
  * - Full intent with purpose and scope
  * - Suggested review order
  * - All risks with severity, category, description, evidence, mitigation
  */
-export function formatVerbose(intent: DerivedIntent, risks: RiskAssessment): string {
+export function formatVerbose(intent: DerivedIntent, risks: RiskAssessment, statedIntent?: string): string {
   const lines: string[] = [];
   const divider = pc.dim("─".repeat(60));
 
+  // Stated intent section (if provided)
+  if (statedIntent) {
+    lines.push(divider);
+    lines.push(pc.bold(pc.cyan("STATED INTENT")));
+    lines.push(divider);
+    lines.push("");
+    lines.push(pc.cyan(statedIntent));
+    lines.push("");
+  }
+
   // Header
   lines.push(divider);
-  lines.push(pc.bold(pc.cyan("INTENT")));
+  lines.push(pc.bold(pc.cyan("DERIVED INTENT")));
   lines.push(divider);
   lines.push("");
 
