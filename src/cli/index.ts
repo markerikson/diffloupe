@@ -13,6 +13,7 @@ import { hasAPIKey } from "../services/llm.js";
 import { GitError } from "../types/git.js";
 import { LLMAPIKeyError, LLMGenerationError } from "../types/llm.js";
 import { createPRCommand } from "./pr.js";
+import { createSummarizeCommand } from "./summarize.js";
 
 export interface AnalyzeOptions {
   target: string;
@@ -268,6 +269,7 @@ program
 
 // Register subcommands
 program.addCommand(createPRCommand());
+program.addCommand(createSummarizeCommand());
 
 export function run() {
   program.parse();
