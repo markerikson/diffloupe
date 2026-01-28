@@ -1,1 +1,3 @@
-console.log("DiffLoupe starting...");
+import { run } from "./cli/index.js";
+
+run();
