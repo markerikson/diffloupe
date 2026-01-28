@@ -11,6 +11,7 @@ import { alignIntent } from "../prompts/alignment.js";
 import { hasAPIKey } from "../services/llm.js";
 import { GitError } from "../types/git.js";
 import { LLMAPIKeyError, LLMGenerationError } from "../types/llm.js";
+import { createPRCommand } from "./pr.js";
 
 export interface AnalyzeOptions {
   target: string;
@@ -244,6 +245,9 @@ program
       process.exit(1);
     }
   });
+
+// Register subcommands
+program.addCommand(createPRCommand());
 
 export function run() {
   program.parse();
