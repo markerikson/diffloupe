@@ -293,4 +293,86 @@ describe("buildRiskPrompt", () => {
 
     expect(prompt).not.toContain("## Author's Stated Intent");
   });
+
+  it("summarizes large deleted files (>100 lines)", () => {
+    // Create a deleted file with 150 lines
+    const deletedLines = [
+      'import { db } from "../db";',
+      "",
+      "export function validateAuth() {",
+      "  // auth logic",
+      "}",
+      "",
+      "export class LegacyService {",
+      "  query() {}",
+      "}",
+    ];
+    while (deletedLines.length < 150) {
+      deletedLines.push(`// line ${deletedLines.length + 1}`);
+    }
+
+    const deletedFile: DiffFile = {
+      path: "src/legacy/old-service.ts",
+      status: "deleted",
+      isBinary: false,
+      hunks: [
+        {
+          oldStart: 1,
+          oldLines: 150,
+          newStart: 0,
+          newLines: 0,
+          header: "@@ -1,150 +0,0 @@",
+          lines: deletedLines.map((line, i) => ({
+            type: "delete" as const,
+            content: line,
+            oldLineNumber: i + 1,
+            newLineNumber: undefined,
+          })),
+        },
+      ],
+    };
+
+    const diff: ParsedDiff = { files: [deletedFile] };
+    const classified = [classify(deletedFile, 1, "source code")];
+
+    const prompt = buildRiskPrompt(diff, classified);
+
+    // Should use summary format
+    expect(prompt).toContain("DELETED FILE: src/legacy/old-service.ts (150 lines)");
+    expect(prompt).toContain("Extracted signatures:");
+    expect(prompt).toContain("- function validateAuth()");
+    expect(prompt).toContain("- class LegacyService");
+  });
+
+  it("shows full content for small deleted files", () => {
+    const smallDeletedFile: DiffFile = {
+      path: "src/utils/tiny.ts",
+      status: "deleted",
+      isBinary: false,
+      hunks: [
+        {
+          oldStart: 1,
+          oldLines: 3,
+          newStart: 0,
+          newLines: 0,
+          header: "@@ -1,3 +0,0 @@",
+          lines: [
+            { type: "delete", content: "export const X = 1;", oldLineNumber: 1, newLineNumber: undefined },
+            { type: "delete", content: "export const Y = 2;", oldLineNumber: 2, newLineNumber: undefined },
+            { type: "delete", content: "export const Z = 3;", oldLineNumber: 3, newLineNumber: undefined },
+          ],
+        },
+      ],
+    };
+
+    const diff: ParsedDiff = { files: [smallDeletedFile] };
+    const classified = [classify(smallDeletedFile, 1, "source code")];
+
+    const prompt = buildRiskPrompt(diff, classified);
+
+    // Should use standard diff format
+    expect(prompt).toContain("=== src/utils/tiny.ts (DELETED) ===");
+    expect(prompt).toContain("-export const X = 1;");
+    expect(prompt).not.toContain("DELETED FILE:");
+  });
 });

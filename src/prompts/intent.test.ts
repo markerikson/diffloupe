@@ -234,4 +234,109 @@ describe("buildIntentPrompt", () => {
 
     expect(prompt).not.toContain("## Author's Stated Intent");
   });
+
+  it("summarizes large deleted files (>100 lines)", () => {
+    // Create a deleted file with 150 lines of content
+    const deletedLines = [
+      'import { createSlice } from "@reduxjs/toolkit";',
+      'import type { AuthState } from "./types";',
+      "",
+      "export interface User {",
+      "  id: string;",
+      "  name: string;",
+      "}",
+      "",
+      "export function validateToken(token: string): boolean {",
+      "  return token.length > 0;",
+      "}",
+      "",
+      "export class AuthService {",
+      "  login() {}",
+      "}",
+    ];
+    // Pad to 150 lines
+    while (deletedLines.length < 150) {
+      deletedLines.push(`// line ${deletedLines.length + 1}`);
+    }
+
+    const deletedFile: DiffFile = {
+      path: "src/old-auth/legacy-service.ts",
+      status: "deleted",
+      isBinary: false,
+      hunks: [
+        {
+          oldStart: 1,
+          oldLines: 150,
+          newStart: 0,
+          newLines: 0,
+          header: "@@ -1,150 +0,0 @@",
+          lines: deletedLines.map((line, i) => ({
+            type: "delete" as const,
+            content: line,
+            oldLineNumber: i + 1,
+            newLineNumber: undefined,
+          })),
+        },
+      ],
+    };
+
+    const diff: ParsedDiff = { files: [deletedFile] };
+    const classified = [classify(deletedFile, 1, "source code")];
+
+    const prompt = buildIntentPrompt(diff, classified);
+
+    // Should use summary format, not full diff
+    expect(prompt).toContain("DELETED FILE: src/old-auth/legacy-service.ts (150 lines)");
+    expect(prompt).toContain("First 15 lines (header/imports):");
+    expect(prompt).toContain("Extracted signatures:");
+    expect(prompt).toContain("- interface User");
+    expect(prompt).toContain("- function validateToken()");
+    expect(prompt).toContain("- class AuthService");
+
+    // Should NOT contain the full diff format for this file
+    expect(prompt).not.toContain("=== src/old-auth/legacy-service.ts (DELETED) ===");
+  });
+
+  it("shows full content for small deleted files (<=100 lines)", () => {
+    const deletedLines = [
+      'import { foo } from "bar";',
+      "",
+      "export function helper() {}",
+    ];
+
+    const smallDeletedFile: DiffFile = {
+      path: "src/utils/small.ts",
+      status: "deleted",
+      isBinary: false,
+      hunks: [
+        {
+          oldStart: 1,
+          oldLines: 3,
+          newStart: 0,
+          newLines: 0,
+          header: "@@ -1,3 +0,0 @@",
+          lines: deletedLines.map((line, i) => ({
+            type: "delete" as const,
+            content: line,
+            oldLineNumber: i + 1,
+            newLineNumber: undefined,
+          })),
+        },
+      ],
+    };
+
+    const diff: ParsedDiff = { files: [smallDeletedFile] };
+    const classified = [classify(smallDeletedFile, 1, "source code")];
+
+    const prompt = buildIntentPrompt(diff, classified);
+
+    // Should use full diff format
+    expect(prompt).toContain("=== src/utils/small.ts (DELETED) ===");
+    expect(prompt).toContain('@@ -1,3 +0,0 @@');
+    expect(prompt).toContain('-import { foo } from "bar";');
+
+    // Should NOT use summary format
+    expect(prompt).not.toContain("DELETED FILE:");
+    expect(prompt).not.toContain("Extracted signatures:");
+  });
 });

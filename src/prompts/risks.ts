@@ -32,7 +32,7 @@
 import { chat } from "@tanstack/ai";
 import { anthropicText } from "@tanstack/ai-anthropic";
 
-import type { ParsedDiff, DiffFile, DiffHunk } from "../types/diff.js";
+import type { ParsedDiff } from "../types/diff.js";
 import type { ClassifiedFile } from "../types/loader.js";
 import {
   RiskAssessmentSchema,
@@ -41,6 +41,7 @@ import {
   type RiskSeverity,
 } from "../types/analysis.js";
 import { wrapSchema } from "../utils/schema-compat.js";
+import { formatDiffFile } from "../utils/format-diff.js";
 
 // Re-export types for convenience
 export type { RiskAssessment, Risk, RiskSeverity };
@@ -130,53 +131,8 @@ When you see something that MIGHT be an issue but could be fine with full contex
 - If a risk has a clear mitigation, include it
 - If you're uncertain, reflect that in confidence level`;
 
-/**
- * Format a single diff file for inclusion in the prompt.
- *
- * Reuses the same format as intent.ts for consistency - LLMs work better
- * when they see consistent formatting across similar tasks.
- */
-function formatDiffFile(file: DiffFile): string {
-  const lines: string[] = [];
-
-  // Header with path and status
-  const statusLabel = file.status.toUpperCase();
-  if (file.status === "renamed" && file.oldPath) {
-    lines.push(`=== ${file.oldPath} → ${file.path} (${statusLabel}) ===`);
-  } else {
-    lines.push(`=== ${file.path} (${statusLabel}) ===`);
-  }
-
-  // Binary files have no hunks
-  if (file.isBinary) {
-    lines.push("[binary file]");
-    return lines.join("\n");
-  }
-
-  // Include each hunk
-  for (const hunk of file.hunks) {
-    lines.push(formatHunk(hunk));
-  }
-
-  return lines.join("\n");
-}
-
-/**
- * Format a diff hunk with its lines.
- *
- * Standard diff format (+/-/space) is familiar to both LLMs and humans.
- */
-function formatHunk(hunk: DiffHunk): string {
-  const lines: string[] = [hunk.header];
-
-  for (const line of hunk.lines) {
-    const prefix =
-      line.type === "add" ? "+" : line.type === "delete" ? "-" : " ";
-    lines.push(`${prefix}${line.content}`);
-  }
-
-  return lines.join("\n");
-}
+// Note: formatDiffFile and formatHunk are now imported from ../utils/format-diff.js
+// They handle both regular diff formatting and deleted file summarization
 
 /**
  * Build the user prompt containing the diff content for risk analysis.

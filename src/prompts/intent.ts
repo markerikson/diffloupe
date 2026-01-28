@@ -33,10 +33,11 @@
 import { chat } from "@tanstack/ai";
 import { anthropicText } from "@tanstack/ai-anthropic";
 
-import type { ParsedDiff, DiffFile, DiffHunk } from "../types/diff.js";
+import type { ParsedDiff } from "../types/diff.js";
 import type { ClassifiedFile } from "../types/loader.js";
 import { DerivedIntentSchema, type DerivedIntent, type ChangeScope } from "../types/analysis.js";
 import { wrapSchema } from "../utils/schema-compat.js";
+import { formatDiffFile } from "../utils/format-diff.js";
 
 // Re-export types for convenience
 export type { DerivedIntent, ChangeScope };
@@ -96,60 +97,8 @@ You are analyzing a diff, not the complete codebase. This means:
 
 Focus on understanding the intent from what IS visible in the diff. Don't flag concerns about code you can't see - assume referenced files and symbols exist unless there's clear evidence otherwise.`;
 
-/**
- * Format a single diff file for inclusion in the prompt.
- *
- * We include:
- * - File path and status (added/modified/deleted/renamed)
- * - The actual diff hunks with context
- *
- * For readability, we use a simple format that's easy for both
- * humans and LLMs to parse.
- */
-function formatDiffFile(file: DiffFile): string {
-  const lines: string[] = [];
-
-  // Header with path and status
-  const statusLabel = file.status.toUpperCase();
-  if (file.status === "renamed" && file.oldPath) {
-    lines.push(`=== ${file.oldPath} → ${file.path} (${statusLabel}) ===`);
-  } else {
-    lines.push(`=== ${file.path} (${statusLabel}) ===`);
-  }
-
-  // Binary files have no hunks
-  if (file.isBinary) {
-    lines.push("[binary file]");
-    return lines.join("\n");
-  }
-
-  // Include each hunk
-  for (const hunk of file.hunks) {
-    lines.push(formatHunk(hunk));
-  }
-
-  return lines.join("\n");
-}
-
-/**
- * Format a diff hunk with its lines.
- *
- * We keep the standard diff format (+/-/space) because:
- * 1. LLMs are trained on lots of diffs in this format
- * 2. It's compact and information-dense
- * 3. The prefixes make add/remove/context visually clear
- */
-function formatHunk(hunk: DiffHunk): string {
-  const lines: string[] = [hunk.header];
-
-  for (const line of hunk.lines) {
-    const prefix =
-      line.type === "add" ? "+" : line.type === "delete" ? "-" : " ";
-    lines.push(`${prefix}${line.content}`);
-  }
-
-  return lines.join("\n");
-}
+// Note: formatDiffFile and formatHunk are now imported from ../utils/format-diff.js
+// They handle both regular diff formatting and deleted file summarization
 
 /**
  * Build the user prompt containing the diff content.
