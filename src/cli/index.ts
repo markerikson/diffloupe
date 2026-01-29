@@ -21,6 +21,7 @@ import {
   runFlowBasedAnalysis,
   type DecompositionStrategy,
 } from "../services/decomposition/index.js";
+import { readTextFile, fileExists, readStdin } from "../runtime/index.js";
 
 export interface AnalyzeOptions {
   target: string;
@@ -50,11 +51,10 @@ async function resolveStatedIntent(options: AnalyzeOptions): Promise<string | un
 
   // Priority 2: File path
   if (options.intentFile) {
-    const file = Bun.file(options.intentFile);
-    if (!(await file.exists())) {
+    if (!(await fileExists(options.intentFile))) {
       throw new Error(`Intent file not found: ${options.intentFile}`);
     }
-    const content = await file.text();
+    const content = await readTextFile(options.intentFile);
     return content.trim() || undefined;
   }
 
@@ -72,12 +72,12 @@ async function resolveStatedIntent(options: AnalyzeOptions): Promise<string | un
   }
 
   // Priority 4: stdin if piped (non-TTY)
-  // Note: Bun.stdin.text() blocks until EOF. This is standard behavior for piped
+  // Note: readStdin() blocks until EOF. This is standard behavior for piped
   // input (e.g., `echo "intent" | diffloupe analyze`), but could hang if stdin
   // is opened but never closed. Not adding a timeout for now since this matches
   // typical CLI tool behavior.
   if (!process.stdin.isTTY) {
-    const text = await Bun.stdin.text();
+    const text = await readStdin();
     return text.trim() || undefined;
   }
 

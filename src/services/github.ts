@@ -8,6 +8,7 @@
 import { dirname } from "path";
 import { GitHubError, type PRMetadata } from "../types/github.js";
 import type { SiblingFile } from "./context.js";
+import { spawn } from "../runtime/index.js";
 
 /**
  * Check if gh CLI is installed and authenticated.
@@ -15,14 +16,10 @@ import type { SiblingFile } from "./context.js";
  * @throws GitHubError if gh is not installed or not authenticated
  */
 export async function checkGhAvailable(): Promise<void> {
-  // Check if gh is installed
-  const whichProc = Bun.spawn(["which", "gh"], {
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const whichCode = await whichProc.exited;
+  // Check if gh is installed (use --version instead of 'which' for cross-platform)
+  const versionResult = await spawn("gh", ["--version"]);
 
-  if (whichCode !== 0) {
+  if (versionResult.exitCode !== 0) {
     throw new GitHubError(
       "gh CLI is not installed. Install it from https://cli.github.com/",
       "GH_NOT_INSTALLED"
@@ -30,13 +27,9 @@ export async function checkGhAvailable(): Promise<void> {
   }
 
   // Check if authenticated
-  const authProc = Bun.spawn(["gh", "auth", "status"], {
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const authCode = await authProc.exited;
+  const authResult = await spawn("gh", ["auth", "status"]);
 
-  if (authCode !== 0) {
+  if (authResult.exitCode !== 0) {
     throw new GitHubError(
       "Not authenticated with GitHub. Run `gh auth login` to authenticate.",
       "NOT_AUTHENTICATED"
@@ -61,16 +54,7 @@ export async function fetchPrDiff(
     args.push("-R", repo);
   }
 
-  const proc = Bun.spawn(["gh", ...args], {
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
+  const { stdout, stderr, exitCode } = await spawn("gh", args);
 
   if (exitCode !== 0) {
     handleGhError(stderr, prNumber, repo);
@@ -108,16 +92,7 @@ export async function fetchPrMetadata(
     args.push("-R", repo);
   }
 
-  const proc = Bun.spawn(["gh", ...args], {
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
+  const { stdout, stderr, exitCode } = await spawn("gh", args);
 
   if (exitCode !== 0) {
     handleGhError(stderr, prNumber, repo);
@@ -246,16 +221,7 @@ export async function fetchSiblingFilesFromGitHub(
   // Fetch recursive tree for the base ref
   const args = ["api", `repos/${repo}/git/trees/${baseRef}?recursive=1`, "--jq", ".tree[].path"];
 
-  const proc = Bun.spawn(["gh", ...args], {
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
+  const { stdout, stderr, exitCode } = await spawn("gh", args);
 
   if (exitCode !== 0) {
     // Non-fatal: return empty array with a warning flag

@@ -27,6 +27,7 @@ import { alignIntent } from "../prompts/alignment.js";
 import { hasAPIKey } from "../services/llm.js";
 import { LLMAPIKeyError, LLMGenerationError } from "../types/llm.js";
 import { formatSummary, formatVerbose } from "./output.js";
+import { spawn } from "../runtime/index.js";
 
 export interface PROptions {
   prNumber: number;
@@ -121,15 +122,13 @@ function outputResults(
  * Get current repository name from gh CLI.
  */
 async function getCurrentRepo(): Promise<string> {
-  const proc = Bun.spawn(["gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"], {
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, _stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
+  const { stdout, exitCode } = await spawn("gh", [
+    "repo",
+    "view",
+    "--json",
+    "nameWithOwner",
+    "--jq",
+    ".nameWithOwner",
   ]);
 
   if (exitCode !== 0) {
