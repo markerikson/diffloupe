@@ -17,6 +17,7 @@ import { createSummarizeCommand } from "./summarize.js";
 import {
   calculateDiffMetrics,
   selectStrategy,
+  runTwoPassAnalysis,
   type DecompositionStrategy,
 } from "../services/decomposition/index.js";
 
@@ -242,27 +243,52 @@ program
         )
       );
 
-      // TODO: For now, all strategies fall back to direct analysis.
-      // Future phases will implement two-pass, flow-based, and hierarchical.
-      if (strategySelection.strategy !== "direct") {
+      // Step 2.5: Gather repository context (sibling files in touched directories)
+      const repositoryContext = await gatherContext(parsed, opts.cwd);
+
+      // Step 3: Run analysis based on selected strategy
+      let intent: DerivedIntent;
+      let risks: RiskAssessment;
+
+      if (strategySelection.strategy === "two-pass") {
+        // Two-pass strategy for medium diffs
+        console.log(pc.dim("Pass 1: Quick overview..."));
+        const result = await runTwoPassAnalysis(
+          parsed,
+          classified,
+          statedIntent,
+          repositoryContext
+        );
+        console.log(
+          pc.dim(
+            `Pass 2: Deep-dive on ${result.metadata.flaggedFileCount} flagged file(s)...`
+          )
+        );
+        intent = result.intent;
+        risks = result.risks;
+      } else if (
+        strategySelection.strategy === "flow-based" ||
+        strategySelection.strategy === "hierarchical"
+      ) {
+        // Not yet implemented - fall back to direct
         console.log(
           pc.yellow(
             `Note: ${strategySelection.strategy} strategy not yet implemented, using direct analysis`
           )
         );
+        console.log(pc.dim("Analyzing with AI..."));
+        [intent, risks] = await Promise.all([
+          deriveIntent(parsed, classified, statedIntent, repositoryContext),
+          assessRisks(parsed, classified, statedIntent, repositoryContext),
+        ]);
+      } else {
+        // Direct analysis (default for small diffs)
+        console.log(pc.dim("Analyzing with AI..."));
+        [intent, risks] = await Promise.all([
+          deriveIntent(parsed, classified, statedIntent, repositoryContext),
+          assessRisks(parsed, classified, statedIntent, repositoryContext),
+        ]);
       }
-
-      console.log(pc.dim("Analyzing with AI..."));
-
-      // Step 2.5: Gather repository context (sibling files in touched directories)
-      const repositoryContext = await gatherContext(parsed, opts.cwd);
-
-      // Step 3: Run intent and risk analysis in parallel
-      // Pass stated intent and repository context to both prompts
-      const [intent, risks] = await Promise.all([
-        deriveIntent(parsed, classified, statedIntent, repositoryContext),
-        assessRisks(parsed, classified, statedIntent, repositoryContext),
-      ]);
 
       // Step 4: Run alignment analysis if stated intent is provided
       let alignment: IntentAlignment | undefined;

@@ -276,3 +276,65 @@ export const IntentAlignmentSchema = type({
   unstated: "string[]",
 });
 export type IntentAlignment = typeof IntentAlignmentSchema.infer;
+
+// ============================================================================
+// Flow Detection Types (for large diff decomposition)
+// ============================================================================
+
+/**
+ * Schema for a detected logical flow in a large diff.
+ *
+ * A "flow" is a cohesive group of files that serve a common purpose,
+ * such as "Authentication", "Data Layer", "UI Components", etc.
+ *
+ * ## Design Notes
+ *
+ * - Used for diffs in the 41-80 file range (flow-based strategy)
+ * - Each file belongs to exactly ONE flow (no overlap)
+ * - Flows are ordered by priority for review guidance
+ * - Inspired by LaReview's approach to code review organization
+ */
+export const DetectedFlowSchema = type({
+  /**
+   * Human-readable name for this flow.
+   * Examples: "Authentication", "Data Layer", "UI Components", "API Routes"
+   */
+  name: "string",
+
+  /**
+   * What this flow accomplishes (1-2 sentences).
+   * Should explain the purpose/goal of changes in this flow.
+   */
+  description: "string",
+
+  /**
+   * Files belonging to this flow (full paths).
+   * Each file appears in exactly one flow.
+   */
+  files: "string[]",
+
+  /**
+   * Suggested analysis/review order.
+   * 1 = highest priority (security, auth, data mutations)
+   * Higher numbers = lower priority
+   */
+  priority: "number",
+});
+export type DetectedFlow = typeof DetectedFlowSchema.infer;
+
+/**
+ * Schema for flow detection results.
+ */
+export const FlowDetectionResultSchema = type({
+  /**
+   * Detected logical flows, ordered by priority.
+   */
+  flows: DetectedFlowSchema.array(),
+
+  /**
+   * Files that don't fit any detected flow.
+   * These may be cross-cutting concerns or miscellaneous changes.
+   */
+  uncategorized: "string[]",
+});
+export type FlowDetectionResult = typeof FlowDetectionResultSchema.infer;

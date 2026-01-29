@@ -17,5 +17,34 @@ export type {
   FileChunk,
 } from "./types.js";
 
+// Two-pass types
+export type { OverviewResult, TwoPassAnalysisResult } from "./two-pass.js";
+
+// Flow detection types
+export type {
+  DetectedFlow,
+  FlowDetectionResult,
+  FlowDetectionResponse,
+} from "./flow-detection.js";
+
 // Strategy selection
 export { calculateDiffMetrics, selectStrategy } from "./strategy-selector.js";
+
+// Two-pass analysis
+export {
+  runTwoPassAnalysis,
+  runOverviewPass,
+  runDeepDivePass,
+  mergeResults,
+  buildOverviewPrompt,
+  buildDeepDivePrompt,
+} from "./two-pass.js";
+
+// Flow detection (large diffs)
+export {
+  detectFlows,
+  buildFlowDetectionPrompt,
+  getFilesForFlow,
+  getUncategorizedFiles,
+  estimateFlowTokens,
+} from "./flow-detection.js";
