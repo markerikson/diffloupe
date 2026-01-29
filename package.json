@@ -1,18 +1,37 @@
 {
-  "name": "diffloupe",
+  "name": "@acemarke/diffloupe",
   "version": "0.1.0",
   "type": "module",
+  "description": "Understand your diffs before you merge them",
   "bin": {
-    "diffloupe": "./src/index.ts"
+    "diffloupe": "./dist/index.js"
   },
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "start": "bun run src/index.ts",
     "dev": "bun run --watch src/index.ts",
-    "build": "bun build src/index.ts --outdir=dist --target=bun",
+    "prebuild": "rm -rf dist",
+    "build": "bun build src/index.ts --outdir=dist --target=node --minify --banner '#!/usr/bin/env node'",
+    "prepublishOnly": "bun run build && bun run typecheck",
     "test": "bun test",
     "typecheck": "tsgo --noEmit",
     "lint": "oxlint src/"
   },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/acemarke/diffloupe.git"
+  },
+  "keywords": ["cli", "diff", "code-review", "ai", "git", "llm"],
+  "author": "Mark Erikson",
+  "license": "MIT",
   "devDependencies": {
     "@typescript/native-preview": "^7.0.0-dev.20260127.1",
     "bun-types": "^1.3.7",
