@@ -1,0 +1,18 @@
+{
+  "$schema": "https://unpkg.com/release-it@19/schema/release-it.json",
+  "hooks": {
+    "before:init": ["bun run typecheck", "bun run test"],
+    "after:bump": "bun install && git add -u"
+  },
+  "git": {
+    "commitMessage": "chore: release v${version}",
+    "tagName": "v${version}"
+  },
+  "github": {
+    "release": true,
+    "draft": true
+  },
+  "npm": {
+    "publish": false
+  }
+}

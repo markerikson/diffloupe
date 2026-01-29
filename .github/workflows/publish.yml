@@ -1,0 +1,42 @@
+name: Publish Package to npm
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'npm dist-tag'
+        required: true
+        default: 'latest'
+        type: choice
+        options:
+          - latest
+          - next
+          - beta
+
+permissions: {}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@e2c7b0c4a28081a4a3db9c62d1cd75e9cae78121 # v2
+        with:
+          bun-version: latest
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: '24.x'
+          registry-url: 'https://registry.npmjs.org'
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run build
+
+      - run: npm publish --access public --provenance --tag ${{ inputs.tag }}
