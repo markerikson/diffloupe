@@ -14,6 +14,11 @@ import { GitError } from "../types/git.js";
 import { LLMAPIKeyError, LLMGenerationError } from "../types/llm.js";
 import { createPRCommand } from "./pr.js";
 import { createSummarizeCommand } from "./summarize.js";
+import {
+  calculateDiffMetrics,
+  selectStrategy,
+  type DecompositionStrategy,
+} from "../services/decomposition/index.js";
 
 export interface AnalyzeOptions {
   target: string;
@@ -24,6 +29,8 @@ export interface AnalyzeOptions {
   intentFile?: string;
   demo?: boolean;
   cwd?: string;
+  /** Force a specific decomposition strategy (for testing) */
+  strategy?: DecompositionStrategy;
 }
 
 /**
@@ -156,6 +163,10 @@ program
   .option("--intent-file <path>", "Read intent from a file")
   .option("-C, --cwd <path>", "Run as if git was started in <path>")
   .option("--demo", "Show demo output with mock data", false)
+  .option(
+    "--strategy <strategy>",
+    "Force decomposition strategy (direct, two-pass, flow-based, hierarchical)"
+  )
   .action(async (target: string, options: Omit<AnalyzeOptions, "target">) => {
     const opts: AnalyzeOptions = { target, ...options };
 
@@ -210,9 +221,38 @@ program
       const parsed = parseDiff(diffResult.diff);
       const classified = classifyDiff(parsed);
 
+      // Step 2.5: Select decomposition strategy based on diff size
+      const metrics = calculateDiffMetrics(parsed, classified);
+      const strategySelection = opts.strategy
+        ? {
+            strategy: opts.strategy,
+            reason: `Forced via --strategy flag`,
+            metrics,
+          }
+        : selectStrategy(metrics);
+
       console.log(
-        pc.dim(`Found ${parsed.files.length} file(s), analyzing with AI...`)
+        pc.dim(
+          `Found ${parsed.files.length} file(s), ~${metrics.estimatedTokens} tokens`
+        )
       );
+      console.log(
+        pc.dim(
+          `Strategy: ${strategySelection.strategy} (${strategySelection.reason})`
+        )
+      );
+
+      // TODO: For now, all strategies fall back to direct analysis.
+      // Future phases will implement two-pass, flow-based, and hierarchical.
+      if (strategySelection.strategy !== "direct") {
+        console.log(
+          pc.yellow(
+            `Note: ${strategySelection.strategy} strategy not yet implemented, using direct analysis`
+          )
+        );
+      }
+
+      console.log(pc.dim("Analyzing with AI..."));
 
       // Step 2.5: Gather repository context (sibling files in touched directories)
       const repositoryContext = await gatherContext(parsed, opts.cwd);
