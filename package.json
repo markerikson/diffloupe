@@ -4,7 +4,7 @@
   "type": "module",
   "description": "Understand your diffs before you merge them",
   "bin": {
-    "diffloupe": "./dist/index.js"
+    "diffloupe": "dist/index.js"
   },
   "exports": {
     ".": "./dist/index.js"
@@ -29,7 +29,14 @@
     "type": "git",
     "url": "git+https://github.com/acemarke/diffloupe.git"
   },
-  "keywords": ["cli", "diff", "code-review", "ai", "git", "llm"],
+  "keywords": [
+    "cli",
+    "diff",
+    "code-review",
+    "ai",
+    "git",
+    "llm"
+  ],
   "author": "Mark Erikson",
   "license": "MIT",
   "devDependencies": {
