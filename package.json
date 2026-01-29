@@ -18,7 +18,9 @@
     "prebuild": "rm -rf dist",
     "build": "bun build src/index.ts --outdir=dist --target=node --minify --banner '#!/usr/bin/env node'",
     "prepublishOnly": "bun run build && bun run typecheck",
-    "test": "bun test",
+    "test": "bun test src/cli src/services src/types src/prompts/alignment.test.ts src/prompts/intent.test.ts src/prompts/risks.test.ts",
+    "test:all": "bun test src",
+    "test:integration": "bun test src/prompts/*.integration.test.ts",
     "typecheck": "tsgo --noEmit",
     "lint": "oxlint src/",
     "release": "release-it"
