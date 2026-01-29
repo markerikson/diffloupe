@@ -18,6 +18,7 @@ import {
   calculateDiffMetrics,
   selectStrategy,
   runTwoPassAnalysis,
+  runFlowBasedAnalysis,
   type DecompositionStrategy,
 } from "../services/decomposition/index.js";
 
@@ -266,21 +267,54 @@ program
         );
         intent = result.intent;
         risks = result.risks;
-      } else if (
-        strategySelection.strategy === "flow-based" ||
-        strategySelection.strategy === "hierarchical"
-      ) {
-        // Not yet implemented - fall back to direct
+      } else if (strategySelection.strategy === "flow-based") {
+        // Flow-based strategy for large diffs
+        const result = await runFlowBasedAnalysis(
+          parsed,
+          classified,
+          statedIntent,
+          repositoryContext,
+          (stage, detail) => {
+            if (stage === "detecting") {
+              console.log(pc.dim("Detecting logical flows..."));
+            } else if (stage === "analyzing" && detail) {
+              console.log(pc.dim(detail));
+            } else if (stage === "synthesizing") {
+              console.log(pc.dim("Synthesizing results..."));
+            }
+          }
+        );
         console.log(
-          pc.yellow(
-            `Note: ${strategySelection.strategy} strategy not yet implemented, using direct analysis`
+          pc.dim(
+            `Analyzed ${result.metadata.flowCount} flows across ${result.metadata.totalFileCount} files`
           )
         );
-        console.log(pc.dim("Analyzing with AI..."));
-        [intent, risks] = await Promise.all([
-          deriveIntent(parsed, classified, statedIntent, repositoryContext),
-          assessRisks(parsed, classified, statedIntent, repositoryContext),
-        ]);
+        intent = result.synthesis.overallIntent;
+        risks = result.synthesis.overallRisks;
+      } else if (strategySelection.strategy === "hierarchical") {
+        // Hierarchical strategy not yet implemented - fall back to flow-based
+        console.log(
+          pc.yellow(
+            `Note: hierarchical strategy not yet implemented, using flow-based analysis`
+          )
+        );
+        const result = await runFlowBasedAnalysis(
+          parsed,
+          classified,
+          statedIntent,
+          repositoryContext,
+          (stage, detail) => {
+            if (stage === "detecting") {
+              console.log(pc.dim("Detecting logical flows..."));
+            } else if (stage === "analyzing" && detail) {
+              console.log(pc.dim(detail));
+            } else if (stage === "synthesizing") {
+              console.log(pc.dim("Synthesizing results..."));
+            }
+          }
+        );
+        intent = result.synthesis.overallIntent;
+        risks = result.synthesis.overallRisks;
       } else {
         // Direct analysis (default for small diffs)
         console.log(pc.dim("Analyzing with AI..."));

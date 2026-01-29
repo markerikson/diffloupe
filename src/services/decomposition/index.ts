@@ -27,6 +27,12 @@ export type {
   FlowDetectionResponse,
 } from "./flow-detection.js";
 
+// Flow analysis types
+export type {
+  FlowAnalysisResult,
+  FlowBasedAnalysisResult,
+} from "./flow-analysis.js";
+
 // Strategy selection
 export { calculateDiffMetrics, selectStrategy } from "./strategy-selector.js";
 
@@ -48,3 +54,14 @@ export {
   getUncategorizedFiles,
   estimateFlowTokens,
 } from "./flow-detection.js";
+
+// Flow-based analysis (large diffs)
+export {
+  runFlowBasedAnalysis,
+  analyzeFlow,
+  analyzeAllFlows,
+  synthesizeFlowResults,
+  filterDiffForFlow,
+  filterClassifiedForFlow,
+  buildSynthesisPrompt,
+} from "./flow-analysis.js";
