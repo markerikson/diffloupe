@@ -15,8 +15,10 @@
   "scripts": {
     "start": "bun run src/index.ts",
     "dev": "bun run --watch src/index.ts",
+    "dev:web": "vite --config src/web/vite.config.ts",
     "prebuild": "rm -rf dist",
     "build": "bun build src/index.ts --outdir=dist --target=node --minify --banner '#!/usr/bin/env node'",
+    "build:web": "vite build --config src/web/vite.config.ts",
     "prepublishOnly": "bun run build && bun run typecheck",
     "test": "bun test src/cli src/services src/types src/prompts/alignment.test.ts src/prompts/intent.test.ts src/prompts/risks.test.ts",
     "test:all": "bun test src",
