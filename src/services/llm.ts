@@ -25,7 +25,7 @@
  */
 
 import { chat } from "@tanstack/ai";
-import { anthropicText } from "@tanstack/ai-anthropic";
+import { createAnthropicChat } from "@tanstack/ai-anthropic";
 import {
   LLMAPIKeyError,
   LLMGenerationError,
@@ -35,10 +35,14 @@ import {
   type LLMTextResult,
   type LLMJSONResult,
 } from "../types/llm.js";
+import { getAnthropicApiKey } from "./config.js";
 
 // Re-export types for convenience
 export type { LLMConfig, LLMModel, LLMTextResult, LLMJSONResult };
 export { LLMAPIKeyError, LLMGenerationError, LLMJSONParseError };
+
+// Store the resolved API key after first check
+let resolvedApiKey: string | undefined;
 
 /**
  * Default model to use for generation.
@@ -59,21 +63,39 @@ const DEFAULT_MAX_TOKENS = 4096;
 const DEFAULT_TEMPERATURE = 0.5;
 
 /**
- * Checks if the Anthropic API key is available in the environment.
+ * Initialize the API key from config sources.
+ * Must be called before using LLM functions.
  *
- * @returns true if ANTHROPIC_API_KEY is set
+ * @param explicitKey - Optional explicit key (e.g., from CLI --api-key flag)
+ */
+export async function initializeApiKey(explicitKey?: string): Promise<void> {
+  resolvedApiKey = await getAnthropicApiKey(explicitKey);
+}
+
+/**
+ * Checks if the Anthropic API key is available.
+ * Checks the resolved key first, then falls back to env var for backwards compatibility.
+ *
+ * @returns true if API key is available
  */
 export function hasAPIKey(): boolean {
-  return !!process.env["ANTHROPIC_API_KEY"];
+  return !!(resolvedApiKey || process.env["ANTHROPIC_API_KEY"]);
+}
+
+/**
+ * Get the current API key. Returns the resolved key or falls back to env var.
+ */
+function getAPIKey(): string | undefined {
+  return resolvedApiKey || process.env["ANTHROPIC_API_KEY"];
 }
 
 /**
  * Validates that the API key is present, throwing a clear error if not.
  *
- * @throws {LLMAPIKeyError} if ANTHROPIC_API_KEY is not set
+ * @throws {LLMAPIKeyError} if no API key is available
  */
 function validateAPIKey(): void {
-  if (!hasAPIKey()) {
+  if (!getAPIKey()) {
     throw new LLMAPIKeyError();
   }
 }
@@ -112,9 +134,9 @@ export async function generateText(
   const temperature = config?.temperature ?? DEFAULT_TEMPERATURE;
 
   try {
-    // Create the Anthropic text adapter
-    // This reads ANTHROPIC_API_KEY from the environment automatically
-    const adapter = anthropicText(model);
+    // Create the Anthropic text adapter with explicit API key
+    const apiKey = getAPIKey()!;
+    const adapter = createAnthropicChat(model, apiKey);
 
     // Use chat() with stream: false to get a simple string response
     // When stream: false, chat() returns a Promise<string> instead of AsyncIterable
@@ -245,7 +267,8 @@ export async function generateTextWithSystem(
   const temperature = config?.temperature ?? DEFAULT_TEMPERATURE;
 
   try {
-    const adapter = anthropicText(model);
+    const apiKey = getAPIKey()!;
+    const adapter = createAnthropicChat(model, apiKey);
 
     const text = await chat({
       adapter,

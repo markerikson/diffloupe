@@ -22,6 +22,9 @@ Thumbs.db
 .env.local
 .env.*.local
 
+# Config file (may contain API keys)
+config.json
+
 # Logs
 *.log
 npm-debug.log*

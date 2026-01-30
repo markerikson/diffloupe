@@ -69,8 +69,10 @@ export interface LLMJSONResult<T> {
 export class LLMAPIKeyError extends Error {
   constructor() {
     super(
-      "ANTHROPIC_API_KEY environment variable is not set. " +
-        "Please set it to your Anthropic API key."
+      "Anthropic API key not found. Set it via:\n" +
+        "  1. CLI flag: --api-key <key>\n" +
+        "  2. Config file: ~/.config/diffloupe/config.json\n" +
+        "  3. Environment variable: ANTHROPIC_API_KEY"
     );
     this.name = "LLMAPIKeyError";
   }

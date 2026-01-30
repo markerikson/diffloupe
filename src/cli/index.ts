@@ -9,11 +9,12 @@ import { gatherContext } from "../services/context.js";
 import { deriveIntent } from "../prompts/intent.js";
 import { assessRisks } from "../prompts/risks.js";
 import { alignIntent } from "../prompts/alignment.js";
-import { hasAPIKey } from "../services/llm.js";
+import { hasAPIKey, initializeApiKey } from "../services/llm.js";
 import { GitError } from "../types/git.js";
 import { LLMAPIKeyError, LLMGenerationError } from "../types/llm.js";
 import { createPRCommand } from "./pr.js";
 import { createSummarizeCommand } from "./summarize.js";
+import { getConfigPath } from "../services/config.js";
 import {
   calculateDiffMetrics,
   selectStrategy,
@@ -34,6 +35,8 @@ export interface AnalyzeOptions {
   cwd?: string;
   /** Force a specific decomposition strategy (for testing) */
   strategy?: DecompositionStrategy;
+  /** Explicit API key (overrides config file and env var) */
+  apiKey?: string;
 }
 
 /**
@@ -169,6 +172,10 @@ program
     "--strategy <strategy>",
     "Force decomposition strategy (direct, two-pass, flow-based, hierarchical)"
   )
+  .option(
+    "--api-key <key>",
+    "Anthropic API key (overrides config file and env var)"
+  )
   .action(async (target: string, options: Omit<AnalyzeOptions, "target">) => {
     const opts: AnalyzeOptions = { target, ...options };
 
@@ -189,12 +196,19 @@ program
       return;
     }
 
+    // Initialize API key from all sources (CLI flag, config file, env var)
+    await initializeApiKey(opts.apiKey);
+
     // Check for API key before doing any work
     if (!hasAPIKey()) {
+      const configPath = getConfigPath();
       console.error(
-        pc.red("Error: ANTHROPIC_API_KEY environment variable is not set.\n") +
-          pc.dim("Set it in your .env file or export it in your shell:\n") +
-          pc.dim("  export ANTHROPIC_API_KEY=sk-ant-...\n\n") +
+        pc.red("Error: Anthropic API key not found.\n") +
+          pc.dim("Set it via one of:\n") +
+          pc.dim("  1. CLI flag: diffloupe analyze --api-key <key>\n") +
+          pc.dim(`  2. Config file: ${configPath}\n`) +
+          pc.dim('     {"apiKeys":{"anthropic":"sk-ant-..."}}\n') +
+          pc.dim("  3. Environment variable: ANTHROPIC_API_KEY\n\n") +
           pc.dim("Or use --demo to see example output without an API key.")
       );
       process.exit(1);
