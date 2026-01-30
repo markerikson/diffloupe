@@ -1,0 +1,76 @@
+:root {
+  /* Severity colors matching CLI aesthetics */
+  --color-critical: #d946ef;
+  --color-critical-light: #f0abfc;
+  --color-critical-dark: #a21caf;
+
+  --color-high: #ef4444;
+  --color-high-light: #fca5a5;
+  --color-high-dark: #b91c1c;
+
+  --color-medium: #f59e0b;
+  --color-medium-light: #fcd34d;
+  --color-medium-dark: #b45309;
+
+  --color-low: #22c55e;
+  --color-low-light: #86efac;
+  --color-low-dark: #15803d;
+
+  /* Dark theme base colors */
+  --color-surface: #0f172a;
+  --color-surface-raised: #1e293b;
+  --color-surface-overlay: #334155;
+
+  /* Text colors */
+  --color-text-primary: #f1f5f9;
+  --color-text-secondary: #94a3b8;
+  --color-text-muted: #64748b;
+
+  /* Border */
+  --color-border: #334155;
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  font-family: "Inter", system-ui, -apple-system, sans-serif;
+  background-color: var(--color-surface);
+  color: var(--color-text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+@supports (font-variation-settings: normal) {
+  body {
+    font-family: "Inter var", system-ui, -apple-system, sans-serif;
+  }
+}
+
+#root {
+  height: 100%;
+}
+
+/* Code block styling (for future Shiki integration) */
+pre {
+  background-color: var(--color-surface-raised);
+  border-radius: 8px;
+  padding: 16px;
+  overflow-x: auto;
+}
+
+code {
+  font-family: ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Consolas,
+    monospace;
+  font-size: 0.875rem;
+}

@@ -1,0 +1,92 @@
+.container {
+  min-height: 100vh;
+  background-color: var(--color-surface);
+}
+
+.header {
+  border-bottom: 1px solid var(--color-border);
+  background-color: var(--color-surface-raised);
+}
+
+.headerContent {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+.title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.titleAccent {
+  color: var(--color-critical);
+}
+
+.titleSecondary {
+  color: var(--color-text-muted);
+}
+
+.main {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 32px 16px;
+}
+
+.card {
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background-color: var(--color-surface-raised);
+  padding: 24px;
+}
+
+.cardTitle {
+  margin-bottom: 16px;
+  font-size: 1.125rem;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+.cardDescription {
+  color: var(--color-text-secondary);
+}
+
+.severityPreview {
+  margin-top: 24px;
+  display: flex;
+  gap: 16px;
+}
+
+.severityItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.severityDot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+.severityDot[data-severity="critical"] {
+  background-color: var(--color-critical);
+}
+
+.severityDot[data-severity="high"] {
+  background-color: var(--color-high);
+}
+
+.severityDot[data-severity="medium"] {
+  background-color: var(--color-medium);
+}
+
+.severityDot[data-severity="low"] {
+  background-color: var(--color-low);
+}
+
+.severityLabel {
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+}
