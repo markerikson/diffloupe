@@ -30,7 +30,6 @@
  */
 
 import { chat } from "@tanstack/ai";
-import { anthropicText } from "@tanstack/ai-anthropic";
 
 import type { ParsedDiff } from "../types/diff.js";
 import type { ClassifiedFile } from "../types/loader.js";
@@ -42,6 +41,7 @@ import {
 } from "../types/analysis.js";
 import { wrapSchema } from "../utils/schema-compat.js";
 import { formatDiffFile } from "../utils/format-diff.js";
+import { createAdapter } from "../services/llm.js";
 
 // Re-export types for convenience
 export type { RiskAssessment, Risk, RiskSeverity };
@@ -299,7 +299,7 @@ export async function assessRisks(
   try {
     // Use TanStack AI's chat() with structured output
     const result = await chat({
-      adapter: anthropicText("claude-sonnet-4-5"),
+      adapter: createAdapter(),
       systemPrompts: [SYSTEM_PROMPT],
       messages: [{ role: "user", content: userPrompt }],
       // Wrap schema for TanStack AI compatibility (ArkType schemas are functions,

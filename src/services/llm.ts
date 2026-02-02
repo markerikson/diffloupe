@@ -90,6 +90,20 @@ function getAPIKey(): string | undefined {
 }
 
 /**
+ * Create an Anthropic adapter with the configured API key.
+ * Use this instead of calling anthropicText() directly.
+ *
+ * @param model - The model to use (defaults to claude-sonnet-4-5)
+ * @returns A configured Anthropic adapter
+ * @throws {LLMAPIKeyError} if no API key is available
+ */
+export function createAdapter(model: LLMModel = DEFAULT_MODEL) {
+  validateAPIKey();
+  const apiKey = getAPIKey()!;
+  return createAnthropicChat(model, apiKey);
+}
+
+/**
  * Validates that the API key is present, throwing a clear error if not.
  *
  * @throws {LLMAPIKeyError} if no API key is available

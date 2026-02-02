@@ -26,7 +26,6 @@
  */
 
 import { chat } from "@tanstack/ai";
-import { anthropicText } from "@tanstack/ai-anthropic";
 import { type } from "arktype";
 
 import type { ParsedDiff, DiffFile } from "../../types/diff.js";
@@ -38,6 +37,7 @@ import type {
 } from "../../types/analysis.js";
 import { RiskAssessmentSchema } from "../../types/analysis.js";
 import { wrapSchema } from "../../utils/schema-compat.js";
+import { createAdapter } from "../llm.js";
 import { formatDiffFile } from "../../utils/format-diff.js";
 
 // ============================================================================
@@ -307,7 +307,7 @@ export async function runOverviewPass(
   );
 
   const response = await chat({
-    adapter: anthropicText("claude-sonnet-4-5"),
+    adapter: createAdapter(),
     systemPrompts: [OVERVIEW_SYSTEM_PROMPT],
     messages: [{ role: "user", content: userPrompt }],
     outputSchema: wrapSchema(OverviewResponseSchema),
@@ -477,7 +477,7 @@ export async function runDeepDivePass(
   );
 
   const response = await chat({
-    adapter: anthropicText("claude-sonnet-4-5"),
+    adapter: createAdapter(),
     systemPrompts: [DEEPDIVE_SYSTEM_PROMPT],
     messages: [{ role: "user", content: userPrompt }],
     outputSchema: wrapSchema(RiskAssessmentSchema),

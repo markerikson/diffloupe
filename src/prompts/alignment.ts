@@ -15,13 +15,13 @@
  */
 
 import { chat } from "@tanstack/ai";
-import { anthropicText } from "@tanstack/ai-anthropic";
 
 import type { ParsedDiff, DiffFile, DiffHunk } from "../types/diff.js";
 import type { ClassifiedFile } from "../types/loader.js";
 import type { DerivedIntent } from "../types/analysis.js";
 import { IntentAlignmentSchema, type IntentAlignment } from "../types/analysis.js";
 import { wrapSchema } from "../utils/schema-compat.js";
+import { createAdapter } from "../services/llm.js";
 
 // Re-export types for convenience
 export type { IntentAlignment };
@@ -216,7 +216,7 @@ export async function alignIntent(
   const userPrompt = buildAlignmentPrompt(statedIntent, derivedIntent, diff, classified, repositoryContext);
 
   const result = await chat({
-    adapter: anthropicText("claude-sonnet-4-5"),
+    adapter: createAdapter(),
     systemPrompts: [SYSTEM_PROMPT],
     messages: [{ role: "user", content: userPrompt }],
     outputSchema: wrapSchema(IntentAlignmentSchema),

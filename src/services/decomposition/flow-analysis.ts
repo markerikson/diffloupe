@@ -31,7 +31,6 @@
  */
 
 import { chat } from "@tanstack/ai";
-import { anthropicText } from "@tanstack/ai-anthropic";
 import { type } from "arktype";
 
 import type { ParsedDiff } from "../../types/diff.js";
@@ -43,6 +42,7 @@ import type {
   Risk,
 } from "../../types/analysis.js";
 import { wrapSchema } from "../../utils/schema-compat.js";
+import { createAdapter } from "../llm.js";
 
 import {
   detectFlows,
@@ -398,7 +398,7 @@ export async function synthesizeFlowResults(
   const userPrompt = buildSynthesisPrompt(flowResults, statedIntent);
 
   const response = await chat({
-    adapter: anthropicText("claude-sonnet-4-5"),
+    adapter: createAdapter(),
     systemPrompts: [SYNTHESIS_SYSTEM_PROMPT],
     messages: [{ role: "user", content: userPrompt }],
     outputSchema: wrapSchema(SynthesisResponseSchema),
