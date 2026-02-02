@@ -458,6 +458,15 @@ export async function synthesizeFlowResults(
  *
  * This is the main entry point for the flow-based strategy:
  * 1. Detect flows in the diff
+/** Progress callback for flow-based analysis */
+export type FlowProgressCallback = (
+  stage: "detecting" | "analyzing" | "synthesizing",
+  detail?: string,
+  flowIndex?: number,
+  flowCount?: number
+) => void;
+
+/**
  * 2. Analyze each flow in parallel
  * 3. Synthesize results into unified analysis
  *
@@ -473,12 +482,12 @@ export async function runFlowBasedAnalysis(
   classified: ClassifiedFile[],
   statedIntent?: string,
   repositoryContext?: string,
-  onProgress?: (stage: string, detail?: string) => void
+  onProgress?: FlowProgressCallback
 ): Promise<FlowBasedAnalysisResult> {
+  const totalFlows = () => flowDetection.flows.length;
+  
   // Step 1: Detect flows
-  if (onProgress) {
-    onProgress("detecting", "Identifying logical flows in diff...");
-  }
+  onProgress?.("detecting", "Identifying logical flows in diff...");
   const flowDetection = await detectFlows(diff, classified);
 
   // Handle edge case: no flows detected
@@ -497,7 +506,7 @@ export async function runFlowBasedAnalysis(
   // Step 2: Analyze each flow
   const flowProgressCallback = onProgress
     ? (index: number, name: string, total: number) => {
-        onProgress("analyzing", `Flow ${index + 1}/${total}: ${name}`);
+        onProgress("analyzing", `Flow ${index + 1}/${total}: ${name}`, index, total);
       }
     : undefined;
 
@@ -511,9 +520,7 @@ export async function runFlowBasedAnalysis(
   );
 
   // Step 3: Synthesize results
-  if (onProgress) {
-    onProgress("synthesizing", "Combining flow analyses...");
-  }
+  onProgress?.("synthesizing", "Combining flow analyses...", totalFlows(), totalFlows());
   const synthesis = await synthesizeFlowResults(flowResults, statedIntent);
 
   // Build metadata

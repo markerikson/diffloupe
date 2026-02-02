@@ -18,7 +18,7 @@ export type {
 } from "./types.js";
 
 // Two-pass types
-export type { OverviewResult, TwoPassAnalysisResult } from "./two-pass.js";
+export type { OverviewResult, TwoPassAnalysisResult, TwoPassProgressCallback } from "./two-pass.js";
 
 // Flow detection types
 export type {
@@ -31,6 +31,7 @@ export type {
 export type {
   FlowAnalysisResult,
   FlowBasedAnalysisResult,
+  FlowProgressCallback,
 } from "./flow-analysis.js";
 
 // Strategy selection

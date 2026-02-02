@@ -164,15 +164,19 @@ analyzeRoutes.get("/:id", (c) => {
  */
 async function runAnalysisAsync(jobId: string, request: AnalyzeRequest): Promise<void> {
   try {
-    updateJobStatus(jobId, "analyzing", "Starting analysis...");
+    updateJobStatus(jobId, "analyzing", {
+      status: "fetching_diff",
+      percent: 0,
+      message: "Starting analysis...",
+    });
 
     const result = await runAnalysis({
       target: request.target,
       statedIntent: request.statedIntent,
       cwd: request.cwd,
       strategy: request.strategy,
-      onProgress: (message) => {
-        updateJobProgress(jobId, message);
+      onProgress: (progress) => {
+        updateJobProgress(jobId, progress);
       },
     });
 

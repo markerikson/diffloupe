@@ -21,6 +21,35 @@ export interface AnalyzeRequest {
 /** Status of an analysis job */
 export type AnalysisJobStatus = "pending" | "analyzing" | "complete" | "error";
 
+/** Machine-readable progress status for tracking analysis phases */
+export type ProgressStatus =
+  | "fetching_diff"
+  | "parsing"
+  | "gathering_context"
+  | "selecting_strategy"
+  | "analyzing_overview"      // Two-pass: pass 1
+  | "analyzing_deepdive"      // Two-pass: pass 2
+  | "detecting_flows"         // Flow-based
+  | "analyzing_flow"          // Flow-based: per-flow
+  | "synthesizing"            // Flow-based: combining results
+  | "analyzing_intent"        // Direct strategy
+  | "analyzing_risks"         // Direct strategy
+  | "analyzing_alignment"     // If stated intent provided
+  | "complete"
+  | "error";
+
+/** Structured progress information for analysis */
+export interface AnalysisProgress {
+  /** Machine-readable status enum */
+  status: ProgressStatus;
+  /** Overall progress percentage (0-100) */
+  percent: number;
+  /** Human-readable status message */
+  message: string;
+  /** Optional additional detail (e.g., "Flow 2/4: Authentication") */
+  detail?: string;
+}
+
 /** Full analysis result returned by the API */
 export interface AnalysisResult {
   /** The parsed diff */
@@ -41,8 +70,8 @@ export interface AnalysisResult {
 export interface AnalysisJob {
   id: string;
   status: AnalysisJobStatus;
-  /** Progress message (e.g., "Parsing diff...", "Analyzing with AI...") */
-  progress?: string | undefined;
+  /** Structured progress information */
+  progress?: AnalysisProgress | undefined;
   /** Result when complete */
   result?: AnalysisResult | undefined;
   /** Error message if failed */
@@ -60,7 +89,7 @@ export interface CreateJobResponse {
 export interface JobStatusResponse {
   id: string;
   status: AnalysisJobStatus;
-  progress?: string | undefined;
+  progress?: AnalysisProgress | undefined;
   result?: AnalysisResult | undefined;
   error?: string | undefined;
 }

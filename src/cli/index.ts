@@ -2,26 +2,16 @@ import { Command } from "commander";
 import pc from "picocolors";
 import type { DerivedIntent, IntentAlignment, RiskAssessment } from "../types/analysis";
 import { formatSummary, formatVerbose } from "./output";
-import { getDiff, getCommitMessage } from "../services/git.js";
-import { parseDiff } from "../services/diff-parser.js";
-import { classifyDiff } from "../services/diff-loader.js";
-import { gatherContext } from "../services/context.js";
-import { deriveIntent } from "../prompts/intent.js";
-import { assessRisks } from "../prompts/risks.js";
-import { alignIntent } from "../prompts/alignment.js";
-import { hasAPIKey, initializeApiKey } from "../services/llm.js";
+import { getCommitMessage } from "../services/git.js";
+import { initializeApiKey } from "../services/llm.js";
 import { GitError } from "../types/git.js";
 import { LLMAPIKeyError, LLMGenerationError } from "../types/llm.js";
 import { createPRCommand } from "./pr.js";
 import { createSummarizeCommand } from "./summarize.js";
 import { getConfigPath } from "../services/config.js";
-import {
-  calculateDiffMetrics,
-  selectStrategy,
-  runTwoPassAnalysis,
-  runFlowBasedAnalysis,
-  type DecompositionStrategy,
-} from "../services/decomposition/index.js";
+import type { DecompositionStrategy } from "../services/decomposition/index.js";
+import type { AnalysisProgress } from "../server/types.js";
+import { runAnalysis, NoChangesError, MissingAPIKeyError } from "../server/services/analyzer.js";
 import { readTextFile, fileExists, readStdin } from "../runtime/index.js";
 
 export interface AnalyzeOptions {
@@ -104,6 +94,17 @@ function outputResults(
   } else {
     console.log(formatSummary(intent, risks, statedIntent, alignment));
   }
+}
+
+/**
+ * Format structured progress for CLI output
+ */
+function formatProgress(progress: AnalysisProgress): string {
+  const percentStr = `[${progress.percent}%]`.padEnd(6);
+  if (progress.detail) {
+    return `${percentStr} ${progress.message} (${progress.detail})`;
+  }
+  return `${percentStr} ${progress.message}`;
 }
 
 const program = new Command();
@@ -199,28 +200,24 @@ program
     // Initialize API key from all sources (CLI flag, config file, env var)
     await initializeApiKey(opts.apiKey);
 
-    // Check for API key before doing any work
-    if (!hasAPIKey()) {
-      const configPath = getConfigPath();
-      console.error(
-        pc.red("Error: Anthropic API key not found.\n") +
-          pc.dim("Set it via one of:\n") +
-          pc.dim("  1. CLI flag: diffloupe analyze --api-key <key>\n") +
-          pc.dim(`  2. Config file: ${configPath}\n`) +
-          pc.dim('     {"apiKeys":{"anthropic":"sk-ant-..."}}\n') +
-          pc.dim("  3. Environment variable: ANTHROPIC_API_KEY\n\n") +
-          pc.dim("Or use --demo to see example output without an API key.")
-      );
-      process.exit(1);
-    }
-
     try {
-      // Step 1: Get the diff
-      console.log(pc.dim(`Fetching ${opts.target} diff...`));
-      const diffResult = await getDiff(opts.target, opts.cwd);
+      // Run analysis using the shared analyzer service
+      const result = await runAnalysis({
+        target: opts.target,
+        statedIntent,
+        cwd: opts.cwd,
+        strategy: opts.strategy,
+        onProgress: (progress) => {
+          console.log(pc.dim(formatProgress(progress)));
+        },
+      });
 
-      // Handle empty diff
-      if (!diffResult.hasChanges) {
+      // Output results
+      console.log(""); // blank line before results
+      outputResults(result.derivedIntent, result.risks, opts, statedIntent, result.alignment);
+    } catch (error) {
+      // Handle specific error types with friendly messages
+      if (error instanceof NoChangesError) {
         console.log(pc.yellow("\nNo changes found."));
         if (opts.target === "staged") {
           console.log(
@@ -232,124 +229,20 @@ program
         return;
       }
 
-      // Step 2: Parse and classify the diff
-      console.log(pc.dim("Parsing diff..."));
-      const parsed = parseDiff(diffResult.diff);
-      const classified = classifyDiff(parsed);
-
-      // Step 2.5: Select decomposition strategy based on diff size
-      const metrics = calculateDiffMetrics(parsed, classified);
-      const strategySelection = opts.strategy
-        ? {
-            strategy: opts.strategy,
-            reason: `Forced via --strategy flag`,
-            metrics,
-          }
-        : selectStrategy(metrics);
-
-      console.log(
-        pc.dim(
-          `Found ${parsed.files.length} file(s), ~${metrics.estimatedTokens} tokens`
-        )
-      );
-      console.log(
-        pc.dim(
-          `Strategy: ${strategySelection.strategy} (${strategySelection.reason})`
-        )
-      );
-
-      // Step 2.5: Gather repository context (sibling files in touched directories)
-      const repositoryContext = await gatherContext(parsed, opts.cwd);
-
-      // Step 3: Run analysis based on selected strategy
-      let intent: DerivedIntent;
-      let risks: RiskAssessment;
-
-      if (strategySelection.strategy === "two-pass") {
-        // Two-pass strategy for medium diffs
-        console.log(pc.dim("Pass 1: Quick overview..."));
-        const result = await runTwoPassAnalysis(
-          parsed,
-          classified,
-          statedIntent,
-          repositoryContext
+      if (error instanceof MissingAPIKeyError) {
+        const configPath = getConfigPath();
+        console.error(
+          pc.red("Error: Anthropic API key not found.\n") +
+            pc.dim("Set it via one of:\n") +
+            pc.dim("  1. CLI flag: diffloupe analyze --api-key <key>\n") +
+            pc.dim(`  2. Config file: ${configPath}\n`) +
+            pc.dim('     {"apiKeys":{"anthropic":"sk-ant-..."}}\n') +
+            pc.dim("  3. Environment variable: ANTHROPIC_API_KEY\n\n") +
+            pc.dim("Or use --demo to see example output without an API key.")
         );
-        console.log(
-          pc.dim(
-            `Pass 2: Deep-dive on ${result.metadata.flaggedFileCount} flagged file(s)...`
-          )
-        );
-        intent = result.intent;
-        risks = result.risks;
-      } else if (strategySelection.strategy === "flow-based") {
-        // Flow-based strategy for large diffs
-        const result = await runFlowBasedAnalysis(
-          parsed,
-          classified,
-          statedIntent,
-          repositoryContext,
-          (stage, detail) => {
-            if (stage === "detecting") {
-              console.log(pc.dim("Detecting logical flows..."));
-            } else if (stage === "analyzing" && detail) {
-              console.log(pc.dim(detail));
-            } else if (stage === "synthesizing") {
-              console.log(pc.dim("Synthesizing results..."));
-            }
-          }
-        );
-        console.log(
-          pc.dim(
-            `Analyzed ${result.metadata.flowCount} flows across ${result.metadata.totalFileCount} files`
-          )
-        );
-        intent = result.synthesis.overallIntent;
-        risks = result.synthesis.overallRisks;
-      } else if (strategySelection.strategy === "hierarchical") {
-        // Hierarchical strategy not yet implemented - fall back to flow-based
-        console.log(
-          pc.yellow(
-            `Note: hierarchical strategy not yet implemented, using flow-based analysis`
-          )
-        );
-        const result = await runFlowBasedAnalysis(
-          parsed,
-          classified,
-          statedIntent,
-          repositoryContext,
-          (stage, detail) => {
-            if (stage === "detecting") {
-              console.log(pc.dim("Detecting logical flows..."));
-            } else if (stage === "analyzing" && detail) {
-              console.log(pc.dim(detail));
-            } else if (stage === "synthesizing") {
-              console.log(pc.dim("Synthesizing results..."));
-            }
-          }
-        );
-        intent = result.synthesis.overallIntent;
-        risks = result.synthesis.overallRisks;
-      } else {
-        // Direct analysis (default for small diffs)
-        console.log(pc.dim("Analyzing with AI..."));
-        [intent, risks] = await Promise.all([
-          deriveIntent(parsed, classified, statedIntent, repositoryContext),
-          assessRisks(parsed, classified, statedIntent, repositoryContext),
-        ]);
+        process.exit(1);
       }
 
-      // Step 4: Run alignment analysis if stated intent is provided
-      let alignment: IntentAlignment | undefined;
-      if (statedIntent) {
-        console.log(pc.dim("Analyzing intent alignment..."));
-        alignment = await alignIntent(statedIntent, intent, parsed, classified, repositoryContext);
-      }
-
-      // Step 5: Output results
-      console.log(""); // blank line before results
-      outputResults(intent, risks, opts, statedIntent, alignment);
-    } catch (error) {
-      // Handle specific error types with friendly messages
       if (error instanceof GitError) {
         console.error(pc.red(`Git error: ${error.message}`));
         if (error.code === "NOT_A_REPO") {

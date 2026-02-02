@@ -566,6 +566,12 @@ export function mergeResults(
 // Main Entry Point
 // ============================================================================
 
+/** Progress callback for two-pass analysis */
+export type TwoPassProgressCallback = (
+  phase: "overview" | "deepdive",
+  detail?: string
+) => void;
+
 /**
  * Run two-pass analysis on a medium-sized diff.
  *
@@ -578,17 +584,20 @@ export function mergeResults(
  * @param classified - Files classified by tier
  * @param statedIntent - Optional stated intent from the author
  * @param repositoryContext - Optional repository context
+ * @param onProgress - Optional progress callback
  * @returns Combined analysis result with metadata
  */
 export async function runTwoPassAnalysis(
   diff: ParsedDiff,
   classified: ClassifiedFile[],
   statedIntent?: string,
-  repositoryContext?: string
+  repositoryContext?: string,
+  onProgress?: TwoPassProgressCallback
 ): Promise<TwoPassAnalysisResult> {
   const relevantFiles = classified.filter((cf) => cf.tier <= 2);
 
   // Pass 1: Overview
+  onProgress?.("overview");
   const overview = await runOverviewPass(
     diff,
     classified,
@@ -597,6 +606,7 @@ export async function runTwoPassAnalysis(
   );
 
   // Pass 2: Deep-dive on flagged files
+  onProgress?.("deepdive", `${overview.flaggedFiles.length} files flagged`);
   const deepDive = await runDeepDivePass(
     diff,
     classified,

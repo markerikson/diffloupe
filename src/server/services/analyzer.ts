@@ -7,7 +7,7 @@
 
 import type { DerivedIntent, IntentAlignment, RiskAssessment } from "../../types/analysis.js";
 import type { DecompositionStrategy } from "../../services/decomposition/types.js";
-import type { AnalysisResult } from "../types.js";
+import type { AnalysisProgress, AnalysisResult, ProgressStatus } from "../types.js";
 import { getDiff } from "../../services/git.js";
 import { parseDiff } from "../../services/diff-parser.js";
 import { classifyDiff } from "../../services/diff-loader.js";
@@ -33,8 +33,20 @@ export interface RunAnalysisOptions {
   cwd?: string | undefined;
   /** Force a specific decomposition strategy */
   strategy?: DecompositionStrategy | undefined;
-  /** Progress callback for status updates */
-  onProgress?: ((message: string) => void) | undefined;
+  /** Progress callback for structured status updates */
+  onProgress?: ((progress: AnalysisProgress) => void) | undefined;
+}
+
+/**
+ * Helper to create and emit a progress update
+ */
+function createProgress(
+  status: ProgressStatus,
+  percent: number,
+  message: string,
+  detail?: string
+): AnalysisProgress {
+  return { status, percent, message, detail };
 }
 
 /** Error thrown when there are no changes to analyze */
@@ -69,7 +81,9 @@ export class MissingAPIKeyError extends Error {
  */
 export async function runAnalysis(options: RunAnalysisOptions): Promise<AnalysisResult> {
   const { target, statedIntent, cwd, strategy: forcedStrategy, onProgress } = options;
-  const progress = onProgress ?? (() => {});
+  const emit = (status: ProgressStatus, percent: number, message: string, detail?: string) => {
+    onProgress?.(createProgress(status, percent, message, detail));
+  };
 
   // Check for API key before doing any work
   if (!hasAPIKey()) {
@@ -77,7 +91,7 @@ export async function runAnalysis(options: RunAnalysisOptions): Promise<Analysis
   }
 
   // Step 1: Get the diff
-  progress("Fetching diff...");
+  emit("fetching_diff", 2, "Fetching diff...");
   const diffResult = await getDiff(target, cwd);
 
   // Handle empty diff
@@ -86,7 +100,7 @@ export async function runAnalysis(options: RunAnalysisOptions): Promise<Analysis
   }
 
   // Step 2: Parse and classify the diff
-  progress("Parsing diff...");
+  emit("parsing", 8, "Parsing diff...");
   const parsed = parseDiff(diffResult.diff);
   const classified = classifyDiff(parsed);
 
@@ -96,10 +110,15 @@ export async function runAnalysis(options: RunAnalysisOptions): Promise<Analysis
     ? { strategy: forcedStrategy, reason: "Forced via API parameter", metrics }
     : selectStrategy(metrics);
 
-  progress(`Found ${parsed.files.length} file(s), ~${metrics.estimatedTokens} tokens`);
-  progress(`Strategy: ${strategySelection.strategy}`);
+  emit(
+    "selecting_strategy",
+    12,
+    `Strategy: ${strategySelection.strategy}`,
+    `${parsed.files.length} file(s), ~${metrics.estimatedTokens} tokens`
+  );
 
   // Step 4: Gather repository context (sibling files in touched directories)
+  emit("gathering_context", 15, "Gathering repository context...");
   const repositoryContext = await gatherContext(parsed, cwd);
 
   // Step 5: Run analysis based on selected strategy
@@ -108,46 +127,82 @@ export async function runAnalysis(options: RunAnalysisOptions): Promise<Analysis
 
   if (strategySelection.strategy === "two-pass") {
     // Two-pass strategy for medium diffs
-    progress("Pass 1: Quick overview...");
-    const result = await runTwoPassAnalysis(parsed, classified, statedIntent, repositoryContext);
-    progress(`Pass 2: Deep-dive on ${result.metadata.flaggedFileCount} flagged file(s)...`);
+    emit("analyzing_overview", 20, "Quick overview scan...");
+    const result = await runTwoPassAnalysis(
+      parsed,
+      classified,
+      statedIntent,
+      repositoryContext,
+      (phase, detail) => {
+        if (phase === "overview") {
+          emit("analyzing_overview", 25, "Quick overview scan...");
+        } else if (phase === "deepdive") {
+          emit("analyzing_deepdive", 50, "Deep-dive analysis...", detail);
+        }
+      }
+    );
+    emit("analyzing_deepdive", 80, "Deep-dive analysis...", `${result.metadata.flaggedFileCount} files flagged`);
     intent = result.intent;
     risks = result.risks;
   } else if (strategySelection.strategy === "flow-based" || strategySelection.strategy === "hierarchical") {
     // Flow-based strategy for large diffs (hierarchical falls back to flow-based)
+    emit("detecting_flows", 20, "Detecting logical flows...");
     const result = await runFlowBasedAnalysis(
       parsed,
       classified,
       statedIntent,
       repositoryContext,
-      (stage, detail) => {
+      (stage, detail, flowIndex, flowCount) => {
         if (stage === "detecting") {
-          progress("Detecting logical flows...");
-        } else if (stage === "analyzing" && detail) {
-          progress(detail);
+          emit("detecting_flows", 22, "Detecting logical flows...");
+        } else if (stage === "analyzing" && flowIndex !== undefined && flowCount !== undefined) {
+          // Calculate percent: flows span 25-75%
+          const flowPercent = 25 + Math.round((flowIndex / flowCount) * 50);
+          emit("analyzing_flow", flowPercent, "Analyzing flows...", detail);
         } else if (stage === "synthesizing") {
-          progress("Synthesizing results...");
+          emit("synthesizing", 78, "Synthesizing results...");
         }
       }
     );
-    progress(`Analyzed ${result.metadata.flowCount} flows across ${result.metadata.totalFileCount} files`);
+    emit("synthesizing", 82, "Synthesizing results...", `${result.metadata.flowCount} flows analyzed`);
     intent = result.synthesis.overallIntent;
     risks = result.synthesis.overallRisks;
   } else {
     // Direct analysis (default for small diffs)
-    progress("Analyzing with AI...");
-    [intent, risks] = await Promise.all([
-      deriveIntent(parsed, classified, statedIntent, repositoryContext),
-      assessRisks(parsed, classified, statedIntent, repositoryContext),
-    ]);
+    emit("analyzing_intent", 20, "Analyzing intent...");
+    
+    // Track which completes first for better progress reporting
+    let intentDone = false;
+    let risksDone = false;
+    
+    const intentPromise = deriveIntent(parsed, classified, statedIntent, repositoryContext).then((result) => {
+      intentDone = true;
+      if (!risksDone) {
+        emit("analyzing_risks", 50, "Analyzing risks...", "Intent complete");
+      }
+      return result;
+    });
+    
+    const risksPromise = assessRisks(parsed, classified, statedIntent, repositoryContext).then((result) => {
+      risksDone = true;
+      if (!intentDone) {
+        emit("analyzing_intent", 50, "Analyzing intent...", "Risks complete");
+      }
+      return result;
+    });
+    
+    [intent, risks] = await Promise.all([intentPromise, risksPromise]);
+    emit("analyzing_risks", 80, "Analysis complete");
   }
 
   // Step 6: Run alignment analysis if stated intent is provided
   let alignment: IntentAlignment | undefined;
   if (statedIntent) {
-    progress("Analyzing intent alignment...");
+    emit("analyzing_alignment", 88, "Checking intent alignment...");
     alignment = await alignIntent(statedIntent, intent, parsed, classified, repositoryContext);
   }
+
+  emit("complete", 100, "Analysis complete");
 
   return {
     diff: parsed,

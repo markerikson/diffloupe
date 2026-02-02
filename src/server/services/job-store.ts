@@ -5,7 +5,7 @@
  * Can be upgraded to SQLite or Redis later if needed.
  */
 
-import type { AnalysisJob, AnalysisJobStatus, AnalysisResult } from "../types.js";
+import type { AnalysisJob, AnalysisJobStatus, AnalysisProgress, AnalysisResult } from "../types.js";
 
 /** Generate a unique job ID */
 function generateJobId(): string {
@@ -51,7 +51,7 @@ export function getJob(id: string): AnalysisJob | undefined {
 /**
  * Update job status
  */
-export function updateJobStatus(id: string, status: AnalysisJobStatus, progress?: string): void {
+export function updateJobStatus(id: string, status: AnalysisJobStatus, progress?: AnalysisProgress): void {
   const job = jobs.get(id);
   if (job) {
     job.status = status;
@@ -62,9 +62,9 @@ export function updateJobStatus(id: string, status: AnalysisJobStatus, progress?
 }
 
 /**
- * Update job progress message
+ * Update job progress
  */
-export function updateJobProgress(id: string, progress: string): void {
+export function updateJobProgress(id: string, progress: AnalysisProgress): void {
   const job = jobs.get(id);
   if (job) {
     job.progress = progress;
