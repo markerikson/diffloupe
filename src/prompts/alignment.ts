@@ -85,7 +85,30 @@ Don't flag "missing implementation" if the code imports from a file you can't se
 - Keep summary to 1-2 sentences - the key finding
 - Order matches/mismatches/missing/unstated by importance
 - Empty arrays are fine - not every analysis will have all categories
-- Set confidence based on how clear the comparison is`;
+- Set confidence based on how clear the comparison is
+
+## CRITICAL: JSON Schema Requirements
+
+The matches, mismatches, missing, and unstated fields MUST be arrays of strings.
+
+Required format:
+{
+  "alignment": "aligned" | "partial" | "misaligned",
+  "confidence": "high" | "medium" | "low",
+  "summary": "string",
+  "matches": ["string", ...],      // MUST be array, use [] if empty
+  "mismatches": ["string", ...],   // MUST be array, use [] if empty
+  "missing": ["string", ...],      // MUST be array, use [] if empty
+  "unstated": ["string", ...]      // MUST be array, use [] if empty
+}
+
+WRONG - will cause validation error:
+  "matches": "The feature was implemented"
+  "mismatches": "None"
+
+CORRECT:
+  "matches": ["The feature was implemented"]
+  "mismatches": []`;
 
 /**
  * Format diff file for context (reused pattern from intent/risks)
