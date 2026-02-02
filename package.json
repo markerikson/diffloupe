@@ -65,6 +65,7 @@
     "react": "^19",
     "react-dom": "^19",
     "react-redux": "^9.2.0",
+    "shiki": "^3.9.0",
     "simple-git": "^3.30.0",
     "tinyexec": "^1.0.2"
   }
