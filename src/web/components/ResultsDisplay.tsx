@@ -48,10 +48,7 @@ export function ResultsDisplay({ result }: ResultsDisplayProps) {
                 <span className={styles.riskCategory}>{risk.category}</span>
                 <p className={styles.riskDescription}>{risk.description}</p>
                 {risk.file && (
-                  <span className={styles.riskFile}>
-                    {risk.file}
-                    {risk.line ? `:${risk.line}` : ""}
-                  </span>
+                  <span className={styles.riskFile}>{risk.file}</span>
                 )}
               </li>
             ))}
@@ -64,17 +61,58 @@ export function ResultsDisplay({ result }: ResultsDisplayProps) {
         <section className={styles.section}>
           <h4 className={styles.sectionTitle}>
             Intent Alignment
-            <span className={styles.alignmentScore} data-aligned={result.alignment.aligned}>
-              {result.alignment.aligned ? "Aligned" : "Misaligned"}
+            <span
+              className={styles.alignmentScore}
+              data-aligned={result.alignment.alignment === "aligned"}
+            >
+              {result.alignment.alignment === "aligned"
+                ? "Aligned"
+                : result.alignment.alignment === "partial"
+                  ? "Partial"
+                  : "Misaligned"}
             </span>
           </h4>
-          <p className={styles.summary}>{result.alignment.analysis}</p>
-          {result.alignment.gaps.length > 0 && (
-            <div className={styles.gaps}>
-              <strong>Gaps:</strong>
+          <p className={styles.summary}>{result.alignment.summary}</p>
+
+          {result.alignment.matches.length > 0 && (
+            <div className={styles.alignmentList}>
+              <strong>Matches:</strong>
               <ul>
-                {result.alignment.gaps.map((gap, i) => (
-                  <li key={i}>{gap}</li>
+                {result.alignment.matches.map((item, i) => (
+                  <li key={i}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {result.alignment.mismatches.length > 0 && (
+            <div className={styles.alignmentList} data-type="warning">
+              <strong>Mismatches:</strong>
+              <ul>
+                {result.alignment.mismatches.map((item, i) => (
+                  <li key={i}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {result.alignment.missing.length > 0 && (
+            <div className={styles.alignmentList} data-type="warning">
+              <strong>Missing (stated but not implemented):</strong>
+              <ul>
+                {result.alignment.missing.map((item, i) => (
+                  <li key={i}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {result.alignment.unstated.length > 0 && (
+            <div className={styles.alignmentList} data-type="info">
+              <strong>Unstated (implemented but not mentioned):</strong>
+              <ul>
+                {result.alignment.unstated.map((item, i) => (
+                  <li key={i}>{item}</li>
                 ))}
               </ul>
             </div>

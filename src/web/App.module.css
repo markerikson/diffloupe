@@ -1,8 +1,9 @@
 .container {
-  min-height: 100vh;
+  height: 100vh;
   display: flex;
   flex-direction: column;
   background-color: var(--color-surface);
+  overflow: hidden;
 }
 
 .header {
@@ -35,7 +36,8 @@
   display: grid;
   grid-template-columns: 280px 1fr 360px;
   gap: 0;
-  min-height: 0; /* Allow children to scroll */
+  min-height: 0; /* Critical: allows children to shrink below content size */
+  overflow: hidden;
 }
 
 /* Left Column - Input */
@@ -44,12 +46,15 @@
   padding: 16px;
   overflow-y: auto;
   background-color: var(--color-surface);
+  min-height: 0; /* Allow shrinking for scroll */
 }
 
 /* Center Column - Diff Viewer */
 .centerColumn {
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   background-color: var(--color-surface);
+  min-height: 0; /* Allow shrinking for scroll */
 }
 
 .diffContainer {
@@ -62,6 +67,7 @@
   padding: 16px;
   overflow-y: auto;
   background-color: var(--color-surface);
+  min-height: 0; /* Allow shrinking for scroll */
 }
 
 /* Cards */

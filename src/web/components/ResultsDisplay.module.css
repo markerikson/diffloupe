@@ -2,6 +2,8 @@
   display: flex;
   flex-direction: column;
   gap: 24px;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .title {
@@ -34,6 +36,8 @@
   font-size: 0.9375rem;
   line-height: 1.6;
   color: var(--color-text-primary);
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .meta {
@@ -158,6 +162,8 @@
   font-size: 0.875rem;
   line-height: 1.5;
   color: var(--color-text-primary);
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .riskFile {
@@ -181,25 +187,39 @@
 }
 
 .alignmentScore[data-aligned="false"] {
-  color: var(--color-high);
-  background-color: rgba(239, 68, 68, 0.15);
+  color: var(--color-medium);
+  background-color: rgba(245, 158, 11, 0.15);
 }
 
-.gaps {
+.alignmentList {
   margin-top: 12px;
   font-size: 0.875rem;
   color: var(--color-text-secondary);
 }
 
-.gaps ul {
+.alignmentList ul {
   margin-top: 8px;
   padding-left: 20px;
   color: var(--color-text-primary);
 }
 
-.gaps li {
+.alignmentList li {
   margin-bottom: 4px;
   line-height: 1.5;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+.alignmentList[data-type="warning"] {
+  color: var(--color-medium);
+}
+
+.alignmentList[data-type="warning"] ul {
+  color: var(--color-text-primary);
+}
+
+.alignmentList[data-type="info"] {
+  color: var(--color-text-muted);
 }
 
 .rawJson {
