@@ -8,10 +8,13 @@
 /**
  * Supported Claude models.
  * - "claude-opus-4-5" - Most capable, best for complex analysis
- * - "claude-sonnet-4-5" - Highly capable, good speed (default)
- * - "claude-haiku-4-5" - Fastest, good for simple tasks
+ * - "claude-sonnet-4-5" - Highly capable, good speed (default for analysis)
+ * - "claude-haiku-4-5" - Fastest, good for triage/categorization tasks
  */
-export type LLMModel = "claude-opus-4-5" | "claude-sonnet-4-5" | "claude-haiku-4-5";
+export type LLMModel =
+  | "claude-opus-4-5"
+  | "claude-sonnet-4-5"
+  | "claude-haiku-4-5";
 
 /**
  * Configuration options for LLM requests.

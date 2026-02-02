@@ -45,10 +45,27 @@ export { LLMAPIKeyError, LLMGenerationError, LLMJSONParseError };
 let resolvedApiKey: string | undefined;
 
 /**
- * Default model to use for generation.
+ * Model tiers for different types of tasks.
+ * - "triage": Fast categorization, file grouping, overview scans (Haiku 4.5)
+ * - "analysis": Core intent/risk analysis requiring quality reasoning (Sonnet 4.5)
+ */
+export type ModelTier = "triage" | "analysis";
+
+/**
+ * Models for each tier.
+ * Triage uses Haiku 4.5 for speed on simpler categorization tasks.
+ * Analysis uses Sonnet 4.5 for quality reasoning on core analysis.
+ */
+const MODELS_BY_TIER: Record<ModelTier, LLMModel> = {
+  triage: "claude-haiku-4-5",
+  analysis: "claude-sonnet-4-5",
+};
+
+/**
+ * Default model to use for generation (analysis tier).
  * Claude Sonnet 4.5 is highly capable with good speed.
  */
-const DEFAULT_MODEL: LLMModel = "claude-sonnet-4-5";
+const DEFAULT_MODEL: LLMModel = MODELS_BY_TIER.analysis;
 
 /**
  * Default maximum tokens for responses.
@@ -93,13 +110,14 @@ function getAPIKey(): string | undefined {
  * Create an Anthropic adapter with the configured API key.
  * Use this instead of calling anthropicText() directly.
  *
- * @param model - The model to use (defaults to claude-sonnet-4-5)
+ * @param tier - The model tier to use ("triage" for fast categorization, "analysis" for quality reasoning)
  * @returns A configured Anthropic adapter
  * @throws {LLMAPIKeyError} if no API key is available
  */
-export function createAdapter(model: LLMModel = DEFAULT_MODEL) {
+export function createAdapter(tier: ModelTier = "analysis") {
   validateAPIKey();
   const apiKey = getAPIKey()!;
+  const model = MODELS_BY_TIER[tier];
   return createAnthropicChat(model, apiKey);
 }
 

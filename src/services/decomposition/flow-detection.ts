@@ -284,7 +284,7 @@ export async function detectFlows(
   const userPrompt = buildFlowDetectionPrompt(diff, classified);
 
   const response = await chat({
-    adapter: createAdapter(),
+    adapter: createAdapter("triage"),
     systemPrompts: [FLOW_DETECTION_SYSTEM_PROMPT],
     messages: [{ role: "user", content: userPrompt }],
     outputSchema: wrapSchema(FlowDetectionResponseSchema),

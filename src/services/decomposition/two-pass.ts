@@ -307,7 +307,7 @@ export async function runOverviewPass(
   );
 
   const response = await chat({
-    adapter: createAdapter(),
+    adapter: createAdapter("triage"),
     systemPrompts: [OVERVIEW_SYSTEM_PROMPT],
     messages: [{ role: "user", content: userPrompt }],
     outputSchema: wrapSchema(OverviewResponseSchema),
