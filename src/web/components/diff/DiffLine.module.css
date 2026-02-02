@@ -1,0 +1,74 @@
+.line {
+  display: flex;
+  min-height: 20px;
+  font-family: ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Consolas,
+    monospace;
+  font-size: 0.8125rem;
+  line-height: 20px;
+}
+
+/* Line type backgrounds */
+.line[data-type="add"] {
+  background-color: rgba(35, 134, 54, 0.15);
+  border-left: 4px solid #238636;
+}
+
+.line[data-type="delete"] {
+  background-color: rgba(248, 81, 73, 0.15);
+  border-left: 4px solid #f85149;
+}
+
+.line[data-type="context"] {
+  background-color: transparent;
+  border-left: 4px solid transparent;
+}
+
+/* Line numbers */
+.lineNumber {
+  flex-shrink: 0;
+  width: 48px;
+  padding: 0 8px;
+  text-align: right;
+  color: var(--color-text-muted);
+  user-select: none;
+  border-right: 1px solid var(--color-border);
+}
+
+.lineNumber[data-side="old"] {
+  background-color: rgba(0, 0, 0, 0.2);
+}
+
+.lineNumber[data-side="new"] {
+  background-color: rgba(0, 0, 0, 0.1);
+}
+
+/* Prefix (+/-/space) */
+.prefix {
+  flex-shrink: 0;
+  width: 20px;
+  padding-left: 4px;
+  color: var(--color-text-secondary);
+  user-select: none;
+}
+
+.line[data-type="add"] .prefix {
+  color: #238636;
+}
+
+.line[data-type="delete"] .prefix {
+  color: #f85149;
+}
+
+/* Content */
+.content {
+  flex: 1;
+  padding-left: 8px;
+  padding-right: 16px;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+/* Preserve Shiki token colors */
+.content :global(span) {
+  /* Let Shiki inline styles apply */
+}

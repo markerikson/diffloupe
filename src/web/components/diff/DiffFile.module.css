@@ -1,0 +1,87 @@
+.file {
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+
+.file:last-child {
+  margin-bottom: 0;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background-color: var(--color-surface-raised);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.status {
+  padding: 2px 8px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-radius: 4px;
+}
+
+.status[data-status="added"] {
+  color: #3fb950;
+  background-color: rgba(63, 185, 80, 0.15);
+}
+
+.status[data-status="deleted"] {
+  color: #f85149;
+  background-color: rgba(248, 81, 73, 0.15);
+}
+
+.status[data-status="modified"] {
+  color: #d29922;
+  background-color: rgba(210, 153, 34, 0.15);
+}
+
+.status[data-status="renamed"] {
+  color: #58a6ff;
+  background-color: rgba(88, 166, 255, 0.15);
+}
+
+.path {
+  flex: 1;
+  font-family: ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Consolas,
+    monospace;
+  font-size: 0.8125rem;
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stats {
+  display: flex;
+  gap: 8px;
+  font-family: ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Consolas,
+    monospace;
+  font-size: 0.75rem;
+}
+
+.added {
+  color: #3fb950;
+}
+
+.deleted {
+  color: #f85149;
+}
+
+.binary {
+  padding: 24px;
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+  background-color: var(--color-surface);
+}
+
+.hunks {
+  background-color: var(--color-surface);
+}

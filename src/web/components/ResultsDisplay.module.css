@@ -1,0 +1,231 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.title {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin-bottom: 8px;
+}
+
+.section {
+  padding: 16px;
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+}
+
+.sectionTitle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 12px;
+}
+
+.summary {
+  font-size: 0.9375rem;
+  line-height: 1.6;
+  color: var(--color-text-primary);
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.tag {
+  padding: 4px 10px;
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+  background-color: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: 9999px;
+}
+
+.tag[data-type="scope"] {
+  color: var(--color-critical-light);
+  border-color: var(--color-critical);
+  background-color: rgba(217, 70, 239, 0.1);
+}
+
+.riskLevel {
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: capitalize;
+  border-radius: 4px;
+}
+
+.riskLevel[data-level="critical"] {
+  color: var(--color-critical);
+  background-color: rgba(217, 70, 239, 0.15);
+}
+
+.riskLevel[data-level="high"] {
+  color: var(--color-high);
+  background-color: rgba(239, 68, 68, 0.15);
+}
+
+.riskLevel[data-level="medium"] {
+  color: var(--color-medium);
+  background-color: rgba(245, 158, 11, 0.15);
+}
+
+.riskLevel[data-level="low"] {
+  color: var(--color-low);
+  background-color: rgba(34, 197, 94, 0.15);
+}
+
+.riskList {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+  list-style: none;
+}
+
+.riskItem {
+  padding: 12px;
+  background-color: var(--color-surface-raised);
+  border-radius: 6px;
+  border-left: 3px solid var(--color-border);
+}
+
+.riskItem[data-severity="critical"] {
+  border-left-color: var(--color-critical);
+}
+
+.riskItem[data-severity="high"] {
+  border-left-color: var(--color-high);
+}
+
+.riskItem[data-severity="medium"] {
+  border-left-color: var(--color-medium);
+}
+
+.riskItem[data-severity="low"] {
+  border-left-color: var(--color-low);
+}
+
+.riskSeverity {
+  display: inline-block;
+  padding: 2px 6px;
+  font-size: 0.625rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-radius: 3px;
+  margin-right: 8px;
+}
+
+.riskItem[data-severity="critical"] .riskSeverity {
+  color: var(--color-critical);
+  background-color: rgba(217, 70, 239, 0.15);
+}
+
+.riskItem[data-severity="high"] .riskSeverity {
+  color: var(--color-high);
+  background-color: rgba(239, 68, 68, 0.15);
+}
+
+.riskItem[data-severity="medium"] .riskSeverity {
+  color: var(--color-medium);
+  background-color: rgba(245, 158, 11, 0.15);
+}
+
+.riskItem[data-severity="low"] .riskSeverity {
+  color: var(--color-low);
+  background-color: rgba(34, 197, 94, 0.15);
+}
+
+.riskCategory {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.riskDescription {
+  margin-top: 8px;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--color-text-primary);
+}
+
+.riskFile {
+  display: inline-block;
+  margin-top: 8px;
+  font-family: ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Consolas, monospace;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.alignmentScore {
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-radius: 4px;
+}
+
+.alignmentScore[data-aligned="true"] {
+  color: var(--color-low);
+  background-color: rgba(34, 197, 94, 0.15);
+}
+
+.alignmentScore[data-aligned="false"] {
+  color: var(--color-high);
+  background-color: rgba(239, 68, 68, 0.15);
+}
+
+.gaps {
+  margin-top: 12px;
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+}
+
+.gaps ul {
+  margin-top: 8px;
+  padding-left: 20px;
+  color: var(--color-text-primary);
+}
+
+.gaps li {
+  margin-bottom: 4px;
+  line-height: 1.5;
+}
+
+.rawJson {
+  margin-top: 16px;
+  font-size: 0.75rem;
+}
+
+.rawJson summary {
+  padding: 8px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.rawJson summary:hover {
+  color: var(--color-text-secondary);
+}
+
+.rawJson pre {
+  margin-top: 8px;
+  padding: 16px;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  overflow-x: auto;
+  max-height: 400px;
+}
