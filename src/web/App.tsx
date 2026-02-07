@@ -1,12 +1,18 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Provider } from "react-redux";
 import { store } from "./store";
-import { useAnalyzeSyncMutation, type AnalysisResult } from "./store/api";
+import {
+  useStartAnalysisMutation,
+  useGetAnalysisStatusQuery,
+  type AnalysisResult,
+  type AnalysisProgress,
+} from "./store/api";
 import { TargetSelector } from "./components/TargetSelector";
 import { IntentInput } from "./components/IntentInput";
 import { AnalyzeButton } from "./components/AnalyzeButton";
 import { ErrorDisplay } from "./components/ErrorDisplay";
 import { ResultsDisplay } from "./components/ResultsDisplay";
+import { ProgressDisplay } from "./components/ProgressDisplay";
 import { DiffViewer } from "./components/diff";
 import { HighlighterProvider } from "./contexts/HighlighterContext";
 import styles from "./App.module.css";
@@ -16,38 +22,86 @@ function AppContent() {
   const [target, setTarget] = useState("staged");
   const [statedIntent, setStatedIntent] = useState("");
 
-  // API mutation
-  const [analyzeSync, { isLoading, error, reset }] = useAnalyzeSyncMutation();
+  // Job state for async workflow
+  const [jobId, setJobId] = useState<string | null>(null);
 
   // Results state (stored separately so we can clear it)
   const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // API mutation for starting analysis
+  const [startAnalysis, { isLoading: isStarting, reset: resetStart }] =
+    useStartAnalysisMutation();
+
+  // Polling query for job status
+  const {
+    data: jobStatus,
+    error: pollingError,
+  } = useGetAnalysisStatusQuery(jobId!, {
+    pollingInterval: 500,
+    skip: !jobId,
+  });
+
+  // Track progress from job status
+  const progress: AnalysisProgress | undefined = jobStatus?.progress;
+  const isPolling = !!jobId;
+  const isLoading = isStarting || isPolling;
+
+  // Handle job completion or error
+  useEffect(() => {
+    if (!jobStatus) return;
+
+    if (jobStatus.status === "complete" && jobStatus.result) {
+      setResult(jobStatus.result);
+      setJobId(null);
+    } else if (jobStatus.status === "error") {
+      setErrorMessage(jobStatus.error || "Analysis failed");
+      setJobId(null);
+    }
+  }, [jobStatus]);
+
+  // Handle polling errors
+  useEffect(() => {
+    if (pollingError) {
+      const message =
+        "status" in pollingError
+          ? (pollingError.data as { error?: string })?.error || "Polling failed"
+          : pollingError.message || "An unexpected error occurred";
+      setErrorMessage(message);
+      setJobId(null);
+    }
+  }, [pollingError]);
 
   const handleAnalyze = useCallback(async () => {
     // Clear previous results/errors
     setResult(null);
-    reset();
+    setErrorMessage(null);
+    resetStart();
 
     try {
-      const response = await analyzeSync({
+      const response = await startAnalysis({
         target,
         statedIntent: statedIntent.trim() || undefined,
       }).unwrap();
-      setResult(response);
-    } catch {
-      // Error is handled by RTK Query and displayed via the error state
+      setJobId(response.id);
+    } catch (err) {
+      // Extract error message from mutation error
+      const message =
+        err && typeof err === "object" && "data" in err
+          ? (err.data as { error?: string })?.error || "Failed to start analysis"
+          : "An unexpected error occurred";
+      setErrorMessage(message);
     }
-  }, [analyzeSync, target, statedIntent, reset]);
+  }, [startAnalysis, target, statedIntent, resetStart]);
+
+  const handleCancel = useCallback(() => {
+    setJobId(null);
+    resetStart();
+  }, [resetStart]);
 
   const handleDismissError = useCallback(() => {
-    reset();
-  }, [reset]);
-
-  // Extract error message from RTK Query error
-  const errorMessage = error
-    ? "status" in error
-      ? (error.data as { error?: string })?.error || "Analysis failed"
-      : error.message || "An unexpected error occurred"
-    : null;
+    setErrorMessage(null);
+  }, []);
 
   const isAnalyzeDisabled = !target.trim();
 
@@ -92,6 +146,7 @@ function AppContent() {
             <div className={styles.actionSection}>
               <AnalyzeButton
                 onClick={handleAnalyze}
+                onCancel={handleCancel}
                 disabled={isAnalyzeDisabled}
                 isLoading={isLoading}
               />
@@ -115,12 +170,12 @@ function AppContent() {
             <div className={styles.diffContainer}>
               <DiffViewer diff={result.diff} />
             </div>
+          ) : isLoading ? (
+            <ProgressDisplay progress={progress} />
           ) : (
             <div className={styles.placeholder}>
               <p className={styles.placeholderText}>
-                {isLoading
-                  ? "Analyzing changes..."
-                  : "Diff will appear here after analysis"}
+                Diff will appear here after analysis
               </p>
             </div>
           )}
@@ -132,12 +187,12 @@ function AppContent() {
             <div className={styles.card}>
               <ResultsDisplay result={result} />
             </div>
+          ) : isLoading ? (
+            <ProgressDisplay progress={progress} />
           ) : (
             <div className={styles.placeholder}>
               <p className={styles.placeholderText}>
-                {isLoading
-                  ? "Running analysis..."
-                  : "Analysis results will appear here"}
+                Analysis results will appear here
               </p>
             </div>
           )}

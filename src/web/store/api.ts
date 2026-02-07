@@ -1,8 +1,18 @@
 import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
-import type { AnalyzeRequest, AnalysisResult } from "../../server/types.js";
+import type {
+  AnalyzeRequest,
+  AnalysisResult,
+  CreateJobResponse,
+  JobStatusResponse,
+} from "../../server/types.js";
 
 // Re-export for convenience
-export type { AnalyzeRequest, AnalysisResult } from "../../server/types.js";
+export type {
+  AnalyzeRequest,
+  AnalysisResult,
+  JobStatusResponse,
+  AnalysisProgress,
+} from "../../server/types.js";
 
 export const api = createApi({
   reducerPath: "api",
@@ -18,12 +28,25 @@ export const api = createApi({
       }),
     }),
 
-    // Get analysis by ID (for async polling workflow)
-    getAnalysis: builder.query<AnalysisResult, string>({
+    // Start async analysis - returns job ID immediately
+    startAnalysis: builder.mutation<CreateJobResponse, AnalyzeRequest>({
+      query: (body) => ({
+        url: "/analyze",
+        method: "POST",
+        body,
+      }),
+    }),
+
+    // Get analysis job status (for async polling workflow)
+    getAnalysisStatus: builder.query<JobStatusResponse, string>({
       query: (id) => `/analyze/${id}`,
       providesTags: (_result, _error, id) => [{ type: "Analysis", id }],
     }),
   }),
 });
 
-export const { useAnalyzeSyncMutation, useGetAnalysisQuery } = api;
+export const {
+  useAnalyzeSyncMutation,
+  useStartAnalysisMutation,
+  useGetAnalysisStatusQuery,
+} = api;

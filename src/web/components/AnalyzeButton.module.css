@@ -1,3 +1,9 @@
+.container {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .button {
   display: inline-flex;
   align-items: center;
@@ -48,4 +54,28 @@
   to {
     transform: rotate(360deg);
   }
+}
+
+.cancelButton {
+  padding: 8px 16px;
+  font-family: inherit;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  background-color: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.cancelButton:hover {
+  color: var(--color-text-primary);
+  border-color: var(--color-text-muted);
+  background-color: var(--color-surface-overlay);
+}
+
+.cancelButton:focus-visible {
+  outline: 2px solid var(--color-critical-light);
+  outline-offset: 2px;
 }
