@@ -1,0 +1,438 @@
+import path from "node:path";
+import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { ensureDir, readJson, readText, removeIfPresent, writeJson, writeText } from "./lib/io.ts";
+import { DIR, SUBJECT, ARTIFACTS, PROVIDER, MAX_STEPS, DEADLINE_MS, MODEL, EFFORT, OUT, repoName } from "./config.ts";
+
+// ---------------------------------------------------------------- agent
+
+/**
+ * How to spawn one agent invocation, and how to read its accounting back.
+ *
+ * The two runners disagree on nearly everything mechanical — flags, where the
+ * system prompt lives, how tools are restricted, whether spend is capped for
+ * you, what shape the metadata comes back in — so each builds one of these and
+ * `agent()` stays indifferent to which it got.
+ */
+export type Invocation = {
+  command: string;
+  args: string[];
+  /** Directory the child reviews in. Always the PR's checkout, never the pipeline's. */
+  cwd: string;
+  /** Extra environment for the child. Merged over the inherited environment. */
+  env: Record<string, string>;
+  /** Variables to unset in the child, so ambient config cannot leak in. */
+  unsetEnv: string[];
+  /** Extension for the raw stdout capture, since one runner streams NDJSON. */
+  rawExt: string;
+  parse(stdout: string): { costUsd: number; numTurns: number; usage: unknown };
+  /** What the agent did with its tools. Only the streaming runner reports calls. */
+  tools?(stdout: string): ToolSummary;
+};
+
+/**
+ * The tool restriction below is a guardrail, not a sandbox, and should not be
+ * described as one. Editing is refused to stop a reviewer rewriting the file it
+ * is reading: slices share one checkout, and the line verification that decides
+ * which findings survive reads it too. Writing has to stay — it is how a slice
+ * delivers its findings — and Bash can write anything Write can. The prompts are
+ * built from PR text, so treat a slice as capable of whatever Bash is. What
+ * actually contains it is elsewhere: this process holds no token that can post,
+ * the checkout is disposable and separate from the developer's, and post.ts
+ * rebuilds every endpoint from outside the payload file.
+ */
+/** One event from `opencode run --format json`, which streams NDJSON. */
+export type StreamEvent = {
+  type?: string;
+  part?: {
+    type?: string;
+    cost?: number;
+    tokens?: {
+      input?: number;
+      output?: number;
+      reasoning?: number;
+      cache?: { read?: number; write?: number };
+    };
+  };
+};
+
+/**
+ * Cost and token accounting from an `opencode run --format json` stream.
+ *
+ * The other runner reports one total for the whole invocation. This one reports
+ * per step, so the total is the sum and the turn count is how many steps there
+ * were. Anything unparseable is skipped rather than throwing: the accounting is
+ * for the run record, and losing a line of it must not cost a paid review.
+ */
+export function sumOpenCodeStream(stdout: string): {
+  costUsd: number;
+  numTurns: number;
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    reasoning_tokens: number;
+    cache_read_input_tokens: number;
+    cache_creation_input_tokens: number;
+  };
+} {
+  let costUsd = 0;
+  let numTurns = 0;
+  const usage = {
+    input_tokens: 0,
+    output_tokens: 0,
+    reasoning_tokens: 0,
+    cache_read_input_tokens: 0,
+    cache_creation_input_tokens: 0,
+  };
+  for (const line of stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("{")) continue;
+    let event: StreamEvent;
+    try {
+      event = JSON.parse(trimmed) as StreamEvent;
+    } catch {
+      continue;
+    }
+    const part = event.part;
+    // The stream and the plugin API disagree on the separator in this one name,
+    // and which one arrives is not worth depending on.
+    const isStep =
+      part?.type === "step-finish" || part?.type === "step_finish" || event.type === "step_finish";
+    if (!isStep || !part) continue;
+    numTurns += 1;
+    costUsd += part.cost ?? 0;
+    usage.input_tokens += part.tokens?.input ?? 0;
+    usage.output_tokens += part.tokens?.output ?? 0;
+    usage.reasoning_tokens += part.tokens?.reasoning ?? 0;
+    usage.cache_read_input_tokens += part.tokens?.cache?.read ?? 0;
+    usage.cache_creation_input_tokens += part.tokens?.cache?.write ?? 0;
+  }
+  return { costUsd, numTurns, usage };
+}
+
+/** Per-invocation tool use, kept in the run record so a clean pass can be checked. */
+export type ToolSummary = {
+  /** Calls per tool name, including refused and failed ones. */
+  calls: Record<string, number>;
+  failed: number;
+  /** Files opened through a read tool, as `path` or `path:section`, first-read order. */
+  read: string[];
+  /** Search queries and patterns, first-use order. */
+  searched: string[];
+};
+
+export const READ_TOOLS = new Set(["read", "tilth_tilth_read"]);
+export const SEARCH_TOOLS = new Set(["grep", "glob", "tilth_tilth_search", "tilth_tilth_files"]);
+export const MAX_SUMMARY_ENTRIES = 60;
+
+/**
+ * Tool calls from an `opencode run --format json` stream. Paths under `cwd` are
+ * made relative to it. Lists are capped so a runaway slice cannot bloat the run
+ * record; the raw stream keeps everything.
+ */
+export function summarizeOpenCodeTools(stdout: string, cwd = ""): ToolSummary {
+  const calls: Record<string, number> = {};
+  let failed = 0;
+  const read = new Set<string>();
+  const searched = new Set<string>();
+  const prefix = cwd ? `${cwd.replace(/\/$/, "")}/` : "";
+  const rel = (p: string) => (prefix && p.startsWith(prefix) ? p.slice(prefix.length) : p);
+  const add = (set: Set<string>, value: string) => {
+    if (set.size < MAX_SUMMARY_ENTRIES) set.add(value);
+  };
+  for (const line of stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("{")) continue;
+    let event: { type?: string; part?: { type?: string; tool?: string; state?: { status?: string; input?: unknown } } };
+    try {
+      event = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    const part = event.part;
+    if (event.type !== "tool_use" || part?.type !== "tool" || typeof part.tool !== "string") continue;
+    calls[part.tool] = (calls[part.tool] ?? 0) + 1;
+    if (part.state?.status === "error") failed += 1;
+    const input = (part.state?.input ?? {}) as Record<string, unknown>;
+    if (READ_TOOLS.has(part.tool)) {
+      const paths = Array.isArray(input.paths) ? input.paths : [input.path ?? input.filePath];
+      const section = typeof input.section === "string" ? `:${input.section}` : "";
+      for (const p of paths) if (typeof p === "string") add(read, rel(p) + section);
+    } else if (SEARCH_TOOLS.has(part.tool)) {
+      const q = input.query ?? input.pattern;
+      if (typeof q === "string") add(searched, q);
+    }
+  }
+  return { calls, failed, read: [...read], searched: [...searched] };
+}
+
+export let openCodeHome: Promise<string> | undefined;
+export let openCodeHomeKey: string | undefined;
+
+/**
+ * Write the configuration directory the OpenCode runner reads, once per run.
+ *
+ * Every invocation in a run wants byte-identical configuration, and OpenCode
+ * installs its plugin package into whichever directory it is pointed at the
+ * first time it sees one. Given a directory per invocation that install ran
+ * five times at about five seconds each; shared, it runs once. The result is
+ * memoised rather than merely written to a fixed path because slices run
+ * concurrently, and one install racing five others in the same directory is not
+ * something to find out about during a paid review.
+ *
+ * Memoising a prompt is worth a guard, though. If a caller ever wanted
+ * different instructions it would silently get the first caller's, and the
+ * symptom — a reviewer following a prompt nobody sent it — would be very hard
+ * to read back from the output.
+ */
+export function openCodeConfig(system: string, guidance: string): Promise<string> {
+  const key = `${system}\u0000${guidance}`;
+  if (openCodeHome && openCodeHomeKey !== key) {
+    throw new Error("openCodeConfig called with a different prompt after the config was written");
+  }
+  openCodeHomeKey = key;
+  openCodeHome ??= (async () => {
+    const home = path.join(OUT, "oc", "shared");
+    const configDir = path.join(home, "config");
+    await writeJson(path.join(configDir, "opencode.json"), openCodeSettings(system, guidance));
+    await writeText(
+      path.join(configDir, "plugin", "governor.ts"),
+      await readText(path.join(DIR, "opencode", "governor.ts")),
+    );
+    return home;
+  })();
+  return openCodeHome;
+}
+
+/** Exposed so tests can start from a clean memo. */
+export function resetOpenCodeConfig() {
+  openCodeHome = undefined;
+  openCodeHomeKey = undefined;
+}
+
+/** `provider/model` for a model name that may or may not carry its provider. */
+export function qualifiedModel(model: string): string {
+  return model.includes("/") ? model : `${PROVIDER}/${model}`;
+}
+
+export function openCodeSettings(system: string, guidance: string) {
+  return {
+    $schema: "https://opencode.ai/config.json",
+    // A formatter would rewrite the findings file after the agent wrote it.
+    formatter: false,
+    snapshots: false,
+    share: "disabled",
+    // A compaction is an unbudgeted model call that rewrites the reviewer's
+    // context in the middle of an investigation. The step cap ends a slice long
+    // before its context fills, so there is nothing for it to rescue.
+    compaction: { auto: false },
+    mcp: {
+      servers: {
+        // Without this the reviewer has no structural reader, and it shows:
+        // given only shell tools it sampled eighty lines out of the file the PR
+        // changed and missed every defect in the rest of it.
+        //
+        // `codemode: false` exposes the tools directly as `tilth_tilth_search`
+        // and so on, which is what tools.md and the governor's tips name.
+        // Under Code Mode they would only be reachable through `execute`.
+        tilth: {
+          type: "local",
+          command: ["tilth", "--mcp"],
+          codemode: false,
+          timeout: { catalog: 60000, execution: 60000 },
+        },
+      },
+    },
+    agents: {
+      reviewer: {
+        description: "code review pipeline",
+        mode: "primary",
+        steps: MAX_STEPS,
+        // Replaces the built-in coding-agent prompt outright rather than adding
+        // to it, which is what `--system-prompt` did on the other runner. That
+        // includes the built-in tool guidance, which is why ours is appended
+        // here: without it the reviewer gets no instruction on what tools exist
+        // and falls back to shelling out for everything.
+        system: `${system}\n\n${guidance}`,
+        // Ordered, last match wins. Denying everything first turns off every
+        // tool this list does not name, including ones a later OpenCode adds:
+        // subagents, questions, skills, web access and Code Mode.
+        permissions: [
+          { action: "*", resource: "*", effect: "deny" },
+          ...["read", "glob", "grep", "shell", "tilth_*"].map((action) => ({
+            action,
+            resource: "*",
+            effect: "allow",
+          })),
+          // One action gates write, edit and patch together, so the narrower
+          // "refuse edits, permit writes" split of the other runner cannot be
+          // expressed. See the guardrail note above claudeCodeInvocation.
+          { action: "edit", resource: "*", effect: "allow" },
+          // Findings and artifacts both land outside the checkout under review.
+          { action: "external_directory", resource: "*", effect: "allow" },
+        ],
+      },
+    },
+  };
+}
+
+/**
+ * Spawn plan for the OpenCode runner.
+ *
+ * Everything `claude` took as a flag is configuration here, so this points the
+ * binary at a config directory we wrote. That directory is also the isolation:
+ * run unconfigured, OpenCode loads the developer's own config, skills and
+ * plugins, and one such plugin injected three and a half thousand tokens of
+ * unrelated repository map into the prompt. Beyond the waste, prompts here are
+ * built from attacker-controlled pull request text, and third-party prose has
+ * no business in them. Isolated, the same call read a third of the input
+ * tokens.
+ *
+ * `--pure` looks like the way to get that isolation and is not: it suppresses
+ * our own governor plugin along with everyone else's, which removes the spend
+ * cap. The relocated config and data directories do the job instead.
+ *
+ * `--standalone` gives each invocation a private server. Without it every
+ * invocation attaches to one shared background service, which would run all
+ * of them under whichever configuration started it first.
+ */
+export async function openCodeInvocation(
+  system: string,
+  opts: { budget: number; model: string; effort: string; tag: string; outFile: string },
+): Promise<Invocation> {
+  const guidance = await readText(path.join(DIR, "opencode", "tools.md"));
+  const home = await openCodeConfig(system, guidance);
+  const configDir = path.join(home, "config");
+  const usageFile = path.join(ARTIFACTS, "logs", `${opts.tag}.usage.json`);
+  await ensureDir(path.dirname(usageFile));
+  await removeIfPresent(usageFile);
+
+  // Thinking is a property of the model variant in this runner: `#medium` and
+  // so on, whose meaning the model catalog defines.
+  const variant = opts.effort;
+  const model = qualifiedModel(opts.model);
+  const args = [
+    "run",
+    "--standalone",
+    "--format", "json",
+    "--agent", "reviewer",
+    "--model", variant && !model.includes("#") ? `${model}#${variant}` : model,
+    // Naming the session stops a second, unbudgeted model call being made to
+    // invent a title for it.
+    "--title", opts.tag,
+  ];
+
+  return {
+    command: "opencode",
+    args,
+    cwd: SUBJECT,
+    env: {
+      // OpenCode reads $PWD rather than the process's actual working directory
+      // when it decides which project it is looking at. The inherited value is
+      // the shell that launched the pipeline, so without this every review reads
+      // the checkout the pipeline is running from instead of the PR's code, and
+      // reports on the wrong source while being shown the right diff. It is set
+      // from the same field the child is spawned in so the two cannot disagree.
+      PWD: SUBJECT,
+      XDG_CONFIG_HOME: path.join(home, "xdg"),
+      // The configuration is shared but the data directory cannot be, because
+      // it holds a SQLite session database and invocations run concurrently:
+      // the coordinator and the walkthrough always overlap, and slices run six
+      // at a time. Sharing it cost a whole coordinator phase to "database is
+      // locked", which the pipeline absorbed as a silent fall back to
+      // deterministic merging. A private directory costs about a second of
+      // startup; the install that made sharing worth doing is in the config
+      // directory, which is still shared.
+      XDG_DATA_HOME: path.join(home, "data", opts.tag),
+      XDG_STATE_HOME: path.join(home, "state", opts.tag),
+      XDG_CACHE_HOME: path.join(home, "cache"),
+      OPENCODE_CONFIG_DIR: configDir,
+      // Also stops AGENTS.md files in the checkout reaching the prompt. Those
+      // come from the pull request under review.
+      OPENCODE_DISABLE_PROJECT_CONFIG: "1",
+      OPENCODE_DISABLE_AUTOUPDATE: "1",
+      REVIEW_GOVERNOR_BUDGET_USD: String(opts.budget),
+      REVIEW_GOVERNOR_DEADLINE_MS: String(DEADLINE_MS),
+      REVIEW_GOVERNOR_OUT_FILE: opts.outFile,
+      REVIEW_GOVERNOR_LOG: path.join(ARTIFACTS, "logs", `${opts.tag}.governor.jsonl`),
+      REVIEW_GOVERNOR_USAGE_FILE: usageFile,
+      // MCP servers connect in the background, and without the wait the first
+      // turns are taken with no tilth tools on offer.
+      REVIEW_GOVERNOR_WAIT_FOR_TOOLS: "tilth_",
+      // tilth builds that report the same version expose different tools, and
+      // guidance pointing at a missing one is advice the model cannot follow.
+      REVIEW_GOVERNOR_EXPECT_TOOLS: [...new Set(guidance.match(/\btilth_tilth_\w+/g) ?? [])].join(","),
+    },
+    unsetEnv: ["OPENCODE_CONFIG", "OPENCODE_CONFIG_CONTENT", "OPENCODE_CLI_CONFIG_CONTENT"],
+    rawExt: "stdout.ndjson",
+    parse: (stdout) => readOpenCodeUsage(usageFile) ?? sumOpenCodeStream(stdout),
+    tools: (stdout) => summarizeOpenCodeTools(stdout, SUBJECT),
+  };
+}
+
+/**
+ * The governor's running totals for one invocation, if it wrote any.
+ *
+ * Preferred over the stdout stream because the stream leaves out the step that
+ * ends the session, which is the one that writes the answer.
+ */
+export function readOpenCodeUsage(file: string): ReturnType<typeof sumOpenCodeStream> | undefined {
+  try {
+    return JSON.parse(readFileSync(file, "utf8")) as ReturnType<typeof sumOpenCodeStream>;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function agent(
+  prompt: string,
+  opts: { budget: number; outFile: string; tag: string; model?: string; effort?: string },
+) {
+  const system = (await readText(path.join(DIR, "system.md"))).replaceAll("{{repo}}", repoName);
+  const model = opts.model ?? MODEL;
+  const effort = opts.effort ?? EFFORT;
+  const spec: Invocation = await openCodeInvocation(system, { ...opts, model, effort });
+  const env: Record<string, string | undefined> = { ...process.env, ...spec.env };
+  for (const key of spec.unsetEnv) delete env[key];
+  const started = Date.now();
+  const { stdout, stderr, exitCode } = await new Promise<{
+    stdout: string;
+    stderr: string;
+    exitCode: number;
+  }>((resolve, reject) => {
+    // The prompt goes in on stdin, not argv, on both runners: it carries the
+    // diff, and Linux caps a single argument at 128 KiB, which a few thousand
+    // changed lines will exceed.
+    const child = spawn(spec.command, spec.args, {
+      cwd: spec.cwd,
+      env,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    child.stdin.on("error", reject);
+    child.stdin.end(prompt);
+    const out: Buffer[] = [];
+    const err: Buffer[] = [];
+    child.stdout.on("data", (c: Buffer) => out.push(c));
+    child.stderr.on("data", (c: Buffer) => err.push(c));
+    child.on("error", reject);
+    child.on("close", (code) =>
+      resolve({
+        stdout: Buffer.concat(out).toString("utf8"),
+        stderr: Buffer.concat(err).toString("utf8"),
+        exitCode: code ?? 0,
+      }),
+    );
+  });
+  const wallMs = Date.now() - started;
+  await writeText(path.join(ARTIFACTS, "logs", `${opts.tag}.stderr.log`), stderr);
+  await writeText(path.join(ARTIFACTS, "raw", `${opts.tag}.${spec.rawExt}`), stdout);
+  const meta = spec.parse(stdout);
+  const tools = spec.tools?.(stdout);
+  let payload: unknown = null;
+  try {
+    payload = await readJson(opts.outFile);
+  } catch {
+    /* agent wrote nothing */
+  }
+  return { wallMs, exitCode, ...meta, tools, payload };
+}

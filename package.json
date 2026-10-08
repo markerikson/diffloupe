@@ -20,10 +20,10 @@
     "build": "bun build src/index.ts --outdir=dist --target=node --minify --banner '#!/usr/bin/env node'",
     "build:web": "vite build --config src/web/vite.config.ts",
     "prepublishOnly": "bun run build && bun run typecheck",
-    "test": "bun test src/cli src/services src/types src/prompts/alignment.test.ts src/prompts/intent.test.ts src/prompts/risks.test.ts",
+    "test": "bun test src/cli src/services src/types src/review src/prompts/alignment.test.ts src/prompts/intent.test.ts src/prompts/risks.test.ts",
     "test:all": "bun test src",
     "test:integration": "bun test src/prompts/*.integration.test.ts",
-    "typecheck": "tsgo --noEmit",
+    "typecheck": "tsgo --noEmit && tsgo --noEmit -p src/review",
     "lint": "oxlint src/",
     "release": "release-it"
   },
@@ -67,6 +67,9 @@
     "react-redux": "^9.2.0",
     "shiki": "^3.9.0",
     "simple-git": "^3.30.0",
-    "tinyexec": "^1.0.2"
+    "tinyexec": "^1.0.2",
+    "tree-sitter-cpp": "^0.23.4",
+    "tree-sitter-typescript": "^0.23.2",
+    "web-tree-sitter": "^0.26.13"
   }
 }

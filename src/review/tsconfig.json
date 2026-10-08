@@ -1,0 +1,8 @@
+{
+  // The DiffLoupe review layer (target resolver, headless CLI) imports the
+  // ported core, so it shares the core's compiler settings. The root tsconfig
+  // excludes src/review, and the root CLI loads this layer through a dynamic
+  // import the root typecheck does not follow.
+  "extends": "./core/tsconfig.json",
+  "include": ["./**/*.ts"]
+}
