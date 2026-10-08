@@ -2,15 +2,19 @@
  * `diffloupe review --headless`: resolve a target, run the ported review core,
  * print the review markdown to stdout and progress to stderr.
  */
-import os from "node:os";
 import path from "node:path";
-import { readFile } from "node:fs/promises";
+import { copyFile, readFile, writeFile } from "node:fs/promises";
 import { getAnthropicApiKey, loadConfig } from "../services/config.ts";
+import type { ReviewRun, ReviewTarget } from "../types/review-run.ts";
 import type { ReviewConfig } from "./core/config.ts";
-import { runReview, type ReviewEvent } from "./core/pipeline.ts";
+import { text } from "./core/lib/proc.ts";
+import { runReview, type ReviewEvent, type RunReviewResult } from "./core/pipeline.ts";
 import type { ReviewCommandOptions, ReviewModelStage } from "./options.ts";
+import { appendEvent, artifactsDir, createRunDir, dataDir, findPriorRunId, writeRun } from "./run-store.ts";
 import { loadReviewSettings, settingsToConfig, type ReviewSettings } from "./settings.ts";
-import { parseTargetSpec, resolveTarget, TargetError } from "./targets.ts";
+import { parseTargetSpec, resolveTarget, TargetError, type ResolvedTarget } from "./targets.ts";
+
+export { dataDir };
 
 const INSTALL_HINTS: Record<string, string> = {
   git: "https://git-scm.com/downloads",
@@ -26,10 +30,6 @@ const STAGES: Record<ReviewModelStage, ModelKey> = {
   coordinator: "modelMerge",
   walkthrough: "modelWalk",
 };
-
-export function dataDir(): string {
-  return path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share"), "diffloupe");
-}
 
 export function parseModelOverrides(pairs: string[]): Partial<Pick<ReviewConfig, ModelKey>> {
   const out: Partial<Pick<ReviewConfig, ModelKey>> = {};
@@ -111,20 +111,117 @@ export async function runHeadlessReview(opts: ReviewCommandOptions): Promise<num
       for (const f of resolved.skippedUntracked) log(`    ${f}`);
     }
 
-    const result = await runReview({
+    const createdAt = new Date().toISOString();
+    const runRepo = {
+      root: repo,
+      ...(target.slug ? { slug: target.slug } : {}),
+    };
+    const reviewTarget = await toReviewTarget(repo, resolved);
+    const dir = await createRunDir(tag);
+    const patch = await text("git", [
+      "-C",
       repo,
-      target,
-      tag,
-      config,
-      ...(intent ? { intent } : {}),
-      onProgress: (e) => {
-        const line = formatEvent(e);
-        if (line) log(line);
+      "diff",
+      "--no-color",
+      "--no-ext-diff",
+      "--full-index",
+      "-M",
+      target.base,
+      target.head,
+    ]);
+    await writeFile(path.join(dir, "diff.patch"), patch);
+    const priorRunId = await findPriorRunId(runRepo, reviewTarget, createdAt);
+    const source = await coreSource();
+    const failedRun = (message: string): ReviewRun => ({
+      schemaVersion: 1,
+      id: tag,
+      status: "failed",
+      createdAt,
+      repo: runRepo,
+      target: reviewTarget,
+      base: target.base,
+      head: target.head,
+      intent: intent ? { stated: intent } : {},
+      overview: { startHere: [] },
+      files: [],
+      groups: [],
+      stops: [],
+      findings: [],
+      overCapFindings: [],
+      resolved: [],
+      unreviewed: { overCap: [], failed: [] },
+      meta: {
+        wallMs: 0,
+        costUsd: 0,
+        slices: [],
+        rejectedCount: 0,
+        coreSource: source,
       },
+      untrackedSkipped: resolved.skippedUntracked,
+      ...(priorRunId ? { priorRunId } : {}),
+      error: message,
     });
+
+    // Events are appended in order; the chain is awaited before run.json is written.
+    let events = Promise.resolve();
+    let result: RunReviewResult;
+    try {
+      result = await runReview({
+        repo,
+        target,
+        tag,
+        config,
+        ...(intent ? { intent } : {}),
+        onProgress: (e) => {
+          events = events.then(() => appendEvent(tag, e)).catch(() => {});
+          const line = formatEvent(e);
+          if (line) log(line);
+        },
+      });
+    } catch (err) {
+      await events;
+      await writeRun(failedRun(err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    await events;
+
+    const artifacts = config.artifacts ?? artifactsDir();
+    await copyIfPresent(path.join(artifacts, "runs", `${tag}.json`), path.join(dir, "raw", "record.json"));
+    await copyIfPresent(result.markdownPath, path.join(dir, "raw", "review.md"));
+    await copyIfPresent(
+      path.join(artifacts, "reviews", `${tag}.payloads.json`),
+      path.join(dir, "raw", "payloads.json"),
+    );
+    await writeFile(path.join(dir, "raw", "units.json"), `${JSON.stringify(result.units, null, 2)}\n`);
+    await writeFile(path.join(dir, "raw", "byClass.json"), `${JSON.stringify(result.byClass, null, 2)}\n`);
+
+    const { buildReviewRun } = await import("./build-run.ts");
+    let run: ReviewRun;
+    try {
+      run = buildReviewRun({
+        id: tag,
+        createdAt,
+        repo: runRepo,
+        target: reviewTarget,
+        base: target.base,
+        head: target.head,
+        ...(intent ? { statedIntent: intent } : {}),
+        patch,
+        result,
+        untrackedSkipped: resolved.skippedUntracked,
+        coreSource: source,
+        ...(priorRunId ? { priorRunId } : {}),
+        log,
+      });
+    } catch (err) {
+      await writeRun(failedRun(`building run.json: ${err instanceof Error ? err.message : String(err)}`));
+      throw err;
+    }
+    await writeRun(run);
 
     if (!result.record) {
       log("No code changes to review.");
+      log(`Run saved: ${dir}`);
       return 0;
     }
     process.stdout.write(await readFile(result.markdownPath, "utf8"));
@@ -132,9 +229,63 @@ export async function runHeadlessReview(opts: ReviewCommandOptions): Promise<num
       `\n${result.findings.length} finding(s) · $${result.costUsd.toFixed(2)} · ` +
         `${Math.round(result.wallMs / 1000)}s · ${result.markdownPath}`,
     );
+    log(`Run saved: ${dir} (diffloupe runs show ${tag})`);
     return 0;
   } catch (err) {
     log(`Error: ${err instanceof Error ? err.message : String(err)}`);
     return 1;
   }
+}
+
+async function copyIfPresent(from: string, to: string): Promise<void> {
+  try {
+    await copyFile(from, to);
+  } catch {
+    // Not every run writes every artifact: payloads exist only for a pull request.
+  }
+}
+
+let cachedCoreSource: string | undefined;
+
+/** The DiffLoupe commit the review ran from, when running from a checkout. */
+async function coreSource(): Promise<string> {
+  if (cachedCoreSource) return cachedCoreSource;
+  try {
+    const sha = (await text("git", ["-C", import.meta.dir, "rev-parse", "--short", "HEAD"])).trim();
+    cachedCoreSource = `diffloupe@${sha}`;
+  } catch {
+    cachedCoreSource = "diffloupe";
+  }
+  return cachedCoreSource;
+}
+
+export async function toReviewTarget(repo: string, resolved: ResolvedTarget): Promise<ReviewTarget> {
+  const { spec, pullRequest: pr } = resolved;
+  if (spec.kind === "pr") {
+    return {
+      kind: "pr",
+      number: spec.pr,
+      url: pr?.url ?? "",
+      title: pr?.title ?? "",
+      author: pr?.author.login ?? "",
+      baseRef: pr?.baseRefName ?? "",
+      headRef: pr?.headRefName ?? "",
+      state: pr?.state ?? "",
+      isDraft: pr?.isDraft ?? false,
+    };
+  }
+  if (spec.kind === "branch") return { kind: "branch", spec: spec.branch };
+  if (spec.kind === "commit") return { kind: "commit", spec: spec.rev };
+  if (spec.kind === "range")
+    return {
+      kind: "range",
+      spec: `${spec.from}${spec.mergeBase ? "..." : ".."}${spec.to}`,
+    };
+  let branch: string | undefined;
+  try {
+    branch = (await text("git", ["-C", repo, "rev-parse", "--abbrev-ref", "HEAD"])).trim() || undefined;
+  } catch {
+    // An empty repository has no HEAD to name.
+  }
+  return { kind: spec.kind, ...(branch ? { branch } : {}) };
 }

@@ -207,7 +207,7 @@ async function computeRegistryCheck(opts: {
   const { repo, base, head } = opts;
   const cwd = repo;
 
-  const diff = await text("git", ["-C", cwd, "diff", "-U5", `${base}..${head}`]);
+  const diff = await text("git", ["-C", cwd, "-c", "diff.renames=true", "diff", "-U5", `${base}..${head}`]);
   const hunks = parseDiff(diff);
   const changedFiles = new Set(hunks.map((h) => h.file));
 

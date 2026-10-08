@@ -40,6 +40,8 @@ export function renderReview(o: {
    * caller owns the tag the artifact files are keyed on.
    */
   detailFile?: string | undefined;
+  /** Where the detail document sits on disk, shown when there is no Actions run to link to. */
+  detailPath?: string | undefined;
   /**
    * Set when the slice reviewers did not run at all, so an empty finding list
    * carries no information about the code. Without it the comment reads as an
@@ -81,8 +83,12 @@ export function renderReview(o: {
   const slug = o.repo ?? repoName;
   const link = (file: string, line?: number) =>
     `https://github.com/${slug}/blob/${o.head}/${file}${line ? `#L${line}` : ""}`;
-  const loc = (file: string, line?: number, label?: string) =>
-    `[${label ?? `${file.split("/").pop()}${line ? `:${line}` : ""}`}](${link(file, line)})`;
+  const loc = (file: string, line?: number, label?: string) => {
+    const text = label ?? `${file.split("/").pop()}${line ? `:${line}` : ""}`;
+    // A local review has no pushed commit to link to, so the location stays plain text.
+    if (!o.pr) return text.includes("`") ? text : `\`${text}\``;
+    return `[${text}](${link(file, line)})`;
+  };
   // Severity, then how far the code is from production, then confidence. Kept
   // here rather than left to the caller so a re-render of a stored run orders
   // the same way a fresh review does.
@@ -642,7 +648,7 @@ export function renderReview(o: {
             ` \`ai-code-review-${o.pr}-${o.head.slice(0, 9)}\` artifact and open \`${detailName}\`` +
             " for the walkthrough and the evidence behind each finding. Artifacts expire 90 days" +
             " after the run."
-        : `📄 Full walkthrough and evidence: \`.code-review/reviews/${detailName}\`.`,
+        : `📄 Full walkthrough and evidence: \`${o.detailPath ?? detailName}\`.`,
     );
     s.push("");
   }
@@ -677,11 +683,13 @@ export function renderReview(o: {
   // Said here on every review, because the moment it becomes useful is the
   // moment the bot has gone quiet and is no longer writing anything new.
   s.push("");
-  s.push(
-    "This comment is rewritten on each push rather than replaced. Reviewing pauses" +
-      " automatically once a branch has had several; comment `/ai-review resume` to restart it.",
-  );
-  s.push("");
+  if (o.pr) {
+    s.push(
+      "This comment is rewritten on each push rather than replaced. Reviewing pauses" +
+        " automatically once a branch has had several; comment `/ai-review resume` to restart it.",
+    );
+    s.push("");
+  }
   s.push("</details>");
   // Invisible, and the only reason the next push updates this comment instead
   // of adding another one below it.
@@ -886,7 +894,7 @@ export async function writeArtifacts(o: {
       }));
       const off = findings.filter((f) => f._anchor?.kind !== "anchorable");
       for (const f of off) {
-        console.log(
+        console.error(
           `  anchor: ${f.file}:${f.line} is ${f._anchor?.kind}` +
             (f._anchor?.line ? ` → line ${f._anchor.line}` : " → summary comment"),
         );
@@ -900,6 +908,7 @@ export async function writeArtifacts(o: {
   const { summary, detail, inline, ordered, replies } = renderReview({
     pr: o.pr,
     detailFile,
+    detailPath: path.join(o.dir, detailFile),
     head: o.head,
     findings,
     intentAlignment: o.intentAlignment,
@@ -974,7 +983,7 @@ export async function writeArtifacts(o: {
     // A payload file left over from an earlier run under this tag is worse than
     // no file: `post.ts` would happily send it.
     await removeIfPresent(path.join(o.dir, `${o.tag}.payloads.json`));
-    console.log("  commit range: no pull request, so no API payloads written");
+    console.error("  local review: no pull request, so no API payloads written");
     return { summary, inline, ordered };
   }
 

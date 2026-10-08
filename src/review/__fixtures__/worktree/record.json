@@ -1,0 +1,49 @@
+{
+  "base": "37c3517f35d0cbb6173b3506249da6e30d9d621b",
+  "head": "01a50e5aedcf47be23d9591cbe413fb443018644",
+  "model": "m",
+  "wallMs": 2000,
+  "totalCostUsd": 0.2,
+  "mergeMode": "deterministic-fallback",
+  "sliceRuns": [
+    {
+      "unit": "App",
+      "part": 1,
+      "parts": 1,
+      "ok": true,
+      "costUsd": 0.2,
+      "wallMs": 2000
+    }
+  ],
+  "walkthrough": null,
+  "verifiedFindings": [
+    {
+      "file": "src/new-untracked.ts",
+      "line": 2,
+      "severity": "should-fix",
+      "category": "correctness",
+      "title": "Last line without a newline",
+      "explanation": "Last line without a newline: explanation.",
+      "evidence": "src/new-untracked.ts:2",
+      "confidence": "high"
+    },
+    {
+      "file": "src/app.ts",
+      "line": 4,
+      "severity": "nice-to-have",
+      "category": "correctness",
+      "title": "Changed constant",
+      "explanation": "Changed constant: explanation.",
+      "evidence": "src/app.ts:4",
+      "confidence": "high"
+    }
+  ],
+  "overCapFindings": [],
+  "unreviewed": {
+    "overCap": [],
+    "failed": []
+  },
+  "resolved": [],
+  "rejected": [],
+  "intentAlignment": null
+}

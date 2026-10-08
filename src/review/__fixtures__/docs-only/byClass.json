@@ -1,0 +1,9 @@
+{
+  "skip": [
+    "bun.lock"
+  ],
+  "docs": [
+    "README.md"
+  ],
+  "code": []
+}

@@ -1,0 +1,11 @@
+{
+  "skip": [],
+  "docs": [],
+  "code": [
+    "assets/logo.png",
+    "lib/moved-pure.ts",
+    "src/keep.ts",
+    "src/new-name.ts",
+    "src/removed.ts"
+  ]
+}

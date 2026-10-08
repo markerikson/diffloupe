@@ -1,0 +1,108 @@
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { loadFixture } from "./__fixtures__/load.ts";
+import {
+  appendEvent,
+  artifactsDir,
+  createRunDir,
+  deleteRun,
+  findPriorRunId,
+  listRuns,
+  loadRun,
+  runDir,
+  writeRun,
+} from "./run-store.ts";
+import { formatAnchor, formatRun, formatRunList } from "../cli/runs.ts";
+
+let tmp: string;
+const saved = process.env.XDG_DATA_HOME;
+
+beforeAll(async () => {
+  tmp = await mkdtemp(path.join(os.tmpdir(), "diffloupe-runs-"));
+  process.env.XDG_DATA_HOME = tmp;
+});
+
+afterAll(async () => {
+  if (saved === undefined) delete process.env.XDG_DATA_HOME;
+  else process.env.XDG_DATA_HOME = saved;
+  await rm(tmp, { recursive: true, force: true });
+});
+
+describe("run store", () => {
+  test("rejects ids that leave the runs directory", () => {
+    expect(() => runDir("../x")).toThrow();
+    expect(() => runDir(".hidden")).toThrow();
+    expect(() => runDir("")).toThrow();
+  });
+
+  test("create, append, write, list, find the prior run, delete", async () => {
+    const base = loadFixture("worktree").build();
+    const first = { ...base, id: "local-1", createdAt: "2026-10-08T01:00:00.000Z" };
+    const second = { ...base, id: "local-2", createdAt: "2026-10-08T02:00:00.000Z" };
+
+    for (const run of [first, second]) {
+      const dir = await createRunDir(run.id);
+      expect(JSON.parse(await readFile(path.join(dir, "state.json"), "utf8"))).toEqual({
+        reviewedFiles: [],
+        findingStatus: {},
+        comments: [],
+      });
+      await appendEvent(run.id, { kind: "stage", stage: "slice" });
+      await writeRun(run);
+    }
+    await createRunDir("unfinished");
+
+    const events = (await readFile(path.join(runDir("local-1"), "events.jsonl"), "utf8")).trim().split("\n");
+    expect(JSON.parse(events[0]!)).toMatchObject({ kind: "stage", stage: "slice" });
+
+    expect((await loadRun("local-2")).id).toBe("local-2");
+    const headers = await listRuns();
+    expect(headers.map((h) => h.id)).toEqual(["local-2", "local-1"]);
+    expect(headers[0]!.findingCounts).toEqual({ blocker: 0, "should-fix": 1, "nice-to-have": 1, question: 0 });
+
+    expect(await findPriorRunId(second.repo, second.target, second.createdAt)).toBe("local-1");
+    expect(await findPriorRunId(first.repo, first.target, first.createdAt)).toBeUndefined();
+    expect(await findPriorRunId(first.repo, { kind: "worktree", branch: "other" }, "9999")).toBeUndefined();
+
+    const reviews = path.join(artifactsDir(), "reviews");
+    await mkdir(reviews, { recursive: true });
+    await writeFile(path.join(reviews, "local-1.md"), "x");
+    await writeFile(path.join(reviews, "local-10.md"), "keep");
+
+    const removed = await deleteRun("local-1");
+    expect(removed).toContain(path.join(reviews, "local-1.md"));
+    expect(removed).toContain(runDir("local-1"));
+    expect(existsSync(runDir("local-1"))).toBe(false);
+    expect(existsSync(path.join(reviews, "local-10.md"))).toBe(true);
+    expect(await deleteRun("never-existed")).toEqual([]);
+  });
+});
+
+describe("runs formatting", () => {
+  test("anchors", () => {
+    const cited = { line: 42 };
+    expect(formatAnchor({ file: "src/app.ts", side: "additions", kind: "line", line: 42, cited })).toBe(
+      "src/app.ts:42 (line)",
+    );
+    expect(
+      formatAnchor({ file: "src/app.ts", side: "additions", kind: "nearby", line: 101, cited: { line: 120 } }),
+    ).toBe("src/app.ts:120 → 101 (nearby)");
+    expect(
+      formatAnchor({ file: "docs/x.md", side: "additions", kind: "file", line: 0, cited, reason: "far-from-diff" }),
+    ).toBe("docs/x.md (file: far-from-diff)");
+    expect(formatAnchor({ file: "a.ts", side: "deletions", kind: "line", line: 3, endLine: 5, cited })).toBe(
+      "a.ts:3-5 (line) [base]",
+    );
+  });
+
+  test("show lists every file and finding", () => {
+    const run = loadFixture("large-pr").build();
+    const text = formatRun(run);
+    for (const f of run.files) expect(text).toContain(f.path);
+    for (const f of [...run.findings, ...run.overCapFindings]) expect(text).toContain(f.title);
+    expect(formatRunList([])).toBe("No saved runs.");
+  });
+});

@@ -53,6 +53,7 @@
     "vite": "^8.0.0-beta.11"
   },
   "dependencies": {
+    "@pierre/diffs": "1.5.2",
     "@reduxjs/toolkit": "^2.11.2",
     "arktype": "^2.1.29",
     "commander": "^14.0.2",

@@ -1,0 +1,13 @@
+[
+  {
+    "id": "llm",
+    "title": "llm",
+    "files": [
+      "src/services/decomposition/flow-detection.ts",
+      "src/services/decomposition/two-pass.ts",
+      "src/services/llm.ts",
+      "src/types/llm.ts"
+    ],
+    "priority": 1
+  }
+]

@@ -1,0 +1,9 @@
+{
+  "target": {
+    "kind": "worktree",
+    "branch": "main"
+  },
+  "untrackedSkipped": [
+    "big.bin"
+  ]
+}

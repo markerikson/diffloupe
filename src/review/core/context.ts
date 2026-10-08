@@ -6,7 +6,7 @@ import { SUBJECT } from "./config.ts";
 // ---------------------------------------------------------------- context
 
 export async function gitText(args: string[]): Promise<string> {
-  return await text("git", ["-C", SUBJECT, ...args]);
+  return await text("git", ["-C", SUBJECT, "-c", "diff.renames=true", ...args]);
 }
 
 

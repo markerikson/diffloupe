@@ -1,0 +1,246 @@
+{
+  "pr": 42,
+  "base": "ad555642469a24f62e17b4a2dbb8cae9507b21ad",
+  "head": "b7e77e972a23982dcd3910295e57ba8a0f12e36c",
+  "model": "anthropic/claude-sonnet",
+  "effort": "high",
+  "tag": "large-pr",
+  "wallMs": 120000,
+  "totalCostUsd": 1.5,
+  "mergeMode": "coordinator",
+  "sliceRuns": [
+    {
+      "unit": "API",
+      "part": 1,
+      "parts": 1,
+      "ok": true,
+      "costUsd": 0.5,
+      "wallMs": 60000
+    },
+    {
+      "unit": "Database",
+      "part": 1,
+      "parts": 2,
+      "ok": true,
+      "costUsd": 0.4,
+      "wallMs": 50000
+    },
+    {
+      "unit": "Database",
+      "part": 2,
+      "parts": 2,
+      "ok": false,
+      "costUsd": 0.1,
+      "wallMs": 10000
+    }
+  ],
+  "walkthrough": {
+    "focus": "New routes read user input straight into the server constants.",
+    "change_type": "feature",
+    "start_here": [
+      {
+        "file": "src/api/routes.ts",
+        "why": "The new entry point"
+      }
+    ],
+    "chapters": [
+      {
+        "title": "Request path",
+        "icon": "path",
+        "blurb": "How a request reaches the server.",
+        "stops": [
+          {
+            "title": "Input reaches the server",
+            "importance": "critical",
+            "prose": "Input flows in.",
+            "locations": [
+              {
+                "file": "src/api/server.ts",
+                "line": 51,
+                "label": "server51"
+              },
+              {
+                "file": "src/api/routes.ts",
+                "line": 10
+              }
+            ]
+          },
+          {
+            "title": "Route table",
+            "locations": [
+              {
+                "file": "src/api"
+              },
+              {
+                "file": "src/api/routes.ts",
+                "line": 200,
+                "label": "past the end"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "title": "Storage",
+        "icon": "wrench",
+        "blurb": "Query changes.",
+        "stops": [
+          {
+            "title": "Per-row queries",
+            "locations": [
+              {
+                "file": "src/db/query.ts",
+                "line": 100
+              },
+              {
+                "file": "src/db/schema.ts",
+                "line": 30
+              }
+            ]
+          },
+          {
+            "title": "Tail of the query file",
+            "importance": "context",
+            "locations": [
+              {
+                "file": "src/db/query.ts",
+                "line": 115
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "support": [
+      {
+        "files": [
+          "src/ui/button.tsx"
+        ],
+        "reason": "Style tweak"
+      }
+    ],
+    "intent": {
+      "inferred": "Add routes and a per-row query.",
+      "alignment": "aligned",
+      "matches": [
+        "routes"
+      ]
+    }
+  },
+  "verifiedFindings": [
+    {
+      "file": "src/api/server.ts",
+      "line": 51,
+      "severity": "blocker",
+      "category": "correctness",
+      "title": "Unvalidated input reaches the server",
+      "explanation": "Unvalidated input reaches the server: explanation.",
+      "evidence": "src/api/server.ts:51",
+      "confidence": "high",
+      "end_line": 53,
+      "cross_file_refs": [
+        "src/db/schema.ts:5",
+        "src/api/routes.ts"
+      ],
+      "suggestion": "Validate input"
+    },
+    {
+      "file": "src/db/query.ts",
+      "line": 100,
+      "severity": "should-fix",
+      "category": "correctness",
+      "title": "Query per row",
+      "explanation": "Query per row: explanation.",
+      "evidence": "src/db/query.ts:100",
+      "confidence": "high"
+    },
+    {
+      "file": "src/db/query.ts",
+      "line": 25,
+      "severity": "nice-to-have",
+      "category": "correctness",
+      "title": "Cited line sits between hunks",
+      "explanation": "Cited line sits between hunks: explanation.",
+      "evidence": "src/db/query.ts:25",
+      "confidence": "high"
+    },
+    {
+      "file": "src/db/schema.ts",
+      "line": 0,
+      "severity": "question",
+      "category": "correctness",
+      "title": "Is the schema change intended?",
+      "explanation": "Is the schema change intended?: explanation.",
+      "evidence": "src/db/schema.ts:0",
+      "confidence": "high"
+    },
+    {
+      "file": "docs/guide.md",
+      "line": 3,
+      "severity": "question",
+      "category": "correctness",
+      "title": "Guide wording",
+      "explanation": "Guide wording: explanation.",
+      "evidence": "docs/guide.md:3",
+      "confidence": "high"
+    },
+    {
+      "file": "src/gone.ts",
+      "line": 5,
+      "severity": "nice-to-have",
+      "category": "correctness",
+      "title": "File that is not in the diff",
+      "explanation": "File that is not in the diff: explanation.",
+      "evidence": "src/gone.ts:5",
+      "confidence": "high"
+    }
+  ],
+  "overCapFindings": [
+    {
+      "file": "src/ui/button.tsx",
+      "line": 20,
+      "severity": "nice-to-have",
+      "category": "correctness",
+      "title": "Hard-coded colour",
+      "explanation": "Hard-coded colour: explanation.",
+      "evidence": "src/ui/button.tsx:20",
+      "confidence": "high"
+    },
+    {
+      "file": "src/api/server.ts",
+      "line": 118,
+      "severity": "nice-to-have",
+      "category": "correctness",
+      "title": "Far from any hunk",
+      "explanation": "Far from any hunk: explanation.",
+      "evidence": "src/api/server.ts:118",
+      "confidence": "high"
+    }
+  ],
+  "unreviewed": {
+    "overCap": [
+      "src/ui/button.tsx"
+    ],
+    "failed": [
+      "Database 2/2"
+    ]
+  },
+  "resolved": [
+    {
+      "id": 12345,
+      "note": "fixed in a later push"
+    }
+  ],
+  "rejected": [
+    {
+      "title": "Rejected one",
+      "reason": "not supported"
+    }
+  ],
+  "intentAlignment": {
+    "summary": "The stated intent leaves out the schema change.",
+    "unstated": [
+      "schema change"
+    ]
+  }
+}

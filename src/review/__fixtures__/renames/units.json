@@ -1,0 +1,21 @@
+[
+  {
+    "id": "moves",
+    "title": "Moves",
+    "files": [
+      "src/new-name.ts",
+      "lib/moved-pure.ts",
+      "src/removed.ts"
+    ],
+    "priority": 1
+  },
+  {
+    "id": "keep",
+    "title": "Keep",
+    "files": [
+      "src/keep.ts",
+      "assets/logo.png"
+    ],
+    "priority": 2
+  }
+]

@@ -48,7 +48,7 @@ export type HunkMap = Map<string, Range[]>;
  * as "nothing here can be anchored".
  */
 export async function loadHunks(repoDir: string, base: string, head: string): Promise<HunkMap> {
-  return parseDiffHunks(await text("git", ["-C", repoDir, "diff", "--unified=0", `${base}..${head}`]));
+  return parseDiffHunks(await text("git", ["-C", repoDir, "-c", "diff.renames=true", "diff", "--unified=0", `${base}..${head}`]));
 }
 
 /**

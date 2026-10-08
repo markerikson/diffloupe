@@ -1,0 +1,62 @@
+diff --git a/assets/logo.png b/assets/logo.png
+index 67c1c7c1783d7da6bdab0148caff749f8be51a10..47a5650b26ed5c5fce0407aa9c5a9bee6300a474 100644
+Binary files a/assets/logo.png and b/assets/logo.png differ
+diff --git a/src/moved-pure.ts b/lib/moved-pure.ts
+similarity index 100%
+rename from src/moved-pure.ts
+rename to lib/moved-pure.ts
+diff --git a/src/keep.ts b/src/keep.ts
+index b8a2d51b8d23a5b40e61ddceb6d5b310063af6cf..ba5621691fd4caeedd33c2c6ca3dd5e6d21e532f 100644
+--- a/src/keep.ts
++++ b/src/keep.ts
+@@ -12,7 +12,7 @@ export const keep11 = 11;
+ export const keep12 = 12;
+ export const keep13 = 13;
+ export const keep14 = 14;
+-export const keep15 = 15;
++export const keep15 = 'kept';
+ export const keep16 = 16;
+ export const keep17 = 17;
+ export const keep18 = 18;
+diff --git a/src/old-name.ts b/src/new-name.ts
+similarity index 96%
+rename from src/old-name.ts
+rename to src/new-name.ts
+index fee2e95022c9b9339f2dec37d802c1d18ba45fcb..bcf845e76945f846c65f09c5e620e47be27d317b 100644
+--- a/src/old-name.ts
++++ b/src/new-name.ts
+@@ -17,7 +17,7 @@ export const old16 = 16;
+ export const old17 = 17;
+ export const old18 = 18;
+ export const old19 = 19;
+-export const old20 = 20;
++export const old20 = 'renamed';
+ export const old21 = 21;
+ export const old22 = 22;
+ export const old23 = 23;
+diff --git a/src/removed.ts b/src/removed.ts
+deleted file mode 100644
+index baf706b7f71c02f68fe21ea6a9fcf99484bba90c..0000000000000000000000000000000000000000
+--- a/src/removed.ts
++++ /dev/null
+@@ -1,20 +0,0 @@
+-export const removed1 = 1;
+-export const removed2 = 2;
+-export const removed3 = 3;
+-export const removed4 = 4;
+-export const removed5 = 5;
+-export const removed6 = 6;
+-export const removed7 = 7;
+-export const removed8 = 8;
+-export const removed9 = 9;
+-export const removed10 = 10;
+-export const removed11 = 11;
+-export const removed12 = 12;
+-export const removed13 = 13;
+-export const removed14 = 14;
+-export const removed15 = 15;
+-export const removed16 = 16;
+-export const removed17 = 17;
+-export const removed18 = 18;
+-export const removed19 = 19;
+-export const removed20 = 20;

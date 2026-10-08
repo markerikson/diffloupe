@@ -470,8 +470,13 @@ describe("renderReview detail split", () => {
     const before = process.env.GITHUB_RUN_ID;
     delete process.env.GITHUB_RUN_ID;
     try {
-      const out = renderReview({ ...base, findings: [finding({})], detailFile: "local.detail.md" });
-      expect(out.summary).toContain(".code-review/reviews/local.detail.md");
+      const out = renderReview({
+        ...base,
+        findings: [finding({})],
+        detailFile: "local.detail.md",
+        detailPath: "/data/artifacts/reviews/local.detail.md",
+      });
+      expect(out.summary).toContain("`/data/artifacts/reviews/local.detail.md`");
       expect(out.summary).not.toContain("actions/runs");
     } finally {
       if (before !== undefined) process.env.GITHUB_RUN_ID = before;

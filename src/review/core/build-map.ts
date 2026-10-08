@@ -63,7 +63,7 @@ export async function buildDiffSeededMap(opts: MapOptions): Promise<{ markdown: 
   const budget = opts.budgetTokens ?? 14000;
   const t0 = Date.now();
 
-  const changed = (await text("git", ["-C", repo, "diff", "--name-only", `${base}..${head}`]))
+  const changed = (await text("git", ["-C", repo, "-c", "diff.renames=true", "diff", "--name-only", `${base}..${head}`]))
     .split("\n").map((s) => s.trim()).filter(Boolean);
   const changedSet = new Set(changed);
 
@@ -117,7 +117,7 @@ export async function buildDiffSeededMap(opts: MapOptions): Promise<{ markdown: 
   }
 
   // identifiers appearing on added/removed diff lines
-  const diffText = await text("git", ["-C", repo, "diff", "-U0", `${base}..${head}`]);
+  const diffText = await text("git", ["-C", repo, "-c", "diff.renames=true", "diff", "-U0", `${base}..${head}`]);
   const idents = new Set<string>();
   for (const { file, line } of diffLines(diffText)) {
     // The index holds symbols from parsed source files only, so a name taken
@@ -139,7 +139,7 @@ export async function buildDiffSeededMap(opts: MapOptions): Promise<{ markdown: 
    * other places the new entry probably needs to be registered. This is the
    * signal that catches "added to one registry but not its siblings".
    */
-  const ctxDiff = await text("git", ["-C", repo, "diff", "-U4", `${base}..${head}`]);
+  const ctxDiff = await text("git", ["-C", repo, "-c", "diff.renames=true", "diff", "-U4", `${base}..${head}`]);
   const siblingIdents = new Set<string>();
   {
     // Read through `diffLines` rather than off the raw text, for the file the

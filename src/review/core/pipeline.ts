@@ -270,7 +270,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
   const oversized = capped.filter((s) => s.tokens > MAX_SLICE_TOKENS);
 
   console.error(
-    `PR ${pr} ${base.slice(0, 8)}..${head.slice(0, 8)} — ${changed.length} changed ` +
+    `${pr ? `PR ${pr} ` : ""}${base.slice(0, 8)}..${head.slice(0, 8)} — ${changed.length} changed ` +
       `(${sliceFiles.length} code, ${byClass.docs.length} docs, ${byClass.skip.length} skipped) ` +
       `-> ${units.length} units, ${capped.length} slices` +
         `${notReviewed.length ? `, ${notReviewed.length} files over cap` : ""}` +
@@ -526,7 +526,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
         title: f.title,
         reason: `already posted on an earlier push (comment ${hit.id})`,
       });
-      console.log(`  suppressed "${f.title}" — same claim as comment ${hit.id}`);
+      console.error(`  suppressed "${f.title}" — same claim as comment ${hit.id}`);
       return false;
     });
   };
@@ -602,7 +602,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     if (!c.file) return false;
     return !(c.fingerprint && stillOpen.has(c.fingerprint));
   });
-  if (resolved.length) console.log(`  closing out ${resolved.length} earlier comments as fixed`);
+  if (resolved.length) console.error(`  closing out ${resolved.length} earlier comments as fixed`);
 
   emit({ type: "stage", stage: "verifying" });
   // ---- deterministic verification: cited location must exist

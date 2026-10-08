@@ -1,0 +1,17 @@
+{
+  "skip": [
+    "bun.lock"
+  ],
+  "docs": [
+    "docs/guide.md"
+  ],
+  "code": [
+    "src/api/routes.ts",
+    "src/api/server.ts",
+    "src/db/query.ts",
+    "src/db/schema.ts",
+    "src/ui/button.tsx",
+    "src/util/misc.ts",
+    "test/query.test.ts"
+  ]
+}

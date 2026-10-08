@@ -1,0 +1,307 @@
+{
+  "base": "e345e0d176caa6194959de2de3b9bc6aff6e2ca9",
+  "head": "7191104c9cc344d4955602ca52e5aedefc847b4c",
+  "runner": "opencode",
+  "model": "claude-opus-5-5",
+  "effort": "medium",
+  "effortAux": "medium",
+  "tag": "diffloupe-commit-7191104-20261008153448",
+  "wallMs": 75949,
+  "totalCostUsd": 0.3401914,
+  "mergeMode": "coordinator",
+  "preTrimmed": 0,
+  "sliceRuns": [
+    {
+      "unit": "llm",
+      "part": 1,
+      "parts": 1,
+      "tokens": 1361,
+      "files": [
+        "src/services/decomposition/flow-detection.ts",
+        "src/services/decomposition/two-pass.ts",
+        "src/services/llm.ts",
+        "src/types/llm.ts"
+      ],
+      "tag": "diffloupe-commit-7191104-20261008153448-s00",
+      "wallMs": 58283,
+      "costUsd": 0.2257632,
+      "numTurns": 8,
+      "usage": {
+        "input_tokens": 18,
+        "output_tokens": 2955,
+        "reasoning_tokens": 526,
+        "cache_read_input_tokens": 141406,
+        "cache_creation_input_tokens": 25558
+      },
+      "tools": {
+        "calls": {
+          "tilth_tilth_read": 5,
+          "tilth_tilth_search": 3,
+          "write": 1
+        },
+        "failed": 0,
+        "read": [
+          "src/services/llm.ts",
+          "src/services/decomposition/two-pass.ts",
+          "src/services/decomposition/flow-detection.ts"
+        ],
+        "searched": [
+          "createAdapter(,LLMOptions,DEFAULT_MODEL,createAnthropicChat",
+          "createAdapter",
+          "overviewIntent"
+        ]
+      },
+      "checked": [
+        "Changing `createAdapter`'s parameter from `LLMModel` to `ModelTier` breaks no caller: all 7 call sites (`src/prompts/alignment.ts:242`, `src/prompts/intent.ts:256`, `src/prompts/risks.ts:302`, `src/services/decomposition/flow-analysis.ts:401`, `src/services/decomposition/two-pass.ts:480`, plus the …",
+        "`DEFAULT_MODEL` (`src/services/llm.ts:68`) still resolves to `claude-sonnet-4-5`, so `generateText`/`generateTextWithSystem` keep the same default model.",
+        "`MODELS_BY_TIER` (`src/services/llm.ts:59`) is typed `Record<ModelTier, LLMModel>`, so every tier maps to a valid `LLMModel` from `src/types/llm.ts`."
+      ],
+      "exitCode": 0,
+      "findingCount": 1,
+      "ok": true
+    }
+  ],
+  "merge": {
+    "wallMs": 16993,
+    "costUsd": 0.0590244,
+    "numTurns": 3,
+    "tools": {
+      "calls": {
+        "tilth_tilth_read": 2,
+        "write": 1
+      },
+      "failed": 0,
+      "read": [
+        "src/services/decomposition/two-pass.ts",
+        "src/services/llm.ts:35-80"
+      ],
+      "searched": []
+    }
+  },
+  "walk": {
+    "model": "claude-sonnet-5-5",
+    "wallMs": 14316,
+    "costUsd": 0.055403799999999996,
+    "numTurns": 2
+  },
+  "walkthrough": {
+    "focus": "Introduces model tiers (triage=Haiku 4.5, analysis=Sonnet 4.5) and routes flow detection and the overview pass to Haiku. The review is about whether those two calls are really low-stakes, and about the changed createAdapter signature.",
+    "change_type": "feature",
+    "intent": {
+      "inferred": "Adds a ModelTier abstraction in llm.ts mapping 'triage' to claude-haiku-4-5 and 'analysis' to claude-sonnet-4-5. createAdapter now takes a tier instead of a model name, defaulting to analysis. Flow detection and the two-pass overview call now use the triage tier. The LLMModel type is only reformatted.",
+      "alignment": "partial",
+      "matches": [
+        "Commit message 'Use Haiku for triage' matches the triage tier routed to Haiku"
+      ],
+      "mismatches": [],
+      "unstated": [
+        "createAdapter's parameter changed from a model name to a tier, an API break for any caller passing a model",
+        "The overview pass, which feeds final intent/risks in two-pass mode, now runs on Haiku",
+        "Cosmetic reformatting of the LLMModel union"
+      ],
+      "missing": [
+        "No PR description"
+      ]
+    },
+    "start_here": [
+      {
+        "file": "src/services/llm.ts",
+        "why": "Defines the tier mapping and the changed createAdapter signature."
+      },
+      {
+        "file": "src/services/decomposition/two-pass.ts",
+        "why": "The overview pass moved to Haiku; reviewers flagged that it produces final intent and risks."
+      },
+      {
+        "file": "src/services/decomposition/flow-detection.ts",
+        "why": "The other call site moved to the triage tier."
+      }
+    ],
+    "chapters": [
+      {
+        "title": "Tiers",
+        "icon": "gear",
+        "blurb": "Model selection moves from a raw model name to a named tier.",
+        "stops": [
+          {
+            "title": "Tier mapping and adapter signature",
+            "importance": "critical",
+            "prose": "createAdapter now takes a ModelTier and looks up the model in MODELS_BY_TIER. Check that no other caller passes a model string, since that would now be a type error or an undefined lookup.",
+            "locations": [
+              {
+                "file": "src/services/llm.ts",
+                "line": 48,
+                "label": "ModelTier and MODELS_BY_TIER"
+              },
+              {
+                "file": "src/services/llm.ts",
+                "line": 113,
+                "label": "createAdapter(tier)"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "title": "Call sites",
+        "icon": "path",
+        "blurb": "Two decomposition steps are switched to the triage tier.",
+        "stops": [
+          {
+            "title": "Overview pass on Haiku",
+            "importance": "critical",
+            "prose": "In two-pass mode the overview alone produces the final intent and part of the risks, so this is a quality trade-off rather than pure triage. Confirm that is intended.",
+            "locations": [
+              {
+                "file": "src/services/decomposition/two-pass.ts",
+                "line": 310,
+                "label": "createAdapter(\"triage\")"
+              }
+            ]
+          },
+          {
+            "title": "Flow detection on Haiku",
+            "importance": "normal",
+            "prose": "Flow detection is categorization and fits the triage description. Check that Haiku handles the structured output schema reliably.",
+            "locations": [
+              {
+                "file": "src/services/decomposition/flow-detection.ts",
+                "line": 287,
+                "label": "createAdapter(\"triage\")"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "support": [
+      {
+        "files": [
+          "src/types/llm.ts"
+        ],
+        "reason": "Doc comment tweaks and a formatting-only change to the LLMModel union."
+      }
+    ]
+  },
+  "grouping": "code",
+  "groupMoves": [],
+  "reviewUnits": [
+    {
+      "unitId": "llm",
+      "title": "llm",
+      "priority": 1,
+      "files": [
+        "src/services/decomposition/flow-detection.ts",
+        "src/services/decomposition/two-pass.ts",
+        "src/services/llm.ts",
+        "src/types/llm.ts"
+      ],
+      "part": 1,
+      "parts": 1,
+      "tokens": 1361
+    }
+  ],
+  "registry": {
+    "meta": {
+      "hunks": 5,
+      "candidates": 0
+    },
+    "findings": []
+  },
+  "priorComments": 0,
+  "prior": [],
+  "rawFindings": [
+    {
+      "file": "src/services/decomposition/two-pass.ts",
+      "line": 310,
+      "severity": "question",
+      "category": "architecture",
+      "title": "Overview pass moved to Haiku, but in two-pass mode it alone produces the final intent and part of the risks",
+      "impact": "In two-pass mode, the intent the user sees (summary, purpose, scope, affected areas) and the `initialRisks` merged into the final risk list now come from Haiku. That contradicts the new tier docs, which reserve intent/risk analysis for Sonnet.",
+      "explanation": "The new `ModelTier` doc says \"triage\" is for categorization, file grouping and overview scans, and \"analysis\" is for core intent/risk analysis. `runOverviewPass` does more than triage, though. `runTwoPassAnalysis` makes no separate intent call. `mergeResults` builds the returned `DerivedIntent` entirely from `overview.overviewIntent`, adds `overview.initialRisks` to the deep-dive risks, and those severities can set `overallRisk`. The deep-dive pass also gets `overview.summary` as context. So after this change, two-pass intent is written by Haiku, while the single-pass intent prompt (`src/prompts/intent.ts:256`) still uses Sonnet through the default tier. If the downgrade is intended, ignore this. If not, the overview pass belongs on the analysis tier. Flow detection (`detectFlows`) only groups files, so it fits the triage tier.",
+      "evidence": "`mergeResults` (`src/services/decomposition/two-pass.ts:504-516`) takes the final intent from `overview.overviewIntent` and adds `overview.initialRisks` to the risks. `runTwoPassAnalysis` (`src/services/decomposition/two-pass.ts:592-610`) has no other intent source. The tier doc at `src/services/llm.ts:48-52` puts intent/risk analysis on the analysis tier.",
+      "confidence": "medium",
+      "effort": "quick",
+      "cross_file_refs": [
+        "src/prompts/intent.ts:256"
+      ],
+      "suggestion": "Either keep `runOverviewPass` on the analysis tier, or update the `ModelTier` doc to say that two-pass intent comes from the triage model.",
+      "suggested_code": "    adapter: createAdapter(\"analysis\"),",
+      "_slice": "llm"
+    }
+  ],
+  "mergedFindings": [
+    {
+      "file": "src/services/decomposition/two-pass.ts",
+      "line": 310,
+      "severity": "question",
+      "category": "architecture",
+      "title": "Overview pass moved to Haiku, but in two-pass mode it alone produces the final intent and part of the risks",
+      "impact": "In two-pass mode, the intent the user sees (summary, purpose, scope, affected areas) and the `initialRisks` merged into the final risk list now come from Haiku. That contradicts the new tier docs, which reserve intent/risk analysis for Sonnet.",
+      "explanation": "The new `ModelTier` doc says \"triage\" is for categorization, file grouping and overview scans, and \"analysis\" is for core intent/risk analysis. `runOverviewPass` does more than triage, though. `runTwoPassAnalysis` makes no separate intent call. `mergeResults` builds the returned `DerivedIntent` entirely from `overview.overviewIntent`, adds `overview.initialRisks` to the deep-dive risks, and those severities can set `overallRisk`. The deep-dive pass also gets `overview.summary` as context. So after this change, two-pass intent is written by Haiku, while the single-pass intent prompt (`src/prompts/intent.ts:256`) still uses Sonnet through the default tier. If the downgrade is intended, ignore this. If not, the overview pass belongs on the analysis tier. Flow detection (`detectFlows`) only groups files, so it fits the triage tier.\n\nThe tier doc does list \"overview scans\" under triage (`src/services/llm.ts:49`), so the move may be deliberate. The open question is whether the author meant for the final two-pass intent and initial risks to come from Haiku as well.",
+      "evidence": "`mergeResults` (`src/services/decomposition/two-pass.ts:504-516`) takes the final intent from `overview.overviewIntent` and adds `overview.initialRisks` to the risks. `runTwoPassAnalysis` (`src/services/decomposition/two-pass.ts:592-610`) has no other intent source. The tier doc at `src/services/llm.ts:48-52` puts intent/risk analysis on the analysis tier.",
+      "confidence": "medium",
+      "effort": "quick",
+      "cross_file_refs": [
+        "src/prompts/intent.ts:256"
+      ],
+      "suggestion": "Either keep `runOverviewPass` on the analysis tier, or update the `ModelTier` doc to say that two-pass intent comes from the triage model.",
+      "suggested_code": "    adapter: createAdapter(\"analysis\"),",
+      "_slice": "llm"
+    }
+  ],
+  "verifiedFindings": [
+    {
+      "file": "src/services/decomposition/two-pass.ts",
+      "line": 310,
+      "severity": "question",
+      "category": "architecture",
+      "title": "Overview pass moved to Haiku, but in two-pass mode it alone produces the final intent and part of the risks",
+      "impact": "In two-pass mode, the intent the user sees (summary, purpose, scope, affected areas) and the `initialRisks` merged into the final risk list now come from Haiku. That contradicts the new tier docs, which reserve intent/risk analysis for Sonnet.",
+      "explanation": "The new `ModelTier` doc says \"triage\" is for categorization, file grouping and overview scans, and \"analysis\" is for core intent/risk analysis. `runOverviewPass` does more than triage, though. `runTwoPassAnalysis` makes no separate intent call. `mergeResults` builds the returned `DerivedIntent` entirely from `overview.overviewIntent`, adds `overview.initialRisks` to the deep-dive risks, and those severities can set `overallRisk`. The deep-dive pass also gets `overview.summary` as context. So after this change, two-pass intent is written by Haiku, while the single-pass intent prompt (`src/prompts/intent.ts:256`) still uses Sonnet through the default tier. If the downgrade is intended, ignore this. If not, the overview pass belongs on the analysis tier. Flow detection (`detectFlows`) only groups files, so it fits the triage tier.\n\nThe tier doc does list \"overview scans\" under triage (`src/services/llm.ts:49`), so the move may be deliberate. The open question is whether the author meant for the final two-pass intent and initial risks to come from Haiku as well.",
+      "evidence": "`mergeResults` (`src/services/decomposition/two-pass.ts:504-516`) takes the final intent from `overview.overviewIntent` and adds `overview.initialRisks` to the risks. `runTwoPassAnalysis` (`src/services/decomposition/two-pass.ts:592-610`) has no other intent source. The tier doc at `src/services/llm.ts:48-52` puts intent/risk analysis on the analysis tier.",
+      "confidence": "medium",
+      "effort": "quick",
+      "cross_file_refs": [
+        "src/prompts/intent.ts:256"
+      ],
+      "suggestion": "Either keep `runOverviewPass` on the analysis tier, or update the `ModelTier` doc to say that two-pass intent comes from the triage model.",
+      "suggested_code": "    adapter: createAdapter(\"analysis\"),",
+      "_slice": "llm"
+    }
+  ],
+  "overCapFindings": [],
+  "checked": [
+    "Changing `createAdapter`'s parameter from `LLMModel` to `ModelTier` breaks no caller: all 7 call sites (`src/prompts/alignment.ts:242`, `src/prompts/intent.ts:256`, `src/prompts/risks.ts:302`, `src/services/decomposition/flow-analysis.ts:401`, `src/services/decomposition/two-pass.ts:480`, plus the …",
+    "`DEFAULT_MODEL` (`src/services/llm.ts:68`) still resolves to `claude-sonnet-4-5`, so `generateText`/`generateTextWithSystem` keep the same default model.",
+    "`MODELS_BY_TIER` (`src/services/llm.ts:59`) is typed `Record<ModelTier, LLMModel>`, so every tier maps to a valid `LLMModel` from `src/types/llm.ts`."
+  ],
+  "unreviewed": {
+    "overCap": [],
+    "failed": []
+  },
+  "resolved": [],
+  "runs": 1,
+  "rejected": [],
+  "intentAlignment": {
+    "summary": "",
+    "unstated": [],
+    "missing": []
+  },
+  "stats": {
+    "review units": 1,
+    "code files reviewed": 4,
+    "docs files not reviewed": 0,
+    "generated files skipped": 0,
+    "raw findings": 1,
+    "after merge": 1,
+    "after verification": 1,
+    "registry signals": 0,
+    "prior comments considered": 0,
+    "wall time": "1.3 min",
+    "cost": "$0.34",
+    "model": "claude-opus-5-5",
+    "walkthrough model": "claude-sonnet-5-5",
+    "walkthrough stops": 3
+  }
+}

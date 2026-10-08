@@ -1,0 +1,98 @@
+diff --git a/src/services/decomposition/flow-detection.ts b/src/services/decomposition/flow-detection.ts
+index 4fb8178d4ea4623c6e7a7a4fb50e77c3341f434c..51e23a9fac7ab9c7b87bd18404301e838b0aab9d 100644
+--- a/src/services/decomposition/flow-detection.ts
++++ b/src/services/decomposition/flow-detection.ts
+@@ -284,7 +284,7 @@ export async function detectFlows(
+   const userPrompt = buildFlowDetectionPrompt(diff, classified);
+ 
+   const response = await chat({
+-    adapter: createAdapter(),
++    adapter: createAdapter("triage"),
+     systemPrompts: [FLOW_DETECTION_SYSTEM_PROMPT],
+     messages: [{ role: "user", content: userPrompt }],
+     outputSchema: wrapSchema(FlowDetectionResponseSchema),
+diff --git a/src/services/decomposition/two-pass.ts b/src/services/decomposition/two-pass.ts
+index 9e745c8aff6837dac52a9e27ec958343cab3e691..b0d73b9b094a766e2c443c2db54b1fcf70250a08 100644
+--- a/src/services/decomposition/two-pass.ts
++++ b/src/services/decomposition/two-pass.ts
+@@ -307,7 +307,7 @@ export async function runOverviewPass(
+   );
+ 
+   const response = await chat({
+-    adapter: createAdapter(),
++    adapter: createAdapter("triage"),
+     systemPrompts: [OVERVIEW_SYSTEM_PROMPT],
+     messages: [{ role: "user", content: userPrompt }],
+     outputSchema: wrapSchema(OverviewResponseSchema),
+diff --git a/src/services/llm.ts b/src/services/llm.ts
+index a602ff58d28f9d92ff328cc7441467378af27c2c..15b3272ddfd11bd39f140992322dde397d84c6d6 100644
+--- a/src/services/llm.ts
++++ b/src/services/llm.ts
+@@ -45,10 +45,27 @@ export { LLMAPIKeyError, LLMGenerationError, LLMJSONParseError };
+ let resolvedApiKey: string | undefined;
+ 
+ /**
+- * Default model to use for generation.
++ * Model tiers for different types of tasks.
++ * - "triage": Fast categorization, file grouping, overview scans (Haiku 4.5)
++ * - "analysis": Core intent/risk analysis requiring quality reasoning (Sonnet 4.5)
++ */
++export type ModelTier = "triage" | "analysis";
++
++/**
++ * Models for each tier.
++ * Triage uses Haiku 4.5 for speed on simpler categorization tasks.
++ * Analysis uses Sonnet 4.5 for quality reasoning on core analysis.
++ */
++const MODELS_BY_TIER: Record<ModelTier, LLMModel> = {
++  triage: "claude-haiku-4-5",
++  analysis: "claude-sonnet-4-5",
++};
++
++/**
++ * Default model to use for generation (analysis tier).
+  * Claude Sonnet 4.5 is highly capable with good speed.
+  */
+-const DEFAULT_MODEL: LLMModel = "claude-sonnet-4-5";
++const DEFAULT_MODEL: LLMModel = MODELS_BY_TIER.analysis;
+ 
+ /**
+  * Default maximum tokens for responses.
+@@ -93,13 +110,14 @@ function getAPIKey(): string | undefined {
+  * Create an Anthropic adapter with the configured API key.
+  * Use this instead of calling anthropicText() directly.
+  *
+- * @param model - The model to use (defaults to claude-sonnet-4-5)
++ * @param tier - The model tier to use ("triage" for fast categorization, "analysis" for quality reasoning)
+  * @returns A configured Anthropic adapter
+  * @throws {LLMAPIKeyError} if no API key is available
+  */
+-export function createAdapter(model: LLMModel = DEFAULT_MODEL) {
++export function createAdapter(tier: ModelTier = "analysis") {
+   validateAPIKey();
+   const apiKey = getAPIKey()!;
++  const model = MODELS_BY_TIER[tier];
+   return createAnthropicChat(model, apiKey);
+ }
+ 
+diff --git a/src/types/llm.ts b/src/types/llm.ts
+index 8623afb40992c960479dc96ccd2e2004a334761e..b88d5d2778f1161b9db74a1a0da6b049d6e45299 100644
+--- a/src/types/llm.ts
++++ b/src/types/llm.ts
+@@ -8,10 +8,13 @@
+ /**
+  * Supported Claude models.
+  * - "claude-opus-4-5" - Most capable, best for complex analysis
+- * - "claude-sonnet-4-5" - Highly capable, good speed (default)
+- * - "claude-haiku-4-5" - Fastest, good for simple tasks
++ * - "claude-sonnet-4-5" - Highly capable, good speed (default for analysis)
++ * - "claude-haiku-4-5" - Fastest, good for triage/categorization tasks
+  */
+-export type LLMModel = "claude-opus-4-5" | "claude-sonnet-4-5" | "claude-haiku-4-5";
++export type LLMModel =
++  | "claude-opus-4-5"
++  | "claude-sonnet-4-5"
++  | "claude-haiku-4-5";
+ 
+ /**
+  * Configuration options for LLM requests.

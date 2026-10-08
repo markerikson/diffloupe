@@ -1,0 +1,30 @@
+[
+  {
+    "id": "api",
+    "title": "API",
+    "rationale": "Request handling",
+    "files": [
+      "src/api/server.ts",
+      "src/api/routes.ts"
+    ],
+    "priority": 1
+  },
+  {
+    "id": "db",
+    "title": "Database",
+    "files": [
+      "src/db/query.ts",
+      "src/db/schema.ts",
+      "test/query.test.ts"
+    ],
+    "priority": 2
+  },
+  {
+    "id": "ui",
+    "title": "UI",
+    "files": [
+      "src/ui/button.tsx"
+    ],
+    "priority": 3
+  }
+]

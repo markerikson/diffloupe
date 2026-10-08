@@ -1,0 +1,13 @@
+{
+  "target": {
+    "kind": "pr",
+    "number": 42,
+    "url": "https://github.com/o/r/pull/42",
+    "title": "Add routes",
+    "author": "someone",
+    "baseRef": "main",
+    "headRef": "routes",
+    "state": "OPEN",
+    "isDraft": false
+  }
+}

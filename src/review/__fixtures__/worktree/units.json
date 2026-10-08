@@ -1,0 +1,10 @@
+[
+  {
+    "id": "app",
+    "title": "App",
+    "files": [
+      "src/app.ts",
+      "src/new-untracked.ts"
+    ]
+  }
+]

@@ -179,7 +179,7 @@ export function applyDecisions(
         : echo.mine
           ? "the bot's own comment"
           : "not a review comment, so it has no thread to reply into";
-      console.log(`  repeat_of ${d.repeat_of} on "${base.title}" ignored: ${why}`);
+      console.error(`  repeat_of ${d.repeat_of} on "${base.title}" ignored: ${why}`);
     }
     kept.push({
       ...base,

@@ -1,0 +1,157 @@
+diff --git a/bun.lock b/bun.lock
+index 29ff437475f40c9c08846e4eb1e4cad0bbfb2888..e490d1d97eeddad6b68598e7254755455d2043a7 100644
+--- a/bun.lock
++++ b/bun.lock
+@@ -1,5 +1,5 @@
+ lock 1
+-lock 2
++lock two
+ lock 3
+ lock 4
+ lock 5
+diff --git a/docs/guide.md b/docs/guide.md
+index eeeb8f5a750fbd897ec4e7d3cdd58fa4d6693345..eddc1e256ad61d2fdb65882502834423bc14b460 100644
+--- a/docs/guide.md
++++ b/docs/guide.md
+@@ -1,6 +1,6 @@
+ Guide line 1
+ Guide line 2
+-Guide line 3
++Guide line three
+ Guide line 4
+ Guide line 5
+ Guide line 6
+diff --git a/src/api/routes.ts b/src/api/routes.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..7b41fc3d7e6253360889d20f6befe6d8d9b6e0aa
+--- /dev/null
++++ b/src/api/routes.ts
+@@ -0,0 +1,30 @@
++export const route1 = 1;
++export const route2 = 2;
++export const route3 = 3;
++export const route4 = 4;
++export const route5 = 5;
++export const route6 = 6;
++export const route7 = 7;
++export const route8 = 8;
++export const route9 = 9;
++export const route10 = 10;
++export const route11 = 11;
++export const route12 = 12;
++export const route13 = 13;
++export const route14 = 14;
++export const route15 = 15;
++export const route16 = 16;
++export const route17 = 17;
++export const route18 = 18;
++export const route19 = 19;
++export const route20 = 20;
++export const route21 = 21;
++export const route22 = 22;
++export const route23 = 23;
++export const route24 = 24;
++export const route25 = 25;
++export const route26 = 26;
++export const route27 = 27;
++export const route28 = 28;
++export const route29 = 29;
++export const route30 = 30;
+diff --git a/src/api/server.ts b/src/api/server.ts
+index 6154e2d911f68ea83bd909bc9615cc317f4cde0f..e8116c87baa20d9dac0eeee8cf0dd92b38831b35 100644
+--- a/src/api/server.ts
++++ b/src/api/server.ts
+@@ -47,9 +47,12 @@ export const server46 = 46;
+ export const server47 = 47;
+ export const server48 = 48;
+ export const server49 = 49;
+-export const server50 = 50;
+-export const server51 = 51;
++export const server50 = input;
++export const server51 = input + 1;
+ export const server52 = 52;
++export const extra1 = 1;
++export const extra2 = 2;
++export const extra3 = 3;
+ export const server53 = 53;
+ export const server54 = 54;
+ export const server55 = 55;
+diff --git a/src/db/query.ts b/src/db/query.ts
+index 70d46f6d0b0197f691246eed40d4d53a3428bd1b..f6e551d8b279086cc4fe5a1fd428a29380464992 100644
+--- a/src/db/query.ts
++++ b/src/db/query.ts
+@@ -7,7 +7,7 @@ export const query6 = 6;
+ export const query7 = 7;
+ export const query8 = 8;
+ export const query9 = 9;
+-export const query10 = 10;
++export const query10 = db.all();
+ export const query11 = 11;
+ export const query12 = 12;
+ export const query13 = 13;
+@@ -97,7 +97,7 @@ export const query96 = 96;
+ export const query97 = 97;
+ export const query98 = 98;
+ export const query99 = 99;
+-export const query100 = 100;
++for (const r of rows) await db.get(r);
+ export const query101 = 101;
+ export const query102 = 102;
+ export const query103 = 103;
+diff --git a/src/db/schema.ts b/src/db/schema.ts
+index 09b8337cbbf629509a833eed35ed24e8b95ac112..db48f3092ae38d3162bcb646f808043f049d88aa 100644
+--- a/src/db/schema.ts
++++ b/src/db/schema.ts
+@@ -2,7 +2,7 @@ export const schema1 = 1;
+ export const schema2 = 2;
+ export const schema3 = 3;
+ export const schema4 = 4;
+-export const schema5 = 5;
++export const schema5 = 'text';
+ export const schema6 = 6;
+ export const schema7 = 7;
+ export const schema8 = 8;
+diff --git a/src/ui/button.tsx b/src/ui/button.tsx
+index 04405d6e696504254e8d229ab593e2cdae9a6bfe..8847c064e40b9c7fe0a00f29b36ead109afc1fb6 100644
+--- a/src/ui/button.tsx
++++ b/src/ui/button.tsx
+@@ -17,7 +17,7 @@ export const button16 = 16;
+ export const button17 = 17;
+ export const button18 = 18;
+ export const button19 = 19;
+-export const button20 = 20;
++export const button20 = 'red';
+ export const button21 = 21;
+ export const button22 = 22;
+ export const button23 = 23;
+diff --git a/src/util/misc.ts b/src/util/misc.ts
+index 1861a757fc1d00066e84e0bdfd2abeb39bcec774..c7fc955e748d55056015dcae67600cda88fb7521 100644
+--- a/src/util/misc.ts
++++ b/src/util/misc.ts
+@@ -1,4 +1,4 @@
+-export const misc1 = 1;
++export const misc1 = 'one';
+ export const misc2 = 2;
+ export const misc3 = 3;
+ export const misc4 = 4;
+diff --git a/test/query.test.ts b/test/query.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..212185a517bfa9c8b23537c22ac2058ab187315c
+--- /dev/null
++++ b/test/query.test.ts
+@@ -0,0 +1,15 @@
++export const t1 = 1;
++export const t2 = 2;
++export const t3 = 3;
++export const t4 = 4;
++export const t5 = 5;
++export const t6 = 6;
++export const t7 = 7;
++export const t8 = 8;
++export const t9 = 9;
++export const t10 = 10;
++export const t11 = 11;
++export const t12 = 12;
++export const t13 = 13;
++export const t14 = 14;
++export const t15 = 15;

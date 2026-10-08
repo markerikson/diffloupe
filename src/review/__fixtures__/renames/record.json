@@ -1,0 +1,102 @@
+{
+  "base": "939519809edc272d7760a96efc23ebeb7f56c449",
+  "head": "6bde2099a5829a80920f2266d035dbef56a5e1c1",
+  "model": "m",
+  "wallMs": 1000,
+  "totalCostUsd": 0.1,
+  "mergeMode": "nothing-to-merge",
+  "sliceRuns": [
+    {
+      "unit": "Moves",
+      "part": 1,
+      "parts": 1,
+      "ok": true,
+      "costUsd": 0.1,
+      "wallMs": 1000
+    }
+  ],
+  "walkthrough": {
+    "chapters": [
+      {
+        "title": "Removal",
+        "stops": [
+          {
+            "title": "What the removed file did",
+            "locations": [
+              {
+                "file": "src/removed.ts",
+                "line": 5,
+                "label": "removed5"
+              },
+              {
+                "file": "src/new-name.ts",
+                "line": 20
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "verifiedFindings": [
+    {
+      "file": "src/removed.ts",
+      "line": 5,
+      "severity": "should-fix",
+      "category": "correctness",
+      "title": "Callers of the removed file",
+      "explanation": "Callers of the removed file: explanation.",
+      "evidence": "src/removed.ts:5",
+      "confidence": "high"
+    },
+    {
+      "file": "src/new-name.ts",
+      "line": 20,
+      "severity": "nice-to-have",
+      "category": "correctness",
+      "title": "Renamed constant",
+      "explanation": "Renamed constant: explanation.",
+      "evidence": "src/new-name.ts:20",
+      "confidence": "high"
+    },
+    {
+      "file": "src/new-name.ts",
+      "line": 21,
+      "severity": "nice-to-have",
+      "category": "correctness",
+      "title": "Range past the hunk",
+      "explanation": "Range past the hunk: explanation.",
+      "evidence": "src/new-name.ts:21",
+      "confidence": "high",
+      "end_line": 40
+    },
+    {
+      "file": "src/keep.ts",
+      "line": 15,
+      "severity": "question",
+      "category": "correctness",
+      "title": "Kept line",
+      "explanation": "Kept line: explanation.",
+      "evidence": "src/keep.ts:15",
+      "confidence": "high"
+    },
+    {
+      "file": "lib/moved-pure.ts",
+      "line": 3,
+      "severity": "question",
+      "category": "correctness",
+      "title": "Pure move",
+      "explanation": "Pure move: explanation.",
+      "evidence": "lib/moved-pure.ts:3",
+      "confidence": "high"
+    }
+  ],
+  "overCapFindings": [],
+  "unreviewed": {
+    "overCap": [],
+    "failed": []
+  },
+  "resolved": [],
+  "rejected": [],
+  "intentAlignment": null
+}

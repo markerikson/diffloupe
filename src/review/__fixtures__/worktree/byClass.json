@@ -1,0 +1,10 @@
+{
+  "skip": [],
+  "docs": [
+    "README.md"
+  ],
+  "code": [
+    "src/app.ts",
+    "src/new-untracked.ts"
+  ]
+}

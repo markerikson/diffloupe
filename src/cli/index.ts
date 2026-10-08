@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import pc from "picocolors";
 import { createReviewCommand } from "./review.js";
+import { createRunsCommand } from "./runs.js";
 
 const program = new Command();
 
@@ -10,6 +11,7 @@ program
   .version("0.1.0");
 
 program.addCommand(createReviewCommand());
+program.addCommand(createRunsCommand());
 
 program
   .command("serve")
