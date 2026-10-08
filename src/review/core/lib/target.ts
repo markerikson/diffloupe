@@ -14,7 +14,7 @@ export interface Target {
    * — the description, the prior comments, the API payloads — is keyed on this,
    * so without it the review is local-only.
    */
-  pr?: string;
+  pr?: string | undefined;
   base: string;
   head: string;
   /** owner/name, for the GitHub API. */

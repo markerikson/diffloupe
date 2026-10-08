@@ -23,7 +23,7 @@
     "test": "bun test src/cli src/services src/types src/review src/prompts/alignment.test.ts src/prompts/intent.test.ts src/prompts/risks.test.ts",
     "test:all": "bun test src",
     "test:integration": "bun test src/prompts/*.integration.test.ts",
-    "typecheck": "tsgo --noEmit && tsgo --noEmit -p src/review",
+    "typecheck": "tsgo --noEmit",
     "lint": "oxlint src/",
     "release": "release-it"
   },

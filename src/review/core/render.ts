@@ -13,19 +13,19 @@ import { MAX_POSTED } from "./coordinate.ts";
 
 export function renderReview(o: {
   /** Absent for a commit-range review, which is never posted anywhere. */
-  pr?: string;
+  pr?: string | undefined;
   head: string;
   findings: Finding[];
-  intentAlignment?: { summary?: string; unstated?: string[]; missing?: string[] };
-  dropped?: { title: string; reason: string }[];
+  intentAlignment?: { summary?: string | undefined; unstated?: string[] | undefined; missing?: string[] | undefined } | undefined;
+  dropped?: { title: string; reason: string }[] | undefined;
   stats: Record<string, unknown>;
-  walkthrough?: Walkthrough;
-  repo?: string;
-  prior?: PriorComment[];
+  walkthrough?: Walkthrough | undefined;
+  repo?: string | undefined;
+  prior?: PriorComment[] | undefined;
   /** Ids of the bot's own earlier comments that the current code has fixed. */
-  resolved?: { id: number; note?: string }[];
+  resolved?: { id: number; note?: string | undefined }[] | undefined;
   /** How many reviews this pull request will have had once this one is posted. */
-  runs?: number;
+  runs?: number | undefined;
   /**
    * Every file the pull request changes, not only the ones a finding names.
    * Decides which findings are worth a comment of their own: see
@@ -33,32 +33,32 @@ export function renderReview(o: {
    * make room for, and the surfaces it does not touch cannot be read off the
    * findings alone.
    */
-  changedFiles?: string[];
+  changedFiles?: string[] | undefined;
   /**
    * Name the detail document is written under, so the comment can tell a reader
    * which file to open inside the artifact. Named by the caller because the
    * caller owns the tag the artifact files are keyed on.
    */
-  detailFile?: string;
+  detailFile?: string | undefined;
   /**
    * Set when the slice reviewers did not run at all, so an empty finding list
    * carries no information about the code. Without it the comment reads as an
    * all-clear on a diff nobody reviewed, which is the one thing this pipeline
    * must never say.
    */
-  noReviewers?: boolean;
+  noReviewers?: boolean | undefined;
   /**
    * Code files no reviewer read: over the slice cap, or in a slice that failed.
    * Shown outside every fold, since a short finding list means something
    * different when part of the diff was never looked at.
    */
-  unreviewed?: { overCap: string[]; failed: string[] };
+  unreviewed?: { overCap: string[]; failed: string[] } | undefined;
   /** What the slice reviewers verified and found correct, in slice order. */
-  checked?: string[];
+  checked?: string[] | undefined;
   /** Findings the review stands behind but did not post because of `MAX_POSTED`. */
-  overCap?: Finding[];
+  overCap?: Finding[] | undefined;
   /** See `INLINE_MODE`. Defaults to summary-only. */
-  inlineMode?: "tier" | "none";
+  inlineMode?: "tier" | "none" | undefined;
 }): {
   summary: string;
   /**
@@ -72,9 +72,9 @@ export function renderReview(o: {
   ordered: Finding[];
   replies: {
     comment_id: number;
-    author?: string;
-    url?: string;
-    finding?: Finding;
+    author?: string | undefined;
+    url?: string | undefined;
+    finding?: Finding | undefined;
     body: string;
   }[];
 } {
@@ -700,9 +700,9 @@ export function renderReview(o: {
   // out a comment rather than restate one.
   const replies: {
     comment_id: number;
-    author?: string;
-    url?: string;
-    finding?: Finding;
+    author?: string | undefined;
+    url?: string | undefined;
+    finding?: Finding | undefined;
     body: string;
   }[] = echoed.map((f) => {
     const id = f.repeat_of!;
@@ -846,28 +846,28 @@ export async function writeArtifacts(o: {
   tag: string;
   slug: string;
   /** Absent for a commit-range review: no pull request, so no payloads. */
-  pr?: string;
+  pr?: string | undefined;
   base: string;
   head: string;
   findings: Finding[];
-  intentAlignment?: { summary?: string; unstated?: string[]; missing?: string[] };
-  dropped?: { title: string; reason: string }[];
+  intentAlignment?: { summary?: string | undefined; unstated?: string[] | undefined; missing?: string[] | undefined } | undefined;
+  dropped?: { title: string; reason: string }[] | undefined;
   stats: Record<string, unknown>;
-  walkthrough?: Walkthrough;
-  prior?: PriorComment[];
-  resolved?: { id: number; note?: string }[];
-  runs?: number;
+  walkthrough?: Walkthrough | undefined;
+  prior?: PriorComment[] | undefined;
+  resolved?: { id: number; note?: string | undefined }[] | undefined;
+  runs?: number | undefined;
   /** See `renderReview`. */
-  noReviewers?: boolean;
-  unreviewed?: { overCap: string[]; failed: string[] };
-  checked?: string[];
-  overCap?: Finding[];
+  noReviewers?: boolean | undefined;
+  unreviewed?: { overCap: string[]; failed: string[] } | undefined;
+  checked?: string[] | undefined;
+  overCap?: Finding[] | undefined;
   /**
    * A checkout holding both `base` and `head`, used to read the diff and decide
    * where each comment may land. Omitting it, or a git failure, falls back to
    * trusting the model's own line — the behaviour before anchoring existed.
    */
-  repoDir?: string;
+  repoDir?: string | undefined;
 }) {
   let findings = o.findings;
   // Every file the change touches, which is not the same set as the files the

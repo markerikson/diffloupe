@@ -48,17 +48,17 @@ export async function gatherIntent(slug: string, pr: string | undefined, base: s
 
 export interface PriorComment {
   id: number;
-  file?: string;
-  line?: number;
+  file?: string | undefined;
+  line?: number | undefined;
   author: string;
   body: string;
   resolved: boolean;
-  commit?: string;
-  url?: string;
+  commit?: string | undefined;
+  url?: string | undefined;
   /** Written by this bot on an earlier push, rather than by a reviewer. */
   mine?: boolean;
   /** On the bot's own comments: the identity of the finding it reported. */
-  fingerprint?: string;
+  fingerprint?: string | undefined;
   /**
    * The bot has already replied to this one saying the code now fixes it. Such
    * a comment is settled: it is left out of the prompt entirely.

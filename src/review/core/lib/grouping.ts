@@ -536,7 +536,7 @@ export function applyGroupNaming(
 ): { units: NamedGroup[]; moves: AppliedMove[] } {
   const units = groups.map((g) => ({ id: g.id, files: [...g.files], tokens: g.tokens }));
   const byId = new Map(units.map((u) => [u.id, u]));
-  const meta = new Map<string, { title?: string; rationale?: string; priority?: number }>();
+  const meta = new Map<string, { title?: string | undefined; rationale?: string | undefined; priority?: number | undefined }>();
   for (const n of naming?.groups ?? []) {
     if (typeof n?.id !== "string" || !byId.has(n.id)) continue;
     meta.set(n.id, {

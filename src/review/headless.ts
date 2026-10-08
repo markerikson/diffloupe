@@ -19,7 +19,9 @@ const INSTALL_HINTS: Record<string, string> = {
   gh: "https://cli.github.com/ (then `gh auth login`)",
 };
 
-const STAGES: Record<ReviewModelStage, keyof ReviewConfig> = {
+type ModelKey = "model" | "modelMerge" | "modelWalk";
+
+const STAGES: Record<ReviewModelStage, ModelKey> = {
   review: "model",
   coordinator: "modelMerge",
   walkthrough: "modelWalk",
@@ -29,8 +31,8 @@ export function dataDir(): string {
   return path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share"), "diffloupe");
 }
 
-export function parseModelOverrides(pairs: string[]): Partial<ReviewConfig> {
-  const out: Partial<Record<keyof ReviewConfig, string>> = {};
+export function parseModelOverrides(pairs: string[]): Partial<Pick<ReviewConfig, ModelKey>> {
+  const out: Partial<Pick<ReviewConfig, ModelKey>> = {};
   for (const pair of pairs) {
     const eq = pair.indexOf("=");
     const stage = pair.slice(0, eq) as ReviewModelStage;
@@ -42,7 +44,7 @@ export function parseModelOverrides(pairs: string[]): Partial<ReviewConfig> {
     }
     out[STAGES[stage]] = id;
   }
-  return out as Partial<ReviewConfig>;
+  return out;
 }
 
 function formatEvent(e: ReviewEvent): string | null {

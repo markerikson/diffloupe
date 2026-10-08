@@ -141,9 +141,9 @@ Write a single JSON object to \`${o.outFile}\`:
 export interface ReviewUnit {
   id: string;
   title: string;
-  rationale?: string;
+  rationale?: string | undefined;
   files: string[];
-  priority?: number;
+  priority?: number | undefined;
 }
 
 /**
@@ -198,9 +198,9 @@ export interface ReviewSlice {
   unitId: string;
   /** Unit title, carrying a part suffix only when the unit was split. */
   title: string;
-  rationale?: string;
+  rationale?: string | undefined;
   files: string[];
-  priority?: number;
+  priority?: number | undefined;
   part: number;
   parts: number;
   tokens: number;

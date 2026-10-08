@@ -1,15 +1,7 @@
 import { Command } from "commander";
 import pc from "picocolors";
+import { runHeadlessReview } from "../review/headless.js";
 import type { ReviewCommandOptions } from "../review/options.js";
-
-interface HeadlessModule {
-  runHeadlessReview(opts: ReviewCommandOptions): Promise<number>;
-}
-
-// The review layer has its own tsconfig (src/review/tsconfig.json). A
-// non-literal specifier keeps the root typecheck from following the import
-// into the ported core, which is written to looser compiler settings.
-const HEADLESS_MODULE = "../review/headless.ts";
 
 function collect(value: string, previous: string[]): string[] {
   return [...previous, value];
@@ -35,8 +27,7 @@ export function createReviewCommand(): Command {
         console.error(pc.yellow("Server mode arrives in phase 3. Use --headless for now."));
         process.exit(1);
       }
-      const mod = (await import(HEADLESS_MODULE)) as HeadlessModule;
-      const code = await mod.runHeadlessReview({ ...options, ...(target ? { target } : {}) });
+      const code = await runHeadlessReview({ ...options, ...(target ? { target } : {}) });
       process.exit(code);
     });
 }

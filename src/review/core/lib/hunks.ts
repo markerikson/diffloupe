@@ -75,7 +75,7 @@ export async function loadHunks(repoDir: string, base: string, head: string): Pr
  * Shared so that the two passes over a diff — anchoring here and the identifier
  * scan in `build-map.ts` — cannot drift into disagreeing about the format.
  */
-export function* diffLines(out: string): Generator<{ file?: string; line: string }> {
+export function* diffLines(out: string): Generator<{ file?: string | undefined; line: string }> {
   let file: string | undefined;
   let sawOldHeader = false;
   let oldLeft = 0;

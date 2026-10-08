@@ -9,8 +9,6 @@
     "strict": true,
 
     // Additional strict checks beyond "strict"
-    "noUncheckedIndexedAccess": true,
-    "noPropertyAccessFromIndexSignature": true,
     "exactOptionalPropertyTypes": true,
 
     // Code quality
@@ -23,6 +21,7 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
@@ -36,5 +35,5 @@
     }
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "src/web", "src/review"]
+  "exclude": ["node_modules", "dist", "src/web"]
 }

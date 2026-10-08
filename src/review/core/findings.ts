@@ -50,7 +50,7 @@ export interface Finding {
    * A finding carrying one is rendered as a reply into that person's thread
    * instead of as a new comment.
    */
-  repeat_of?: number;
+  repeat_of?: number | undefined;
   /** Filled by the pipeline, not the model. */
   _slice?: string;
   /**
