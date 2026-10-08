@@ -14,7 +14,9 @@ import { ErrorDisplay } from "./components/ErrorDisplay";
 import { ResultsDisplay } from "./components/ResultsDisplay";
 import { ProgressDisplay } from "./components/ProgressDisplay";
 import { DiffViewer } from "./components/diff";
+import { FileTree } from "./components/FileTree";
 import { HighlighterProvider } from "./contexts/HighlighterContext";
+import { filePathToId } from "./utils/diffStats";
 import styles from "./App.module.css";
 
 function AppContent() {
@@ -103,7 +105,13 @@ function AppContent() {
     setErrorMessage(null);
   }, []);
 
+  const handleFileClick = useCallback((path: string) => {
+    const el = document.getElementById(filePathToId(path));
+    el?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
+
   const isAnalyzeDisabled = !target.trim();
+  const hasFiles = result && result.diff.files.length > 0;
 
   return (
     <div className={styles.container}>
@@ -117,8 +125,8 @@ function AppContent() {
         </div>
       </header>
 
-      {/* Main 3-column layout */}
-      <main className={styles.main}>
+      {/* Main layout */}
+      <main className={`${styles.main} ${hasFiles ? styles.withFileTree : ""}`}>
         {/* Left Column: Input Section */}
         <aside className={styles.leftColumn}>
           <div className={styles.card}>
@@ -163,6 +171,16 @@ function AppContent() {
             )}
           </div>
         </aside>
+
+        {/* File Tree Column */}
+        {hasFiles && (
+          <aside className={styles.fileTreeColumn}>
+            <FileTree
+              files={result.diff.files}
+              onFileClick={handleFileClick}
+            />
+          </aside>
+        )}
 
         {/* Center Column: Diff Viewer */}
         <section className={styles.centerColumn}>

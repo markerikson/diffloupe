@@ -7,6 +7,9 @@
 }
 
 .header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 8px 12px;
   font-family: ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Consolas,
     monospace;
@@ -14,6 +17,19 @@
   color: var(--color-text-muted);
   background-color: rgba(56, 139, 253, 0.1);
   border-bottom: 1px solid var(--color-border);
+  cursor: pointer;
+  user-select: none;
+}
+
+.header:hover {
+  background-color: rgba(56, 139, 253, 0.18);
+}
+
+.chevron {
+  font-size: 0.625rem;
+  flex-shrink: 0;
+  width: 1em;
+  text-align: center;
 }
 
 .lines {

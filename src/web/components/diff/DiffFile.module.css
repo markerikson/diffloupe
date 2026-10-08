@@ -16,6 +16,20 @@
   padding: 10px 16px;
   background-color: var(--color-surface-raised);
   border-bottom: 1px solid var(--color-border);
+  cursor: pointer;
+  user-select: none;
+}
+
+.header:hover {
+  background-color: var(--color-surface-hover, rgba(255, 255, 255, 0.05));
+}
+
+.chevron {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+  width: 1em;
+  text-align: center;
 }
 
 .status {

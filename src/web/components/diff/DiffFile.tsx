@@ -2,30 +2,18 @@
  * DiffFile - Renders a single file's diff with header and hunks.
  */
 
+import { useState } from "react";
 import type { DiffFile as DiffFileType } from "../../../types/diff.js";
 import { DiffHunk } from "./DiffHunk.js";
+import { getFileStats, filePathToId } from "../../utils/diffStats.js";
 import styles from "./DiffFile.module.css";
 
 export interface DiffFileProps {
   file: DiffFileType;
 }
 
-/** Calculate line count stats for a file */
-function getFileStats(file: DiffFileType): { added: number; deleted: number } {
-  let added = 0;
-  let deleted = 0;
-
-  for (const hunk of file.hunks) {
-    for (const line of hunk.lines) {
-      if (line.type === "add") added++;
-      if (line.type === "delete") deleted++;
-    }
-  }
-
-  return { added, deleted };
-}
-
 export function DiffFile({ file }: DiffFileProps) {
+  const [expanded, setExpanded] = useState(true);
   const stats = getFileStats(file);
   const displayPath =
     file.status === "renamed" && file.oldPath
@@ -33,8 +21,12 @@ export function DiffFile({ file }: DiffFileProps) {
       : file.path;
 
   return (
-    <div className={styles.file}>
-      <div className={styles.header}>
+    <div className={styles.file} id={filePathToId(file.path)}>
+      <div
+        className={styles.header}
+        onClick={() => setExpanded((prev) => !prev)}
+      >
+        <span className={styles.chevron}>{expanded ? "▼" : "▶"}</span>
         <span className={styles.status} data-status={file.status}>
           {file.status}
         </span>
@@ -49,15 +41,16 @@ export function DiffFile({ file }: DiffFileProps) {
         </span>
       </div>
 
-      {file.isBinary ? (
-        <div className={styles.binary}>Binary file not shown</div>
-      ) : (
-        <div className={styles.hunks}>
-          {file.hunks.map((hunk, idx) => (
-            <DiffHunk key={idx} hunk={hunk} filePath={file.path} />
-          ))}
-        </div>
-      )}
+      {expanded &&
+        (file.isBinary ? (
+          <div className={styles.binary}>Binary file not shown</div>
+        ) : (
+          <div className={styles.hunks}>
+            {file.hunks.map((hunk, idx) => (
+              <DiffHunk key={idx} hunk={hunk} filePath={file.path} />
+            ))}
+          </div>
+        ))}
     </div>
   );
 }
