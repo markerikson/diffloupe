@@ -5,9 +5,7 @@
  * Requires `gh` to be installed and authenticated.
  */
 
-import { dirname } from "path";
 import { GitHubError, type PRMetadata } from "../types/github.js";
-import type { SiblingFile } from "./context.js";
 import { spawn } from "../runtime/index.js";
 
 /**
@@ -196,54 +194,4 @@ export function assemblePrIntent(pr: PRMetadata): string {
   }
 
   return sections.join("\n");
-}
-
-/**
- * Fetch sibling files from GitHub for directories touched by a PR.
- *
- * Uses the GitHub API to get the repo's file tree at the base branch,
- * then filters to files in directories that appear in the diff.
- *
- * @param directories - Directories touched by the diff
- * @param baseRef - Base branch name (e.g., "main")
- * @param repo - Repository in "owner/repo" format
- * @returns Array of sibling files (all marked as "existing" since we can't detect new files from remote)
- */
-export async function fetchSiblingFilesFromGitHub(
-  directories: string[],
-  baseRef: string,
-  repo: string
-): Promise<SiblingFile[]> {
-  if (directories.length === 0) {
-    return [];
-  }
-
-  // Fetch recursive tree for the base ref
-  const args = ["api", `repos/${repo}/git/trees/${baseRef}?recursive=1`, "--jq", ".tree[].path"];
-
-  const { stdout, stderr, exitCode } = await spawn("gh", args);
-
-  if (exitCode !== 0) {
-    // Non-fatal: return empty array with a warning flag
-    // Caller can check .warning to display a message
-    const result: SiblingFile[] & { warning?: string } = [];
-    result.warning = `Could not fetch repository context from GitHub: ${stderr.trim()}`;
-    return result;
-  }
-
-  const allFiles = stdout.split("\n").filter(Boolean);
-  const dirSet = new Set(directories);
-
-  // Filter to files in target directories
-  const siblings: SiblingFile[] = [];
-  for (const filePath of allFiles) {
-    const dir = dirname(filePath);
-    if (dirSet.has(dir)) {
-      // All files from base ref are "existing" - we can't detect new files
-      // since they only exist in the PR branch
-      siblings.push({ path: filePath, status: "existing" });
-    }
-  }
-
-  return siblings.sort((a, b) => a.path.localeCompare(b.path));
 }

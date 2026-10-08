@@ -1,18 +1,10 @@
 /**
- * DiffLoupe Server - HTTP API for diff analysis
- *
- * This server exposes the CLI's analysis functionality via HTTP endpoints,
- * allowing the web UI to use the existing analysis pipeline.
- *
- * Architecture:
- * - Server handles ALL business logic (git, LLM, analysis)
- * - Web UI is a pure API client
+ * DiffLoupe Server - HTTP API for the web UI
  */
 
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { HealthResponse } from "./types.js";
-import { analyzeRoutes } from "./routes/analyze.js";
 
 /** Create and configure the Hono app */
 export function createApp() {
@@ -38,9 +30,6 @@ export function createApp() {
   app.get("/api/health", (c) => {
     return c.json({ status: "ok" } satisfies HealthResponse);
   });
-
-  // Mount analyze routes
-  app.route("/api/analyze", analyzeRoutes);
 
   return app;
 }
@@ -69,4 +58,4 @@ export function startServer(port = DEFAULT_PORT): { port: number } {
 export const app = createApp();
 
 // Export types
-export type { HealthResponse, AnalyzeRequest, AnalysisResult, JobStatusResponse } from "./types.js";
+export type { HealthResponse } from "./types.js";
