@@ -18,6 +18,17 @@ export interface DiffLoupeConfig {
   apiKeys?: {
     anthropic?: string;
   };
+  /** Model IDs for `diffloupe review`, per stage. */
+  models?: {
+    /** Slice reviewers. */
+    review?: string;
+    /** Merges and verifies the slice findings. */
+    coordinator?: string;
+    /** Writes the walkthrough and names the review groups. */
+    walkthrough?: string;
+  };
+  /** Reasoning effort for `diffloupe review` (low, medium, high, ...). */
+  effort?: string;
 }
 
 /**

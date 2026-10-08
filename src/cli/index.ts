@@ -8,6 +8,7 @@ import { GitError } from "../types/git.js";
 import { LLMAPIKeyError, LLMGenerationError } from "../types/llm.js";
 import { createPRCommand } from "./pr.js";
 import { createSummarizeCommand } from "./summarize.js";
+import { createReviewCommand } from "./review.js";
 import { getConfigPath } from "../services/config.js";
 import type { DecompositionStrategy } from "../services/decomposition/index.js";
 import type { AnalysisProgress } from "../server/types.js";
@@ -277,6 +278,7 @@ program
 // Register subcommands
 program.addCommand(createPRCommand());
 program.addCommand(createSummarizeCommand());
+program.addCommand(createReviewCommand());
 
 // Serve command - start the HTTP server
 program

@@ -1,0 +1,57 @@
+import { describe, expect, test } from "bun:test";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { SURFACES } from "./core/config.ts";
+import { loadReviewSettings, parseReviewSettings, settingsToConfig } from "./settings.ts";
+
+describe("parseReviewSettings", () => {
+  test("accepts a full settings object", () => {
+    const settings = parseReviewSettings(
+      {
+        models: { review: "a", coordinator: "b", walkthrough: "c" },
+        effort: "high",
+        surfaces: { deploy: ["^infra/"], tooling: ["^docs/"] },
+        extraExcludes: ["vendor/"],
+      },
+      "test",
+    );
+    expect(settings.models?.walkthrough).toBe("c");
+    expect(settings.extraExcludes).toEqual(["vendor/"]);
+  });
+
+  test("rejects unknown keys", () => {
+    expect(() => parseReviewSettings({ surface: {} }, "test")).toThrow(/invalid settings in test/);
+    expect(() => parseReviewSettings({ models: { reviewer: "x" } }, "test")).toThrow(/invalid settings/);
+  });
+
+  test("rejects wrong types and bad regexes", () => {
+    expect(() => parseReviewSettings({ extraExcludes: "vendor/" }, "test")).toThrow(/invalid settings/);
+    expect(() => parseReviewSettings({ surfaces: { deploy: ["("] } }, "test")).toThrow(/invalid surface pattern/);
+  });
+});
+
+describe("settingsToConfig", () => {
+  test("keeps the default for a surface list that is not given", () => {
+    const config = settingsToConfig({ surfaces: { deploy: ["^infra/"] }, extraExcludes: ["x/"] });
+    expect(config.surfaces).toEqual({ deploy: ["^infra/"], tooling: SURFACES.tooling });
+    expect(config.extraExcludes).toEqual(["x/"]);
+  });
+
+  test("leaves models and effort out", () => {
+    expect(settingsToConfig({ models: { review: "a" }, effort: "low" })).toEqual({});
+  });
+});
+
+describe("loadReviewSettings", () => {
+  test("reads a file and reports bad JSON", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "diffloupe-settings-"));
+    const good = path.join(dir, "good.json");
+    const bad = path.join(dir, "bad.json");
+    await writeFile(good, JSON.stringify({ effort: "low" }));
+    await writeFile(bad, "{ nope");
+    expect(await loadReviewSettings(good)).toEqual({ effort: "low" });
+    await expect(loadReviewSettings(bad)).rejects.toThrow(/not valid JSON/);
+    await expect(loadReviewSettings(path.join(dir, "missing.json"))).rejects.toThrow(/cannot read/);
+  });
+});
