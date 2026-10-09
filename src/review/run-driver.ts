@@ -1,0 +1,395 @@
+/**
+ * The two halves of one review run, shared by the server and `--headless`:
+ * `prepareRun` resolves the target and writes the run directory with a
+ * pending `run.json`; `executeRun` runs the core and replaces it with the
+ * finished (or failed, or cancelled) run.
+ */
+import path from "node:path";
+import { copyFile, readFile, writeFile } from "node:fs/promises";
+import { getAnthropicApiKey, loadConfig } from "../services/config.ts";
+import type { StartRunRequest } from "../server/types.ts";
+import type { ReviewRun, ReviewTarget } from "../types/review-run.ts";
+import type { ReviewConfig } from "./core/config.ts";
+import { text } from "./core/lib/proc.ts";
+import type { Target } from "./core/lib/target.ts";
+import { runReview, type ReviewEvent, type RunReviewResult } from "./core/pipeline.ts";
+import { describeAnchors } from "./anchors.ts";
+import type { ReviewCommandOptions, ReviewModelStage } from "./options.ts";
+import { parseZeroContextDiff, priorComments, type LineHunk } from "./prior-run.ts";
+import { artifactsDir, createRunDir, dataDir, findPriorRunId, loadRun, loadState, writeRun } from "./run-store.ts";
+import { loadReviewSettings, settingsToConfig, type ReviewSettings } from "./settings.ts";
+import { parseTargetSpec, resolveTarget, TargetError, type ResolvedTarget } from "./targets.ts";
+
+const INSTALL_HINTS: Record<string, string> = {
+  git: "https://git-scm.com/downloads",
+  opencode: "https://opencode.ai/docs/ (npm i -g opencode-ai)",
+  tilth: "https://github.com/jahala/tilth (cargo install tilth)",
+  gh: "https://cli.github.com/ (then `gh auth login`)",
+};
+
+type ModelKey = "model" | "modelMerge" | "modelWalk";
+
+const STAGES: Record<ReviewModelStage, ModelKey> = {
+  review: "model",
+  coordinator: "modelMerge",
+  walkthrough: "modelWalk",
+};
+
+/** `--model stage=id` pairs as a stage → model map. */
+export function parseModelPairs(pairs: string[]): Partial<Record<ReviewModelStage, string>> {
+  const out: Partial<Record<ReviewModelStage, string>> = {};
+  for (const pair of pairs) {
+    const eq = pair.indexOf("=");
+    const stage = pair.slice(0, eq);
+    const id = pair.slice(eq + 1);
+    if (eq <= 0 || !id || !(stage in STAGES)) {
+      throw new TargetError(
+        `--model expects stage=model-id with stage one of ${Object.keys(STAGES).join(", ")}; got "${pair}"`,
+      );
+    }
+    out[stage as ReviewModelStage] = id;
+  }
+  return out;
+}
+
+/**
+ * The run request for CLI options. Paths are made absolute so a server
+ * started elsewhere reads the same files.
+ */
+export async function requestFromOptions(opts: ReviewCommandOptions): Promise<StartRunRequest> {
+  let intent = opts.intent?.trim();
+  if (!intent && opts.intentFile) intent = (await readFile(opts.intentFile, "utf8")).trim();
+  const models = parseModelPairs(opts.model ?? []);
+  return {
+    repo: path.resolve(opts.repo ?? process.cwd()),
+    ...(opts.target ? { target: opts.target } : {}),
+    ...(opts.base ? { base: opts.base } : {}),
+    ...(intent ? { intent } : {}),
+    ...(Object.keys(models).length ? { models } : {}),
+    ...(opts.effort ? { effort: opts.effort } : {}),
+    ...(opts.maxCost !== undefined ? { maxCostUsd: opts.maxCost } : {}),
+    ...(opts.config ? { settingsFile: path.resolve(opts.config) } : {}),
+  };
+}
+
+export function parseModelOverrides(pairs: string[]): Partial<Pick<ReviewConfig, ModelKey>> {
+  return modelConfig(parseModelPairs(pairs));
+}
+
+function modelConfig(models: Partial<Record<ReviewModelStage, string>>): Partial<Pick<ReviewConfig, ModelKey>> {
+  const out: Partial<Pick<ReviewConfig, ModelKey>> = {};
+  for (const [stage, id] of Object.entries(models)) {
+    const key = STAGES[stage as ReviewModelStage];
+    if (key && id) out[key] = id;
+  }
+  return out;
+}
+
+/** Throws a TargetError naming every required tool missing from PATH. */
+export function checkTools(targetSpec: string | undefined): void {
+  const spec = parseTargetSpec(targetSpec);
+  const needed = ["git", "opencode", "tilth", ...(spec.kind === "pr" ? ["gh"] : [])];
+  const missing = needed.filter((t) => !Bun.which(t));
+  if (missing.length) {
+    throw new TargetError(
+      ["Missing required tools on PATH:", ...missing.map((t) => `  ${t}: ${INSTALL_HINTS[t] ?? ""}`)].join("\n"),
+    );
+  }
+}
+
+export interface PreparedRun {
+  id: string;
+  dir: string;
+  createdAt: string;
+  repo: string;
+  target: Target;
+  reviewTarget: ReviewTarget;
+  config: Partial<ReviewConfig>;
+  maxCostUsd?: number;
+  intent?: string;
+  patch: string;
+  priorRunId?: string;
+  previous?: { run: ReviewRun; dismissed: string[]; lineMap: Map<string, LineHunk[]> };
+  untrackedSkipped: string[];
+  coreSource: string;
+  /** The `run.json` written at start; the base of a failed or cancelled run. */
+  pending: ReviewRun;
+}
+
+/**
+ * Resolves the target, creates the run directory, writes the patch and a
+ * pending `run.json`. A bad target throws TargetError before anything is
+ * written. `log` receives the lines describing what is about to be reviewed.
+ */
+export async function prepareRun(
+  req: StartRunRequest,
+  defaultRepo: string,
+  log: (message: string) => void,
+): Promise<PreparedRun> {
+  checkTools(req.target);
+  const repo = path.resolve(req.repo ?? defaultRepo);
+  const intent = req.intent?.trim() || undefined;
+
+  // Precedence: request fields, then the settings file, then
+  // ~/.config/diffloupe/config.json, then the core defaults.
+  const userConfig = await loadConfig();
+  const settings: ReviewSettings = req.settingsFile ? await loadReviewSettings(path.resolve(req.settingsFile)) : {};
+  const config: Partial<ReviewConfig> = {
+    artifacts: artifactsDir(),
+    out: path.join(dataDir(), "scratch"),
+    ...settingsToConfig(settings),
+    ...modelConfig({ ...userConfig.models, ...settings.models, ...req.models }),
+  };
+  const effort = req.effort ?? settings.effort ?? userConfig.effort;
+  if (effort) config.effort = effort;
+  const maxCostUsd = req.maxCostUsd ?? userConfig.maxCostUsd;
+
+  // OpenCode runs with relocated data directories, so it never sees the
+  // user's stored login; the provider key has to come through the environment.
+  if (!process.env.ANTHROPIC_API_KEY) {
+    const key = await getAnthropicApiKey();
+    if (key) process.env.ANTHROPIC_API_KEY = key;
+  }
+
+  const resolved = await resolveTarget(repo, req.target, req.base ? { base: req.base } : {});
+  const { target, changes, tag } = resolved;
+  const pr = resolved.pullRequest;
+  log(pr ? `Reviewing ${target.slug}#${pr.number}: ${pr.title}` : `Reviewing ${target.slug} (${resolved.spec.kind})`);
+  log(`  ${target.base.slice(0, 10)}..${target.head.slice(0, 10)}`);
+  log(`  ${changes.files} file(s) changed, +${changes.insertions} -${changes.deletions}`);
+  log(`  run ${tag}`);
+  if (maxCostUsd !== undefined) log(`  cost limit $${maxCostUsd.toFixed(2)}`);
+  if (resolved.skippedUntracked.length) {
+    log(`  skipped ${resolved.skippedUntracked.length} untracked file(s) over 1 MB:`);
+    for (const f of resolved.skippedUntracked) log(`    ${f}`);
+  }
+
+  const createdAt = new Date().toISOString();
+  const runRepo = { root: repo, ...(target.slug ? { slug: target.slug } : {}) };
+  const reviewTarget = await toReviewTarget(repo, resolved);
+  const dir = await createRunDir(tag);
+  const patch = await text("git", [
+    "-C",
+    repo,
+    "diff",
+    "--no-color",
+    "--no-ext-diff",
+    "--full-index",
+    "-M",
+    target.base,
+    target.head,
+  ]);
+  await writeFile(path.join(dir, "diff.patch"), patch);
+  const priorRunId = await findPriorRunId(runRepo, reviewTarget, createdAt);
+  const previous = priorRunId ? await loadPrevious(repo, priorRunId, target.head) : undefined;
+  if (previous?.run.findings.length) {
+    log(`  ${previous.run.findings.length} finding(s) from prior run ${previous.run.id}`);
+  }
+  const source = await coreSource();
+
+  const { buildPendingRun } = await import("./build-run.ts");
+  const pending = buildPendingRun({
+    id: tag,
+    createdAt,
+    repo: runRepo,
+    target: reviewTarget,
+    base: target.base,
+    head: target.head,
+    ...(intent ? { statedIntent: intent } : {}),
+    patch,
+    untrackedSkipped: resolved.skippedUntracked,
+    coreSource: source,
+    ...(priorRunId ? { priorRunId } : {}),
+  });
+  await writeRun(pending);
+
+  return {
+    id: tag,
+    dir,
+    createdAt,
+    repo,
+    target,
+    reviewTarget,
+    config,
+    ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
+    ...(intent ? { intent } : {}),
+    patch,
+    ...(priorRunId ? { priorRunId } : {}),
+    ...(previous ? { previous } : {}),
+    untrackedSkipped: resolved.skippedUntracked,
+    coreSource: source,
+    pending,
+  };
+}
+
+export interface ExecuteRunOptions {
+  signal: AbortSignal;
+  onProgress: (event: ReviewEvent) => void;
+  log: (message: string) => void;
+}
+
+export interface ExecutedRun {
+  run: ReviewRun;
+  /** False when the target held no reviewable code and no model was called. */
+  reviewed: boolean;
+}
+
+/**
+ * Runs the review core and writes the final `run.json`. On failure or
+ * cancellation writes the pending run with that status and rethrows.
+ */
+export async function executeRun(prep: PreparedRun, opts: ExecuteRunOptions): Promise<ExecutedRun> {
+  const { id, dir } = prep;
+  let result: RunReviewResult;
+  try {
+    result = await runReview({
+      repo: prep.repo,
+      target: prep.target,
+      tag: id,
+      config: prep.config,
+      local: true,
+      signal: opts.signal,
+      ...(prep.maxCostUsd !== undefined ? { maxCostUsd: prep.maxCostUsd } : {}),
+      ...(prep.intent ? { intent: prep.intent } : {}),
+      ...(prep.previous ? { prior: priorComments(prep.previous.run) } : {}),
+      onProgress: opts.onProgress,
+    });
+  } catch (err) {
+    const cancelled = opts.signal.aborted;
+    await writeRun({
+      ...prep.pending,
+      status: cancelled ? "cancelled" : "failed",
+      ...(cancelled ? {} : { error: err instanceof Error ? err.message : String(err) }),
+    });
+    throw err;
+  }
+
+  const artifacts = prep.config.artifacts ?? artifactsDir();
+  await copyIfPresent(path.join(artifacts, "runs", `${id}.json`), path.join(dir, "raw", "record.json"));
+  await copyIfPresent(result.markdownPath, path.join(dir, "raw", "review.md"));
+  await copyIfPresent(path.join(artifacts, "reviews", `${id}.payloads.json`), path.join(dir, "raw", "payloads.json"));
+  await writeFile(path.join(dir, "raw", "units.json"), `${JSON.stringify(result.units, null, 2)}\n`);
+  await writeFile(path.join(dir, "raw", "byClass.json"), `${JSON.stringify(result.byClass, null, 2)}\n`);
+
+  const { buildReviewRun } = await import("./build-run.ts");
+  let run: ReviewRun;
+  try {
+    run = buildReviewRun({
+      id,
+      createdAt: prep.createdAt,
+      repo: prep.pending.repo,
+      target: prep.reviewTarget,
+      base: prep.target.base,
+      head: prep.target.head,
+      ...(prep.intent ? { statedIntent: prep.intent } : {}),
+      patch: prep.patch,
+      result,
+      untrackedSkipped: prep.untrackedSkipped,
+      coreSource: prep.coreSource,
+      ...(prep.priorRunId ? { priorRunId: prep.priorRunId } : {}),
+      ...(prep.previous ? { previous: prep.previous } : {}),
+      log: opts.log,
+    });
+  } catch (err) {
+    const message = `building run.json: ${err instanceof Error ? err.message : String(err)}`;
+    await writeRun({ ...prep.pending, status: "failed", error: message });
+    throw new Error(message, { cause: err });
+  }
+  await writeRun(run);
+  opts.log(`  anchors: ${describeAnchors(run)}`);
+  return { run, reviewed: result.record !== null };
+}
+
+/**
+ * The prior run of this target, the findings its reader dismissed, and the
+ * line moves between its head and this one. Any failure here means reviewing
+ * without the prior run rather than not reviewing.
+ */
+async function loadPrevious(
+  repo: string,
+  id: string,
+  head: string,
+): Promise<{ run: ReviewRun; dismissed: string[]; lineMap: Map<string, LineHunk[]> } | undefined> {
+  try {
+    const run = await loadRun(id);
+    const state = await loadState(id);
+    const dismissed = Object.entries(state.findingStatus)
+      .filter(([, status]) => status === "dismissed")
+      .map(([fid]) => fid);
+    let lineMap = new Map<string, LineHunk[]>();
+    const files = [...new Set(run.findings.map((f) => f.file))];
+    if (run.head !== head && files.length) {
+      try {
+        const diff = await text("git", ["-C", repo, "diff", "-U0", "--no-color", "--no-ext-diff", run.head, head, "--", ...files]);
+        lineMap = parseZeroContextDiff(diff);
+      } catch {
+        // The prior head is gone (an unpinned snapshot, a gc): lines stay where they were.
+      }
+    }
+    return { run, dismissed, lineMap };
+  } catch {
+    return undefined;
+  }
+}
+
+async function copyIfPresent(from: string, to: string): Promise<void> {
+  try {
+    await copyFile(from, to);
+  } catch {
+    // Not every run writes every artifact: payloads exist only for a pull request.
+  }
+}
+
+let cachedCoreSource: string | undefined;
+
+/** The DiffLoupe commit the review ran from, when running from a checkout. */
+async function coreSource(): Promise<string> {
+  if (cachedCoreSource) return cachedCoreSource;
+  try {
+    const sha = (await text("git", ["-C", import.meta.dir, "rev-parse", "--short", "HEAD"])).trim();
+    cachedCoreSource = `diffloupe@${sha}`;
+  } catch {
+    cachedCoreSource = "diffloupe";
+  }
+  return cachedCoreSource;
+}
+
+export async function toReviewTarget(repo: string, resolved: ResolvedTarget): Promise<ReviewTarget> {
+  const { spec, pullRequest: pr } = resolved;
+  if (spec.kind === "pr") {
+    return {
+      kind: "pr",
+      number: spec.pr,
+      url: pr?.url ?? "",
+      title: pr?.title ?? "",
+      author: pr?.author.login ?? "",
+      baseRef: pr?.baseRefName ?? "",
+      headRef: pr?.headRefName ?? "",
+      state: pr?.state ?? "",
+      isDraft: pr?.isDraft ?? false,
+    };
+  }
+  if (spec.kind === "branch") return { kind: "branch", spec: spec.branch };
+  if (spec.kind === "commit") return { kind: "commit", spec: spec.rev };
+  if (spec.kind === "range")
+    return {
+      kind: "range",
+      spec: `${spec.from}${spec.mergeBase ? "..." : ".."}${spec.to}`,
+    };
+  let branch: string | undefined;
+  try {
+    branch = (await text("git", ["-C", repo, "rev-parse", "--abbrev-ref", "HEAD"])).trim() || undefined;
+  } catch {
+    // An empty repository has no HEAD to name.
+  }
+  return { kind: spec.kind, ...(branch ? { branch } : {}) };
+}
+
+/** The review markdown saved in the run directory, if the run wrote one. */
+export async function readRunMarkdown(dir: string): Promise<string | undefined> {
+  try {
+    return await readFile(path.join(dir, "raw", "review.md"), "utf8");
+  } catch {
+    return undefined;
+  }
+}

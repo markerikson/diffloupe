@@ -29,6 +29,12 @@ export interface DiffLoupeConfig {
   };
   /** Reasoning effort for `diffloupe review` (low, medium, high, ...). */
   effort?: string;
+  /** Port the local server listens on. Default 4517. */
+  port?: number;
+  /** Address the local server binds to. Default 127.0.0.1. */
+  host?: string;
+  /** Default `--max-cost` for a review, in US dollars. No limit when unset. */
+  maxCostUsd?: number;
 }
 
 /**

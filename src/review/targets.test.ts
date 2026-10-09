@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { text } from "./core/lib/proc.ts";
-import { parseModelOverrides } from "./headless.ts";
+import { parseModelOverrides } from "./run-driver.ts";
 import { MAX_UNTRACKED_BYTES, makeTag, parseTargetSpec, resolveTarget } from "./targets.ts";
 
 describe("parseTargetSpec", () => {

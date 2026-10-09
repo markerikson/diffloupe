@@ -15,9 +15,14 @@ export interface ReviewCommandOptions {
   effort?: string;
   /** Per-repo settings file; see settings.ts. */
   config?: string;
+  /** Stop starting new slices once the run has cost this many dollars. */
+  maxCost?: number;
   headless?: boolean;
   /** Print the review markdown to stdout instead of the terminal summary. */
   markdown?: boolean;
+  host?: string;
+  port?: number;
+  open?: boolean;
 }
 
 export type ReviewModelStage = "review" | "coordinator" | "walkthrough";
