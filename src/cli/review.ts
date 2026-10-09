@@ -21,7 +21,8 @@ export function createReviewCommand(): Command {
     .option("--model <stage=id>", "Model for a stage: review, coordinator, walkthrough (repeatable)", collect, [])
     .option("--effort <level>", "Reasoning effort (low, medium, high)")
     .option("--config <file>", "Per-repo review settings JSON (models, effort, surfaces, extraExcludes)")
-    .option("--headless", "Run in the terminal and print the review to stdout", false)
+    .option("--headless", "Run in the terminal and print a summary of the review to stdout", false)
+    .option("--markdown", "With --headless: print the full review markdown instead of the summary", false)
     .action(async (target: string | undefined, options: Omit<ReviewCommandOptions, "target">) => {
       if (!options.headless) {
         console.error(pc.yellow("Server mode arrives in phase 3. Use --headless for now."));

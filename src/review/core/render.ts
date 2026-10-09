@@ -1,7 +1,7 @@
 import path from "node:path";
 import { text } from "./lib/proc.ts";
 import { removeIfPresent, writeJson, writeText } from "./lib/io.ts";
-import { fingerprint, marker } from "./lib/marker.ts";
+import { fingerprint, marker, stripMarkers } from "./lib/marker.ts";
 import { anchorFor, loadHunks } from "./lib/hunks.ts";
 import { code, fence } from "./lib/markdown.ts";
 import { INLINE_MODE, repoName } from "./config.ts";
@@ -61,6 +61,8 @@ export function renderReview(o: {
   overCap?: Finding[] | undefined;
   /** See `INLINE_MODE`. Defaults to summary-only. */
   inlineMode?: "tier" | "none" | undefined;
+  /** Rendered to read on this machine, never posted: leaves out the note about how the comment updates. */
+  local?: boolean | undefined;
 }): {
   summary: string;
   /**
@@ -683,7 +685,7 @@ export function renderReview(o: {
   // Said here on every review, because the moment it becomes useful is the
   // moment the bot has gone quiet and is no longer writing anything new.
   s.push("");
-  if (o.pr) {
+  if (o.pr && !o.local) {
     s.push(
       "This comment is rewritten on each push rather than replaced. Reviewing pauses" +
         " automatically once a branch has had several; comment `/ai-review resume` to restart it.",
@@ -876,6 +878,12 @@ export async function writeArtifacts(o: {
    * trusting the model's own line — the behaviour before anchoring existed.
    */
   repoDir?: string | undefined;
+  /**
+   * The review is read on this machine and never posted: the markdown drops
+   * the comment headings, the markers and the replies to GitHub threads, and
+   * no payload file is written even for a pull request.
+   */
+  local?: boolean | undefined;
 }) {
   let findings = o.findings;
   // Every file the change touches, which is not the same set as the files the
@@ -925,9 +933,17 @@ export async function writeArtifacts(o: {
     overCap: o.overCap,
     changedFiles,
     inlineMode: INLINE_MODE,
+    local: o.local,
   });
 
-  const md = [
+  const md = o.local
+    ? stripMarkers(
+        [
+          summary,
+          ...(inline.length ? ["", "## Line comments", "", ...inline.flatMap((body) => [body, "", "---", ""])] : []),
+        ].join("\n"),
+      ) + "\n"
+    : [
     "# Summary comment",
     "",
     summary,
@@ -973,17 +989,17 @@ export async function writeArtifacts(o: {
   // Written beside the preview so the artifact upload picks it up without the
   // workflow naming another path. Unlike the preview, this one is linked from
   // the posted comment and is meant to be read on its own.
-  await writeText(path.join(o.dir, detailFile), detail);
+  await writeText(path.join(o.dir, detailFile), o.local ? `${stripMarkers(detail)}\n` : detail);
 
   // No pull request means there is nowhere for these to go. Writing them anyway
   // would leave a file that looks sendable but names a pull request that has
   // nothing to do with this range — `post.ts` reads the endpoint out of the
   // file, so a wrong number there posts a review onto an unrelated PR.
-  if (!o.pr) {
+  if (!o.pr || o.local) {
     // A payload file left over from an earlier run under this tag is worse than
     // no file: `post.ts` would happily send it.
     await removeIfPresent(path.join(o.dir, `${o.tag}.payloads.json`));
-    console.error("  local review: no pull request, so no API payloads written");
+    if (!o.local) console.error("  local review: no pull request, so no API payloads written");
     return { summary, inline, ordered };
   }
 

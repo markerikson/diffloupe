@@ -66,6 +66,14 @@ export function marker(kind: MarkerKind, fields: Record<string, string | number>
 
 const MARKER_RE = new RegExp(`<!--\\s*${PREFIX}\\s+([^>]*?)\\s*-->`, "g");
 
+/** Removes every marker, with the space before it, and the blank lines a removed marker line leaves behind. */
+export function stripMarkers(text: string): string {
+  return text
+    .replace(new RegExp(`[ \\t]*${MARKER_RE.source}`, "g"), "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trimEnd();
+}
+
 const KINDS: readonly string[] = ["summary", "summary-item", "inline", "reply"];
 
 export interface ParsedMarker {

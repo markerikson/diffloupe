@@ -1,5 +1,5 @@
 
-import { findMarker, fingerprint, isOwnComment, marker, readMarker, readMarkers } from "./marker.ts";
+import { findMarker, fingerprint, isOwnComment, marker, readMarker, readMarkers, stripMarkers } from "./marker.ts";
 
 describe("fingerprint", () => {
   // The model rewrites a title slightly on every run — capitalization, an added
@@ -78,6 +78,11 @@ describe("reading a body with several markers", () => {
 
   it("finds every marker in order", () => {
     expect(readMarkers(summary).map((m) => m.kind)).toEqual(["summary-item", "summary-item", "summary"]);
+  });
+
+  it("strips every marker for a local read", () => {
+    expect(stripMarkers(summary)).toBe("# Review\n\n#### Something outside the diff\n\n#### Another");
+    expect(stripMarkers(`Fixed. ${marker("reply", { of: "1" })}`)).toBe("Fixed.");
   });
 
   it("finds a later marker by kind", () => {

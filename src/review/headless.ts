@@ -1,12 +1,14 @@
 /**
  * `diffloupe review --headless`: resolve a target, run the ported review core,
- * print the review markdown to stdout and progress to stderr.
+ * save the run, print a summary (or with `--markdown` the review markdown) to
+ * stdout and progress to stderr.
  */
 import path from "node:path";
 import { copyFile, readFile, writeFile } from "node:fs/promises";
 import { getAnthropicApiKey, loadConfig } from "../services/config.ts";
 import type { ReviewRun, ReviewTarget } from "../types/review-run.ts";
 import { describeAnchors } from "./anchors.ts";
+import { formatRunSummary } from "./format-run.ts";
 import type { ReviewConfig } from "./core/config.ts";
 import { text } from "./core/lib/proc.ts";
 import { runReview, type ReviewEvent, type RunReviewResult } from "./core/pipeline.ts";
@@ -172,6 +174,7 @@ export async function runHeadlessReview(opts: ReviewCommandOptions): Promise<num
         target,
         tag,
         config,
+        local: true,
         ...(intent ? { intent } : {}),
         onProgress: (e) => {
           events = events.then(() => appendEvent(tag, e)).catch(() => {});
@@ -226,12 +229,14 @@ export async function runHeadlessReview(opts: ReviewCommandOptions): Promise<num
       log(`Run saved: ${dir}`);
       return 0;
     }
-    process.stdout.write(await readFile(result.markdownPath, "utf8"));
     log(
       `\n${result.findings.length} finding(s) · $${result.costUsd.toFixed(2)} · ` +
         `${Math.round(result.wallMs / 1000)}s · ${result.markdownPath}`,
     );
-    log(`Run saved: ${dir} (diffloupe runs show ${tag})`);
+    log(`Run saved: ${dir} (diffloupe runs show ${tag})\n`);
+    process.stdout.write(
+      opts.markdown ? await readFile(result.markdownPath, "utf8") : `${formatRunSummary(run)}\n`,
+    );
     return 0;
   } catch (err) {
     log(`Error: ${err instanceof Error ? err.message : String(err)}`);

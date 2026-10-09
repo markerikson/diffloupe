@@ -71,6 +71,8 @@ export interface RunReviewOptions {
   tag: string;
   onProgress?: (event: ReviewEvent) => void;
   config?: Partial<ReviewConfig>;
+  /** The review is read locally and never posted. See `writeArtifacts`. */
+  local?: boolean;
 }
 
 export interface RunReviewResult {
@@ -177,6 +179,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
       findings: [],
       stats: { "changed files": String(changed.length), reviewed: "nothing: no code files in this change" },
       repoDir: SUBJECT,
+      local: options.local,
     });
     // Having nothing to say is not the same as having looked and found nothing.
     // Without this, a markdown-only pull request gets a comment announcing that
@@ -686,6 +689,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     checked,
     overCap,
     repoDir: SUBJECT,
+    local: options.local,
   });
 
   const record: Record<string, unknown> = {

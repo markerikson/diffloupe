@@ -15,7 +15,7 @@ import {
   runDir,
   writeRun,
 } from "./run-store.ts";
-import { formatAnchor, formatRun, formatRunList } from "../cli/runs.ts";
+import { formatAnchor, formatRun, formatRunList, formatRunSummary } from "./format-run.ts";
 
 let tmp: string;
 const saved = process.env.XDG_DATA_HOME;
@@ -104,5 +104,15 @@ describe("runs formatting", () => {
     for (const f of run.files) expect(text).toContain(f.path);
     for (const f of [...run.findings, ...run.overCapFindings]) expect(text).toContain(f.title);
     expect(formatRunList([])).toBe("No saved runs.");
+  });
+
+  test("summary leads with the most severe findings", () => {
+    const run = loadFixture("large-pr").build();
+    const text = formatRunSummary(run);
+    const titles = run.findings.map((f) => f.title);
+    for (const title of titles) expect(text).toContain(title);
+    const blocker = run.findings.find((f) => f.severity === "blocker" || f.severity === "should-fix");
+    const minor = run.findings.find((f) => f.severity === "nice-to-have");
+    if (blocker && minor) expect(text.indexOf(blocker.title)).toBeLessThan(text.indexOf(minor.title));
   });
 });

@@ -28,6 +28,19 @@ Reducing noise:
 - Report nothing rather than padding with weak findings.
 `.trim();
 
+/**
+ * Local reviews and terse pull requests have no description. Saying "(no
+ * description)" alone led the walkthrough to list the missing description as
+ * a gap in the change, which tells the reader nothing about the code.
+ */
+function description(intent: { body: string; commits: string }, limit: number): string {
+  const body = intent.body?.slice(0, limit);
+  if (body) return body;
+  return intent.commits
+    ? "(No description was written. Treat the commit messages below as the statement of intent, and do not report the missing description as a gap.)"
+    : "(No description and no commit messages: infer the intent from the diff alone, and do not report the missing description as a gap.)";
+}
+
 export function slicePrompt(o: {
   unit: ReviewUnit;
   diff: string;
@@ -57,7 +70,7 @@ Other changed files in this pull request are being reviewed separately; do not c
 ## Pull request intent (as stated by the author)
 Title: ${o.intent.title}
 
-${o.intent.body?.slice(0, 4000) || "(no description)"}
+${description(o.intent, 4000)}
 
 Commit messages:
 ${o.intent.commits.slice(0, 3000) || "(none)"}
@@ -86,7 +99,7 @@ ${o.files.map((f) => `- ${f}`).join("\n")}
 ## Pull request intent (as stated by the author)
 Title: ${o.intent.title}
 
-${o.intent.body?.slice(0, 4000) || "(no description)"}
+${description(o.intent, 4000)}
 
 Commit messages:
 ${o.intent.commits.slice(0, 3000) || "(none)"}
@@ -453,7 +466,7 @@ export function walkthroughPrompt(o: {
 ## Stated description (what the author says it does)
 Title: ${o.intent.title}
 
-${o.intent.body?.slice(0, 4000) || "(no description)"}
+${description(o.intent, 4000)}
 
 Commit messages:
 ${o.intent.commits.slice(0, 3000) || "(none)"}
