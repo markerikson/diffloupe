@@ -320,7 +320,7 @@ export function renderPriorComments(prior: PriorComment[], description = ""): st
     lines.push(
       "## What you already told this author",
       "",
-      "You reviewed an earlier push of this same pull request and posted the following. The author",
+      "You reviewed an earlier version of this same change and reported the following. The author",
       "has read it.",
       "",
       "Do not report any of it a second time. Silence on a point you already made is the correct",

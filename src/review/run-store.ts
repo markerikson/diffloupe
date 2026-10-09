@@ -54,6 +54,14 @@ export async function loadRun(id: string): Promise<ReviewRun> {
   return JSON.parse(await readFile(path.join(runDir(id), "run.json"), "utf8")) as ReviewRun;
 }
 
+export async function loadState(id: string): Promise<RunUserState> {
+  try {
+    return JSON.parse(await readFile(path.join(runDir(id), "state.json"), "utf8")) as RunUserState;
+  } catch {
+    return EMPTY_STATE;
+  }
+}
+
 function countBySeverity(run: ReviewRun): Record<FindingSeverity, number> {
   const counts: Record<FindingSeverity, number> = {
     blocker: 0,
@@ -110,7 +118,8 @@ export async function findPriorRunId(
 ): Promise<string | undefined> {
   const key = targetKey(repo, target);
   const runs = await listRuns();
-  return runs.find((r) => r.createdAt < before && targetKey(r.repo, r.target) === key)?.id;
+  return runs.find((r) => r.status === "complete" && r.createdAt < before && targetKey(r.repo, r.target) === key)
+    ?.id;
 }
 
 /**

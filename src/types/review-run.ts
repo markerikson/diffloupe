@@ -107,6 +107,8 @@ export interface RunFinding {
   crossFileRefs?: { file: string; line?: number }[];
   /** Id of a human's earlier comment making the same claim. */
   repeatOf?: number;
+  /** Set when an earlier run of the same target reported this finding: the id of the run that first did. */
+  carriedFrom?: string;
 }
 
 export interface RunSlice {
@@ -148,7 +150,8 @@ export interface ReviewRun {
   findings: RunFinding[];
   /** Findings the review stands behind but cut by the posting cap. */
   overCapFindings: RunFinding[];
-  resolved: { id: string; note?: string }[];
+  /** Findings from the prior run that this review found fixed. */
+  resolved: { id: string; note?: string; title?: string; file?: string }[];
   unreviewed: { overCap: string[]; failed: string[] };
   meta: {
     model?: string;

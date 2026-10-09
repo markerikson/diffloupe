@@ -13,7 +13,17 @@ import type { ReviewConfig } from "./core/config.ts";
 import { text } from "./core/lib/proc.ts";
 import { runReview, type ReviewEvent, type RunReviewResult } from "./core/pipeline.ts";
 import type { ReviewCommandOptions, ReviewModelStage } from "./options.ts";
-import { appendEvent, artifactsDir, createRunDir, dataDir, findPriorRunId, writeRun } from "./run-store.ts";
+import { parseZeroContextDiff, priorComments, type LineHunk } from "./prior-run.ts";
+import {
+  appendEvent,
+  artifactsDir,
+  createRunDir,
+  dataDir,
+  findPriorRunId,
+  loadRun,
+  loadState,
+  writeRun,
+} from "./run-store.ts";
 import { loadReviewSettings, settingsToConfig, type ReviewSettings } from "./settings.ts";
 import { parseTargetSpec, resolveTarget, TargetError, type ResolvedTarget } from "./targets.ts";
 
@@ -134,6 +144,10 @@ export async function runHeadlessReview(opts: ReviewCommandOptions): Promise<num
     ]);
     await writeFile(path.join(dir, "diff.patch"), patch);
     const priorRunId = await findPriorRunId(runRepo, reviewTarget, createdAt);
+    const previous = priorRunId ? await loadPrevious(repo, priorRunId, target.head) : undefined;
+    if (previous?.run.findings.length) {
+      log(`  ${previous.run.findings.length} finding(s) from prior run ${previous.run.id}`);
+    }
     const source = await coreSource();
     const failedRun = (message: string): ReviewRun => ({
       schemaVersion: 1,
@@ -176,6 +190,7 @@ export async function runHeadlessReview(opts: ReviewCommandOptions): Promise<num
         config,
         local: true,
         ...(intent ? { intent } : {}),
+        ...(previous ? { prior: priorComments(previous.run) } : {}),
         onProgress: (e) => {
           events = events.then(() => appendEvent(tag, e)).catch(() => {});
           const line = formatEvent(e);
@@ -215,6 +230,7 @@ export async function runHeadlessReview(opts: ReviewCommandOptions): Promise<num
         untrackedSkipped: resolved.skippedUntracked,
         coreSource: source,
         ...(priorRunId ? { priorRunId } : {}),
+        ...(previous ? { previous } : {}),
         log,
       });
     } catch (err) {
@@ -241,6 +257,38 @@ export async function runHeadlessReview(opts: ReviewCommandOptions): Promise<num
   } catch (err) {
     log(`Error: ${err instanceof Error ? err.message : String(err)}`);
     return 1;
+  }
+}
+
+/**
+ * The prior run of this target, the findings its reader dismissed, and the
+ * line moves between its head and this one. Any failure here means reviewing
+ * without the prior run rather than not reviewing.
+ */
+async function loadPrevious(
+  repo: string,
+  id: string,
+  head: string,
+): Promise<{ run: ReviewRun; dismissed: string[]; lineMap: Map<string, LineHunk[]> } | undefined> {
+  try {
+    const run = await loadRun(id);
+    const state = await loadState(id);
+    const dismissed = Object.entries(state.findingStatus)
+      .filter(([, status]) => status === "dismissed")
+      .map(([fid]) => fid);
+    let lineMap = new Map<string, LineHunk[]>();
+    const files = [...new Set(run.findings.map((f) => f.file))];
+    if (run.head !== head && files.length) {
+      try {
+        const diff = await text("git", ["-C", repo, "diff", "-U0", "--no-color", "--no-ext-diff", run.head, head, "--", ...files]);
+        lineMap = parseZeroContextDiff(diff);
+      } catch {
+        // The prior head is gone (an unpinned snapshot, a gc): lines stay where they were.
+      }
+    }
+    return { run, dismissed, lineMap };
+  } catch {
+    return undefined;
   }
 }
 

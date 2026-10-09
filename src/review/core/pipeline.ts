@@ -19,7 +19,7 @@ import { fingerprint } from "./lib/marker.ts";
 import { compactDeletedFiles, diffSizes } from "./lib/hunks.ts";
 import { SUBJECT, ARTIFACTS, RUNNER, MODEL, EFFORT, MODEL_WALK, MODEL_MERGE, EFFORT_AUX, WALK_BUDGET, PART_BUDGET, GROUPING, SLICE_BUDGET, MERGE_BUDGET, POOL, MAX_SLICES, CHARS_PER_TOKEN, MAX_SLICE_TOKENS, WALK_DIFF_TOKENS, OUT, applyConfig, setRunState, resetRunState, releaseSubject, type ReviewConfig } from "./config.ts";
 import { classifyFile, type Finding } from "./findings.ts";
-import { gitText, diffOutline, gatherIntent, gatherPriorComments, renderPriorComments } from "./context.ts";
+import { gitText, diffOutline, gatherIntent, gatherPriorComments, renderPriorComments, type PriorComment } from "./context.ts";
 import { agent } from "./runner.ts";
 import { slicePrompt, mergePrompt, type ReviewUnit, coverUnits, packUnits, type Walkthrough, partitionPrompt, groupNamingPrompt, walkthroughPrompt } from "./prompts.ts";
 import { classifySurface, SURFACE_RANK, CONF, SEV } from "./surface.ts";
@@ -73,6 +73,12 @@ export interface RunReviewOptions {
   config?: Partial<ReviewConfig>;
   /** The review is read locally and never posted. See `writeArtifacts`. */
   local?: boolean;
+  /**
+   * Findings from an earlier local review of the same target, as the bot's own
+   * comments. They get the treatment its posted comments get on a pull request:
+   * not reported again, and closed out in `resolved` when fixed.
+   */
+  prior?: PriorComment[];
 }
 
 export interface RunReviewResult {
@@ -131,7 +137,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
   setRunState({ repoName: slug });
   const intent = await gatherIntent(slug, pr, base, head);
   if (options.intent) intent.body = intent.body ? `${intent.body}\n\n${options.intent}` : options.intent;
-  const prior = await gatherPriorComments(slug, pr);
+  const prior = [...(await gatherPriorComments(slug, pr)), ...(options.prior ?? [])];
   const priorMd = renderPriorComments(prior, intent.body);
 
   // Counted for the run record.

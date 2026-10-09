@@ -39,8 +39,23 @@ export function formatRunList(runs: RunHeader[]): string {
     .join("\n\n");
 }
 
+function carried(f: RunFinding): string {
+  return f.carriedFrom ? `  (open since ${f.carriedFrom})` : "";
+}
+
 function findingLine(f: RunFinding): string {
-  return `      [${f.severity}] ${f.title}\n        ${formatAnchor(f.anchor)}`;
+  return `      [${f.severity}] ${f.title}${carried(f)}\n        ${formatAnchor(f.anchor)}`;
+}
+
+function resolvedLines(run: ReviewRun, indent: string): string[] {
+  if (!run.resolved.length) return [];
+  return [
+    "",
+    `Fixed since the prior run (${run.resolved.length})`,
+    ...run.resolved.map(
+      (r) => `${indent}${r.title ?? r.id}${r.file ? `  ${r.file}` : ""}${r.note ? `\n${indent}  ${r.note}` : ""}`,
+    ),
+  ];
 }
 
 export function formatRun(run: ReviewRun): string {
@@ -84,6 +99,7 @@ export function formatRun(run: ReviewRun): string {
     out.push("", `Over the posting cap (${run.overCapFindings.length})`);
     for (const f of run.overCapFindings) out.push(findingLine(f));
   }
+  out.push(...resolvedLines(run, "  "));
   if (run.stops.length) {
     out.push("", `Walkthrough stops (${run.stops.length})`);
     for (const s of run.stops) {
@@ -132,11 +148,12 @@ export function formatRunSummary(run: ReviewRun): string {
   );
   out.push("", findings.length ? `Findings (${findings.length})` : "No findings.");
   for (const f of findings) {
-    out.push(`  [${f.severity}] ${f.title}`, `    ${formatAnchor(f.anchor)}`);
+    out.push(`  [${f.severity}] ${f.title}${carried(f)}`, `    ${formatAnchor(f.anchor)}`);
     const why = lead(f.impact ?? f.explanation);
     if (why && why !== f.title) out.push(`    ${why}`);
   }
   if (run.overCapFindings.length) out.push(`  …and ${run.overCapFindings.length} more over the cap (runs show)`);
+  out.push(...resolvedLines(run, "  "));
 
   if (run.overview.startHere.length) {
     out.push("", "Start here");

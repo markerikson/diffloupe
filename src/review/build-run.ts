@@ -22,6 +22,7 @@ import { classifyFile, type Finding } from "./core/findings.ts";
 import { fingerprint } from "./core/lib/marker.ts";
 import type { RunReviewResult } from "./core/pipeline.ts";
 import type { ReviewUnit, Walkthrough } from "./core/prompts.ts";
+import { fingerprintOf, mapLine, type LineHunk } from "./prior-run.ts";
 
 /** The parts of the core's run record this module reads. */
 interface CoreRecord {
@@ -64,6 +65,12 @@ export interface BuildReviewRunInput {
   untrackedSkipped?: string[];
   coreSource: string;
   priorRunId?: string;
+  /**
+   * The earlier run of this target whose findings were handed to the review as
+   * prior comments. `lineMap` holds `git diff -U0 <its head> <this head>` hunks,
+   * used to move a carried finding's line to where that code now sits.
+   */
+  previous?: { run: ReviewRun; dismissed?: string[]; lineMap?: Map<string, LineHunk[]> };
   /** Receives one line per structural problem worth knowing about. Defaults to stderr. */
   log?: (message: string) => void;
 }
@@ -223,6 +230,60 @@ function splitByChapter(leaves: UnitLeaf[], stops: GuideStop[]): UnitLeaf[] {
   });
 }
 
+/**
+ * The review was told not to repeat the prior run's findings, so a finding it
+ * neither re-reported nor marked fixed is still open and is carried into this
+ * run. Without a prior run, `resolved` ids are comment ids and pass through.
+ */
+function carryForward(
+  input: BuildReviewRunInput,
+  recordResolved: { id: number; note?: string }[],
+  current: RunFinding[],
+  byPath: Map<string, FileDiffMetadata>,
+  log: (message: string) => void,
+): { carried: RunFinding[]; resolved: ReviewRun["resolved"] } {
+  const prev = input.previous;
+  if (!prev) {
+    return {
+      carried: [],
+      resolved: recordResolved.map((r) => ({ id: String(r.id), ...(r.note ? { note: r.note } : {}) })),
+    };
+  }
+  const prevFindings = prev.run.findings;
+  const resolved: ReviewRun["resolved"] = [];
+  const fixed = new Set<string>();
+  for (const r of recordResolved) {
+    const f = prevFindings[r.id - 1];
+    if (!f) continue;
+    fixed.add(f.id);
+    resolved.push({ id: f.id, title: f.title, file: f.file, ...(r.note ? { note: r.note } : {}) });
+  }
+  const origin = new Map(prevFindings.map((f) => [fingerprintOf(f.id), f.carriedFrom ?? prev.run.id]));
+  for (const f of current) {
+    const from = origin.get(fingerprintOf(f.id));
+    if (from) f.carriedFrom = from;
+  }
+  const reported = new Set(current.map((f) => fingerprintOf(f.id)));
+  const dismissed = new Set(prev.dismissed ?? []);
+  const carried: RunFinding[] = [];
+  for (const f of prevFindings) {
+    if (fixed.has(f.id) || dismissed.has(f.id) || reported.has(fingerprintOf(f.id))) continue;
+    const file = byPath.get(f.file);
+    if (!file) {
+      log(`  prior finding "${f.title}" dropped: ${f.file} is no longer in the diff`);
+      continue;
+    }
+    const hunks = prev.lineMap?.get(f.file) ?? [];
+    const move = (line: number | undefined) => (line ? mapLine(hunks, line) : undefined);
+    carried.push({
+      ...f,
+      anchor: anchor(file, f.file, move(f.anchor.cited.line), move(f.anchor.cited.endLine)),
+      carriedFrom: f.carriedFrom ?? prev.run.id,
+    });
+  }
+  return { carried, resolved };
+}
+
 export function buildReviewRun(input: BuildReviewRunInput): ReviewRun {
   const log = input.log ?? ((m: string) => console.error(m));
   const record = input.result.record as CoreRecord | null;
@@ -243,6 +304,8 @@ export function buildReviewRun(input: BuildReviewRunInput): ReviewRun {
   };
   const findings = (record?.verifiedFindings ?? []).map((f) => toRunFinding(f, findingId(f), byPath.get(f.file)));
   const overCapFindings = (record?.overCapFindings ?? []).map((f) => toRunFinding(f, findingId(f), byPath.get(f.file)));
+  const { carried, resolved } = carryForward(input, record?.resolved ?? [], [...findings, ...overCapFindings], byPath, log);
+  findings.push(...carried);
 
   // ---- walkthrough stops
   const isDirectory = (p: string) => {
@@ -438,10 +501,7 @@ export function buildReviewRun(input: BuildReviewRunInput): ReviewRun {
     stops,
     findings,
     overCapFindings,
-    resolved: (record?.resolved ?? []).map((r) => ({
-      id: String(r.id),
-      ...(r.note ? { note: r.note } : {}),
-    })),
+    resolved,
     unreviewed: record?.unreviewed ?? { overCap: [], failed: [] },
     meta: {
       ...(record?.model ? { model: record.model } : {}),
