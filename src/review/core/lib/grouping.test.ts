@@ -108,6 +108,28 @@ describe("groupFiles", () => {
     expect(groups.flatMap((g) => g.files).sort()).toEqual(facts.map((f) => f.file).sort());
   });
 
+  it("folds a lone small file into a full group when the budget allows", () => {
+    // A 10-file unit plus one 3,000-token test file, which got its own reviewer.
+    const facts = [
+      ...Array.from({ length: 10 }, (_, i) =>
+        fact(`src/warm/f${i}.ts`, { tokens: 2900, imports: i ? [`src/warm/f${i - 1}.ts`] : [] }),
+      ),
+      fact("src/guidance/journey/file-bug.test.ts", { tokens: 3000 }),
+    ];
+    const opts = { budget: 42_000, maxFiles: 12 };
+    expect(groupFiles(facts, linkFiles(facts), opts).groups).toHaveLength(1);
+    expect(groupFiles(facts, linkFiles(facts), { ...opts, foldSmall: false }).groups).toHaveLength(2);
+  });
+
+  it("does not fold a small file into a group over the budget", () => {
+    const facts = [
+      fact("src/big/a.ts", { tokens: 40_000 }),
+      fact("src/other/c.test.ts", { tokens: 3000 }),
+    ];
+    const { groups } = groupFiles(facts, linkFiles(facts), { budget: 42_000 });
+    expect(groups.map((g) => g.files)).toEqual([["src/big/a.ts"], ["src/other/c.test.ts"]]);
+  });
+
   it("splits a mixed C++ and TypeScript group by language and reports the cut link", () => {
     // The #13193 shape: C++ producers of stats, TypeScript consumers.
     const facts = [

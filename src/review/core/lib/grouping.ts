@@ -70,6 +70,11 @@ export interface GroupingOptions {
   maxGroups?: number;
   /** A directory link never builds a group with more files than this. */
   maxDirFiles?: number;
+  /**
+   * Fold a group of one or two files under a quarter of `target` into its
+   * closest neighbor whenever the two fit the budget. Defaults to true.
+   */
+  foldSmall?: boolean;
   /** Names too common to say anything about which files belong together. */
   generic?: Set<string>;
 }
@@ -312,11 +317,10 @@ export function groupFiles(facts: FileFacts[], links: Link[], opts: GroupingOpti
   rehome(links, groupOf, filesIn, size, tokens, opts.budget, maxFiles * 2);
   splitByLanguage(groupOf, filesIn, size, tokens);
 
-  // Each group is a paid reviewer session. Over the cap, the smallest group
-  // joins the one it is most linked to, or failing that the nearest by
-  // directory, as long as the result fits the budget.
-  while (opts.maxGroups && filesIn.size > opts.maxGroups) {
-    const g = bySize()[0];
+  // The group `g` should join: the one it is most linked to, then one in the
+  // same language, then the nearest by directory, then the smallest, as long as
+  // the result fits the budget.
+  const closest = (g: number, sameLanguageOnly = false): number | undefined => {
     const pull = new Map<number, number>();
     for (const l of links) {
       const [ga, gb] = [groupOf.get(l.from)!, groupOf.get(l.to)!];
@@ -324,7 +328,8 @@ export function groupFiles(facts: FileFacts[], links: Link[], opts: GroupingOpti
       const other = ga === g ? gb : ga;
       pull.set(other, (pull.get(other) ?? 0) + l.weight);
     }
-    let best: { group: number; weight: number; depth: number } | undefined;
+    const families = new Set([...filesIn.get(g)!].map(languageFamily));
+    let best: { group: number; weight: number; sameLanguage: boolean; depth: number } | undefined;
     for (const other of filesIn.keys()) {
       if (other === g || size.get(g)! + size.get(other)! > opts.budget) continue;
       let depth = 0;
@@ -332,15 +337,43 @@ export function groupFiles(facts: FileFacts[], links: Link[], opts: GroupingOpti
         for (const o of filesIn.get(other)!) depth = Math.max(depth, sharedDepth(dirOf(m), dirOf(o)));
       }
       const weight = pull.get(other) ?? 0;
+      const sameLanguage = [...filesIn.get(other)!].some((f) => families.has(languageFamily(f)));
+      if (sameLanguageOnly && !sameLanguage) continue;
       const better =
         !best ||
         weight > best.weight ||
-        (weight === best.weight && depth > best.depth) ||
-        (weight === best.weight && depth === best.depth && size.get(other)! < size.get(best.group)!);
-      if (better) best = { group: other, weight, depth };
+        (weight === best.weight && sameLanguage && !best.sameLanguage) ||
+        (weight === best.weight && sameLanguage === best.sameLanguage && depth > best.depth) ||
+        (weight === best.weight &&
+          sameLanguage === best.sameLanguage &&
+          depth === best.depth &&
+          size.get(other)! < size.get(best.group)!);
+      if (better) best = { group: other, weight, sameLanguage, depth };
     }
-    if (!best) break;
-    merge(best.group, g);
+    return best?.group;
+  };
+
+  // Each group is a paid reviewer session. Over the cap, the smallest group
+  // joins its closest neighbor.
+  while (opts.maxGroups && filesIn.size > opts.maxGroups) {
+    const g = bySize()[0];
+    const best = closest(g);
+    if (best === undefined) break;
+    merge(best, g);
+  }
+
+  // A reviewer session costs about the same to start whatever it is given, and
+  // a group of one or two small files rarely repays that: a lone 3,000-token
+  // test file cost a third of a review and found nothing. The fold above keeps
+  // groups under `target` and a file count; this one only needs the budget,
+  // and never undoes the split by language.
+  if (opts.foldSmall !== false) {
+    for (const g of bySize()) {
+      if (filesIn.size < 2) break;
+      if (!filesIn.has(g) || size.get(g)! > small || filesIn.get(g)!.size > 2) continue;
+      const best = closest(g, true);
+      if (best !== undefined) merge(best, g);
+    }
   }
 
   const ordered = [...filesIn.values()]
