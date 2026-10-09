@@ -782,10 +782,5 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
   };
   await writeJson(path.join(ARTIFACTS, "runs", `${tagBase}.json`), record);
 
-  console.error(
-    `\n${tagBase}: ${(wallMs / 60000).toFixed(1)} min, $${totalCost.toFixed(2)}, ` +
-      `${allFindings.length} raw -> ${finalFindings.length} merged -> ${verified.length} posted`,
-  );
-  console.error(`markdown: ${markdownPath}`);
   return { record, units, byClass, findings: verified, costUsd: totalCost, wallMs, markdownPath };
 }

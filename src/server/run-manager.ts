@@ -165,6 +165,7 @@ export class RunManager {
             type: "done",
             status: "complete",
             findings: run.findings.length,
+            carriedOver: run.findings.filter((f) => f.carriedFrom).length,
             costUsd: run.meta.costUsd,
             wallMs: run.meta.wallMs,
             ...(reviewed ? {} : { noChanges: true }),

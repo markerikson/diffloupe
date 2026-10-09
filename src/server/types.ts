@@ -31,7 +31,10 @@ export type RunEvent =
   | {
       type: "done";
       status: "complete";
+      /** All findings in run.json, carried-over ones included. */
       findings: number;
+      /** Findings carried over from the prior run of the same target. Absent in older event logs. */
+      carriedOver?: number;
       costUsd: number;
       wallMs: number;
       /** The target held no reviewable code; nothing was sent to a model. */

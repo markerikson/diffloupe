@@ -22,10 +22,14 @@ export function formatEvent(e: RunEvent): string | null {
       const found = e.findings !== undefined ? ` ${e.findings} finding(s)` : "";
       return `  ${n} ${e.status === "ok" ? "done" : "FAILED"}${cost}${wall}${found} — ${e.title}`;
     }
-    case "done":
-      return e.noChanges
-        ? "No code changes to review."
-        : `${e.findings} finding(s) · $${e.costUsd.toFixed(2)} · ${Math.round(e.wallMs / 1000)}s`;
+    case "done": {
+      if (e.noChanges) return "No code changes to review.";
+      const carried = e.carriedOver ?? 0;
+      const found = carried
+        ? `${e.findings - carried} new finding(s), ${carried} carried over`
+        : `${e.findings} finding(s)`;
+      return `${found} · $${e.costUsd.toFixed(2)} · ${Math.round(e.wallMs / 1000)}s`;
+    }
     case "cancelled":
       return "Review cancelled.";
     case "error":
