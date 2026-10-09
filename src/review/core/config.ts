@@ -1,8 +1,15 @@
+import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-/** Directory holding this script's own assets (system.md). */
-export const DIR = import.meta.dir;
+/**
+ * Directory holding the core's own assets (system.md, opencode/). In the
+ * bundled build every module's `import.meta.dir` is `dist/`, and the build
+ * copies the assets to `dist/review-core/`.
+ */
+export const DIR = existsSync(path.join(import.meta.dir, "system.md"))
+  ? import.meta.dir
+  : path.join(import.meta.dir, "review-core");
 /**
  * The checkout of the code being reviewed, at the PR head. Assigned in runReview().
  *
@@ -261,15 +268,25 @@ export function applyConfig(o: Partial<ReviewConfig>): void {
   if (o.surfaces !== undefined) SURFACES = o.surfaces;
 }
 
+/** Aborted when the run is cancelled. Assigned by runReview(). */
+export let SIGNAL: AbortSignal | undefined;
+
 /** Per-run state, assigned by runReview(). Only one run per process. */
-export function setRunState(s: { subject?: string; releaseSubject?: () => Promise<void>; repoName?: string }): void {
+export function setRunState(s: {
+  subject?: string;
+  releaseSubject?: () => Promise<void>;
+  repoName?: string;
+  signal?: AbortSignal;
+}): void {
   if (s.subject !== undefined) SUBJECT = s.subject;
   if (s.releaseSubject !== undefined) releaseSubject = s.releaseSubject;
   if (s.repoName !== undefined) repoName = s.repoName;
+  if (s.signal !== undefined) SIGNAL = s.signal;
 }
 
 export function resetRunState(): void {
   SUBJECT = process.cwd();
   releaseSubject = async () => {};
   repoName = "this repository";
+  SIGNAL = undefined;
 }

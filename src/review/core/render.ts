@@ -54,7 +54,7 @@ export function renderReview(o: {
    * Shown outside every fold, since a short finding list means something
    * different when part of the diff was never looked at.
    */
-  unreviewed?: { overCap: string[]; failed: string[] } | undefined;
+  unreviewed?: { overCap: string[]; failed: string[]; budget?: string[] } | undefined;
   /** What the slice reviewers verified and found correct, in slice order. */
   checked?: string[] | undefined;
   /** Findings the review stands behind but did not post because of `MAX_POSTED`. */
@@ -293,13 +293,15 @@ export function renderReview(o: {
   s.push("");
   const skippedFiles = o.unreviewed?.overCap ?? [];
   const failedFiles = o.unreviewed?.failed ?? [];
-  const partial = skippedFiles.length + failedFiles.length > 0;
+  const budgetFiles = o.unreviewed?.budget ?? [];
+  const partial = skippedFiles.length + failedFiles.length + budgetFiles.length > 0;
   if (partial) {
     const parts = [
       skippedFiles.length ? `${skippedFiles.length} over the slice cap` : "",
       failedFiles.length ? `${failedFiles.length} in a reviewer that failed` : "",
+      budgetFiles.length ? `${budgetFiles.length} skipped at the cost limit` : "",
     ].filter(Boolean);
-    const named = [...failedFiles, ...skippedFiles];
+    const named = [...failedFiles, ...budgetFiles, ...skippedFiles];
     const shown = named.slice(0, 5).map((f) => `\`${f}\``).join(", ");
     const more = named.length > 5 ? `, and ${named.length - 5} more` : "";
     s.push(
@@ -869,7 +871,7 @@ export async function writeArtifacts(o: {
   runs?: number | undefined;
   /** See `renderReview`. */
   noReviewers?: boolean | undefined;
-  unreviewed?: { overCap: string[]; failed: string[] } | undefined;
+  unreviewed?: { overCap: string[]; failed: string[]; budget?: string[] } | undefined;
   checked?: string[] | undefined;
   overCap?: Finding[] | undefined;
   /**

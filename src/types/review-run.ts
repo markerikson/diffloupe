@@ -152,7 +152,8 @@ export interface ReviewRun {
   overCapFindings: RunFinding[];
   /** Findings from the prior run that this review found fixed. */
   resolved: { id: string; note?: string; title?: string; file?: string }[];
-  unreviewed: { overCap: string[]; failed: string[] };
+  /** Code files no reviewer read: over the slice cap, in a failed slice, or skipped at the cost limit. */
+  unreviewed: { overCap: string[]; failed: string[]; budget?: string[] };
   meta: {
     model?: string;
     effort?: string;
@@ -162,6 +163,8 @@ export interface ReviewRun {
     rejectedCount: number;
     coreSource: string;
     mergeMode?: "coordinator" | "nothing-to-merge" | "deterministic-fallback";
+    /** The cost limit stopped new slices from starting. */
+    budgetStopped?: boolean;
   };
   /** Untracked files left out of a working-tree snapshot because of their size. */
   untrackedSkipped: string[];

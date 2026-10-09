@@ -33,7 +33,7 @@ interface RunRecord {
   runs?: number;
   overCapFindings?: Finding[];
   checked?: string[];
-  unreviewed?: { overCap: string[]; failed: string[] };
+  unreviewed?: { overCap: string[]; failed: string[]; budget?: string[] };
 }
 
 async function main() {

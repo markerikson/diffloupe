@@ -42,7 +42,8 @@ interface CoreRecord {
   walkthrough?: Walkthrough | null;
   verifiedFindings?: Finding[];
   overCapFindings?: Finding[];
-  unreviewed?: { overCap: string[]; failed: string[] };
+  unreviewed?: { overCap: string[]; failed: string[]; budget?: string[] };
+  budgetStopped?: boolean;
   resolved?: { id: number; note?: string }[];
   rejected?: unknown[];
   intentAlignment?: {
@@ -516,7 +517,54 @@ export function buildReviewRun(input: BuildReviewRunInput): ReviewRun {
             mergeMode: mergeMode as NonNullable<ReviewRun["meta"]["mergeMode"]>,
           }
         : {}),
+      ...(record?.budgetStopped ? { budgetStopped: true } : {}),
     },
+    untrackedSkipped: input.untrackedSkipped ?? [],
+    ...(input.priorRunId ? { priorRunId: input.priorRunId } : {}),
+  };
+}
+
+export type BuildPendingRunInput = Pick<
+  BuildReviewRunInput,
+  "id" | "createdAt" | "repo" | "target" | "base" | "head" | "statedIntent" | "patch" | "untrackedSkipped" | "priorRunId" | "coreSource"
+>;
+
+/**
+ * The run as it stands before the review returns: every file from the patch
+ * in one group, nothing else. Written when a run starts so the UI has a file
+ * list to show, and replaced by `buildReviewRun`'s output at the end.
+ */
+export function buildPendingRun(input: BuildPendingRunInput): ReviewRun {
+  const files = toRunFiles(parseRunPatch(input.patch), input.patch, { skip: [], docs: [], code: [] });
+  for (const f of files) f.groupId = "all";
+  return {
+    schemaVersion: 1,
+    id: input.id,
+    status: "running",
+    createdAt: input.createdAt,
+    repo: input.repo,
+    target: input.target,
+    base: input.base,
+    head: input.head,
+    intent: input.statedIntent ? { stated: input.statedIntent } : {},
+    overview: { startHere: [] },
+    files,
+    groups: [
+      {
+        id: "all",
+        title: "All changes",
+        files: files.map((f) => f.path),
+        findingIds: [],
+        stopIds: [],
+        critical: false,
+      },
+    ],
+    stops: [],
+    findings: [],
+    overCapFindings: [],
+    resolved: [],
+    unreviewed: { overCap: [], failed: [] },
+    meta: { wallMs: 0, costUsd: 0, slices: [], rejectedCount: 0, coreSource: input.coreSource },
     untrackedSkipped: input.untrackedSkipped ?? [],
     ...(input.priorRunId ? { priorRunId: input.priorRunId } : {}),
   };

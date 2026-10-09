@@ -109,6 +109,8 @@ export function formatRun(run: ReviewRun): string {
   }
   if (run.untrackedSkipped.length) out.push("", `Untracked files skipped: ${run.untrackedSkipped.join(", ")}`);
   if (run.unreviewed.failed.length) out.push("", `Failed slices: ${run.unreviewed.failed.join(", ")}`);
+  if (run.unreviewed.budget?.length)
+    out.push("", `Not reviewed (cost limit): ${run.unreviewed.budget.join(", ")}`);
   out.push(
     "",
     `${run.findings.length} findings, ${run.files.length} files, $${run.meta.costUsd.toFixed(2)}, ${Math.round(run.meta.wallMs / 1000)}s`,
@@ -133,6 +135,8 @@ export function formatRunSummary(run: ReviewRun): string {
   const out: string[] = [];
   out.push(`${formatTarget(run.target)}  ${run.base.slice(0, 10)}..${run.head.slice(0, 10)}`);
   if (run.unreviewed.failed.length) out.push(`Incomplete: ${run.unreviewed.failed.length} slice(s) failed.`);
+  const budgetSkipped = run.unreviewed.budget ?? [];
+  if (budgetSkipped.length) out.push(`Incomplete: cost limit reached, ${budgetSkipped.length} file(s) not reviewed.`);
 
   const { intent } = run;
   if (intent.alignment) {

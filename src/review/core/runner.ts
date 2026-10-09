@@ -1,8 +1,60 @@
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { ensureDir, readJson, readText, removeIfPresent, writeJson, writeText } from "./lib/io.ts";
-import { DIR, SUBJECT, ARTIFACTS, PROVIDER, MAX_STEPS, DEADLINE_MS, MODEL, EFFORT, OUT, repoName } from "./config.ts";
+import { DIR, SUBJECT, ARTIFACTS, PROVIDER, MAX_STEPS, DEADLINE_MS, MODEL, EFFORT, OUT, SIGNAL, repoName } from "./config.ts";
+
+// ---------------------------------------------------------------- cancellation
+
+export class CancelledError extends Error {
+  override name = "CancelledError";
+  constructor() {
+    super("review cancelled");
+  }
+}
+
+/**
+ * Live agent processes. Each is spawned detached, so it leads its own process
+ * group: OpenCode starts `tilth --mcp` and shell tools as children, and killing
+ * only the direct child would leave those running inside the worktree. The
+ * flip side is that a terminal's Ctrl+C no longer reaches them, so whoever
+ * handles SIGINT has to call `killAgents()`.
+ */
+const liveAgents = new Map<ChildProcess, Promise<void>>();
+let exitHookInstalled = false;
+
+function signalGroup(child: ChildProcess, sig: NodeJS.Signals): void {
+  if (child.pid === undefined) return;
+  try {
+    process.kill(-child.pid, sig);
+  } catch {
+    // The group is already gone.
+  }
+}
+
+/** Sends SIGKILL to every live agent group without waiting. */
+export function killAgentsNow(): void {
+  for (const child of liveAgents.keys()) signalGroup(child, "SIGKILL");
+}
+
+/**
+ * SIGTERM to every live agent's process group, then SIGKILL after `graceMs`
+ * for any that have not closed. Resolves when all have closed.
+ */
+export async function killAgents(graceMs = 5000): Promise<void> {
+  const pending = [...liveAgents];
+  if (!pending.length) return;
+  for (const [child] of pending) signalGroup(child, "SIGTERM");
+  const timer = setTimeout(() => {
+    for (const [child] of pending) if (liveAgents.has(child)) signalGroup(child, "SIGKILL");
+  }, graceMs);
+  await Promise.all(pending.map(([, closed]) => closed));
+  clearTimeout(timer);
+}
+
+export function liveAgentCount(): number {
+  return liveAgents.size;
+}
 
 // ---------------------------------------------------------------- agent
 
@@ -388,12 +440,18 @@ export async function agent(
   prompt: string,
   opts: { budget: number; outFile: string; tag: string; model?: string; effort?: string },
 ) {
+  if (SIGNAL?.aborted) throw new CancelledError();
   const system = (await readText(path.join(DIR, "system.md"))).replaceAll("{{repo}}", repoName);
   const model = opts.model ?? MODEL;
   const effort = opts.effort ?? EFFORT;
   const spec: Invocation = await openCodeInvocation(system, { ...opts, model, effort });
   const env: Record<string, string | undefined> = { ...process.env, ...spec.env };
   for (const key of spec.unsetEnv) delete env[key];
+  if (SIGNAL?.aborted) throw new CancelledError();
+  if (!exitHookInstalled) {
+    exitHookInstalled = true;
+    process.on("exit", killAgentsNow);
+  }
   const started = Date.now();
   const { stdout, stderr, exitCode } = await new Promise<{
     stdout: string;
@@ -407,21 +465,32 @@ export async function agent(
       cwd: spec.cwd,
       env,
       stdio: ["pipe", "pipe", "pipe"],
+      detached: true,
     });
+    let markClosed = () => {};
+    liveAgents.set(child, new Promise<void>((r) => (markClosed = r)));
+    const forget = () => {
+      liveAgents.delete(child);
+      markClosed();
+    };
     child.stdin.on("error", reject);
     child.stdin.end(prompt);
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     child.stdout.on("data", (c: Buffer) => out.push(c));
     child.stderr.on("data", (c: Buffer) => err.push(c));
-    child.on("error", reject);
-    child.on("close", (code) =>
+    child.on("error", (e) => {
+      forget();
+      reject(e);
+    });
+    child.on("close", (code, sig) => {
+      forget();
       resolve({
         stdout: Buffer.concat(out).toString("utf8"),
         stderr: Buffer.concat(err).toString("utf8"),
-        exitCode: code ?? 0,
-      }),
-    );
+        exitCode: code ?? (sig ? 128 : 0),
+      });
+    });
   });
   const wallMs = Date.now() - started;
   await writeText(path.join(ARTIFACTS, "logs", `${opts.tag}.stderr.log`), stderr);

@@ -20,7 +20,7 @@ import { compactDeletedFiles, diffSizes } from "./lib/hunks.ts";
 import { SUBJECT, ARTIFACTS, RUNNER, MODEL, EFFORT, MODEL_WALK, MODEL_MERGE, EFFORT_AUX, WALK_BUDGET, PART_BUDGET, GROUPING, SLICE_BUDGET, MERGE_BUDGET, POOL, MAX_SLICES, CHARS_PER_TOKEN, MAX_SLICE_TOKENS, WALK_DIFF_TOKENS, OUT, applyConfig, setRunState, resetRunState, releaseSubject, type ReviewConfig } from "./config.ts";
 import { classifyFile, type Finding } from "./findings.ts";
 import { gitText, diffOutline, gatherIntent, gatherPriorComments, renderPriorComments, type PriorComment } from "./context.ts";
-import { agent } from "./runner.ts";
+import { agent, CancelledError, killAgents } from "./runner.ts";
 import { slicePrompt, mergePrompt, type ReviewUnit, coverUnits, packUnits, type Walkthrough, partitionPrompt, groupNamingPrompt, walkthroughPrompt } from "./prompts.ts";
 import { classifySurface, SURFACE_RANK, CONF, SEV } from "./surface.ts";
 import { saidFingerprints, readCheckedClaims, mergeBudgetFor, fallbackRank, coordinatorHasWork, type MergeDecisions, MAX_POSTED, applyDecisions } from "./coordinate.ts";
@@ -60,7 +60,11 @@ export type ReviewEvent =
     wallMs?: number;
     findings?: number;
   }
-  | { type: "log"; message: string };
+  | { type: "log"; message: string }
+  /** Running total after every agent call. */
+  | { type: "cost"; totalUsd: number }
+  /** Slices stopped being started because the running total reached `maxCostUsd`. */
+  | { type: "budget"; totalUsd: number; limitUsd: number; skippedSlices: number };
 
 export interface RunReviewOptions {
   /** The local clone that supplies the git object store. */
@@ -79,6 +83,14 @@ export interface RunReviewOptions {
    * not reported again, and closed out in `resolved` when fixed.
    */
   prior?: PriorComment[];
+  /** Aborting kills every running agent and makes runReview throw CancelledError. */
+  signal?: AbortSignal;
+  /**
+   * Stop starting slices once the running total reaches this. Checked between
+   * slices only, so slices already running and the coordinator and walkthrough
+   * still spend.
+   */
+  maxCostUsd?: number;
 }
 
 export interface RunReviewResult {
@@ -98,9 +110,16 @@ export interface RunReviewResult {
  */
 export async function runReview(options: RunReviewOptions): Promise<RunReviewResult> {
   if (options.config) applyConfig(options.config);
+  const { signal } = options;
+  if (signal?.aborted) throw new CancelledError();
+  const onAbort = () => void killAgents();
+  signal?.addEventListener("abort", onAbort, { once: true });
+  if (signal) setRunState({ signal });
   try {
     return await main(options);
   } finally {
+    signal?.removeEventListener("abort", onAbort);
+    await killAgents();
     await releaseSubject();
     resetRunState();
   }
@@ -110,6 +129,15 @@ export async function runReview(options: RunReviewOptions): Promise<RunReviewRes
 
 async function main(options: RunReviewOptions): Promise<RunReviewResult> {
   const emit = (e: ReviewEvent) => options.onProgress?.(e);
+  const { signal, maxCostUsd } = options;
+  const checkAbort = () => {
+    if (signal?.aborted) throw new CancelledError();
+  };
+  let spent = 0;
+  const addCost = (usd: number) => {
+    spent += usd;
+    emit({ type: "cost", totalUsd: spent });
+  };
   emit({ type: "stage", stage: "resolving_target" });
   const HOME_REPO = options.repo;
   const { pr, base, head, slug } = options.target;
@@ -143,6 +171,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
   // Counted for the run record.
   const reviewsSoFar = Math.max(0, ...prior.filter((c) => c.mine).map((c) => c.runs ?? 0));
 
+  checkAbort();
   emit({ type: "stage", stage: "checking_registry" });
   const reg = await registryCheck({ repo: SUBJECT, base, head });
   const regMd = renderRegistryReport(reg.findings);
@@ -168,6 +197,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     mapNote = `A repository orientation map for this change is at \`${mapPath}\`. Read it first (use tilth_read if available) to get your bearings before exploring — it lists the codebase layout, the symbols in each changed file, and the files that import or are imported by them.\n`;
   }
 
+  checkAbort();
   // ---- slices
   const changed = (await gitText(["diff", "--name-only", `${base}..${head}`])).trim().split("\n").filter(Boolean);
   const byClass = { skip: [] as string[], docs: [] as string[], code: [] as string[] };
@@ -232,7 +262,9 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     parted = await agent(pp, {
       budget: PART_BUDGET, outFile: partOut, tag: partTag, model: MODEL_WALK, effort: EFFORT_AUX,
     });
+    addCost(parted.costUsd);
   }
+  checkAbort();
 
   let groupMoves: ReturnType<typeof applyGroupNaming>["moves"] = [];
   let units: ReviewUnit[];
@@ -300,8 +332,20 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
 
   emit({ type: "stage", stage: "reviewing" });
   let cursor = 0;
+  let budgetStopped = false;
+  let budgetSkipped: string[] = [];
   async function worker(id: number) {
     while (true) {
+      if (signal?.aborted) return;
+      if (maxCostUsd !== undefined && spent >= maxCostUsd && cursor < capped.length) {
+        const rest = capped.slice(cursor);
+        cursor = capped.length;
+        budgetStopped = true;
+        budgetSkipped = rest.flatMap((s) => s.files);
+        console.error(`  cost $${spent.toFixed(2)} reached --max-cost $${maxCostUsd.toFixed(2)}: ${rest.length} slice(s) not started`);
+        emit({ type: "budget", totalUsd: spent, limitUsd: maxCostUsd, skippedSlices: rest.length });
+        return;
+      }
       const i = cursor++;
       if (i >= capped.length) return;
       const slice = capped[i];
@@ -336,6 +380,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
       let r: Awaited<ReturnType<typeof agent>>;
       try {
         r = await agent(prompt, { budget: SLICE_BUDGET, outFile, tag });
+        addCost(r.costUsd);
       } catch (error) {
         console.error(`  [w${id}] ${slice.unitId} — failed to run: ${error instanceof Error ? error.message : String(error)}`);
         sliceRuns.push({
@@ -401,6 +446,8 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     }
   }
   await Promise.all(Array.from({ length: Math.min(POOL, capped.length) }, (_, i) => worker(i)));
+  // Killed slices deliver nothing and would otherwise read as failures below.
+  checkAbort();
 
   // A run where every slice failed produces zero findings, which renders as a
   // clean review. With a bad or unfunded API key that is the *only* thing that
@@ -505,13 +552,14 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     const [merged, walked] = await Promise.all([
       mergeIdle
         ? Promise.resolve({ ...skipped, payload: { keep: [] } satisfies MergeDecisions })
-        : agent(mp, { budget: mergeBudget, outFile: mergeOut, tag: mergeTag, model: MODEL_MERGE, effort: EFFORT_AUX }).catch(
-          survive("coordinator"),
-        ),
-      agent(wp, { budget: WALK_BUDGET, outFile: walkOut, tag: walkTag, model: MODEL_WALK, effort: EFFORT_AUX }).catch(
-        survive("walkthrough"),
-      ),
+        : agent(mp, { budget: mergeBudget, outFile: mergeOut, tag: mergeTag, model: MODEL_MERGE, effort: EFFORT_AUX })
+          .then((r) => (addCost(r.costUsd), r))
+          .catch(survive("coordinator")),
+      agent(wp, { budget: WALK_BUDGET, outFile: walkOut, tag: walkTag, model: MODEL_WALK, effort: EFFORT_AUX })
+        .then((r) => (addCost(r.costUsd), r))
+        .catch(survive("walkthrough")),
     ]);
+  checkAbort();
   const walkthrough = (walked.payload ?? undefined) as Walkthrough | undefined;
   const mp2 = (merged.payload ?? {}) as MergeDecisions;
 
@@ -636,6 +684,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     failed: sliceRuns
       .filter((r) => !((r.ok as boolean | undefined) ?? r.exitCode === 0))
       .flatMap((r) => (r.files as string[] | undefined) ?? []),
+    budget: budgetSkipped,
   };
   const checked = checkedBySlice.flat().filter(Boolean);
   const totalCost = sliceRuns.reduce((a, r) => a + (r.costUsd as number), 0) + merged.costUsd + walked.costUsd;
@@ -664,6 +713,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
         ? { "walkthrough did not read": `${walkOmitted.length} of ${sliceFiles.length} files` }
         : {}),
       ...(notReviewed.length ? { "not reviewed (over cap)": notReviewed.join(", ") } : {}),
+      ...(budgetStopped ? { "not reviewed (cost limit)": budgetSkipped.join(", ") } : {}),
       // Cut before the coordinator ever saw them, so they appear in no other
       // drop accounting. Every other path that discards a finding records it.
       ...(preTrimmed ? { "trimmed before merge": `${preTrimmed} low-confidence nice-to-have` } : {}),
@@ -704,7 +754,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     // configuration produced a given result.
     pr, base, head, runner: RUNNER, model: MODEL, effort: EFFORT, effortAux: EFFORT_AUX, tag: tagBase,
     wallMs, totalCostUsd: totalCost,
-    mergeMode, preTrimmed,
+    mergeMode, preTrimmed, budgetStopped,
     sliceRuns,
     merge: {
       wallMs: merged.wallMs, costUsd: merged.costUsd, numTurns: merged.numTurns,
