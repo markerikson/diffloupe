@@ -3,32 +3,20 @@ import path from "node:path";
 import { type } from "arktype";
 import { Hono } from "hono";
 import { run } from "../../review/core/lib/proc.ts";
-import { deleteRun, listRuns, loadRun, runDir } from "../../review/run-store.ts";
+import { deleteRun, InvalidRunError, listRuns, loadRun, runDir } from "../../review/run-store.ts";
 import { TargetError } from "../../review/targets.ts";
 import type { ReviewRun } from "../../types/review-run.ts";
 import type { ServerContext } from "../context.ts";
 import { RunBusyError } from "../run-manager.ts";
 import { streamRunEvents } from "../sse.ts";
-import type { ErrorResponse, StartRunRequest, StartRunResponse } from "../types.ts";
+import {
+  StartRunRequestSchema,
+  type ErrorResponse,
+  type StartRunRequest,
+  type StartRunResponse,
+} from "../types.ts";
 
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
-
-const StartRunBody = type({
-  "+": "reject",
-  "target?": "string",
-  "repo?": "string",
-  "base?": "string",
-  "intent?": "string",
-  "models?": {
-    "+": "reject",
-    "review?": "string",
-    "coordinator?": "string",
-    "walkthrough?": "string",
-  },
-  "effort?": "string",
-  "maxCostUsd?": "number > 0",
-  "settingsFile?": "string",
-});
 
 function validRunId(id: string): boolean {
   try {
@@ -42,13 +30,14 @@ function validRunId(id: string): boolean {
 export function runsRoutes(ctx: ServerContext): Hono {
   const app = new Hono();
 
-  async function findRun(id: string): Promise<ReviewRun | undefined> {
+  async function findRun(id: string): Promise<ReviewRun | InvalidRunError | undefined> {
     const pending = ctx.runs.pendingRun(id);
     if (pending) return pending;
     if (!validRunId(id)) return undefined;
     try {
       return await loadRun(id);
-    } catch {
+    } catch (err) {
+      if (err instanceof InvalidRunError) return err;
       return undefined;
     }
   }
@@ -64,7 +53,7 @@ export function runsRoutes(ctx: ServerContext): Hono {
     } catch {
       return c.json({ error: "request body must be JSON" } satisfies ErrorResponse, 400);
     }
-    const req = StartRunBody(body);
+    const req = StartRunRequestSchema(body);
     if (req instanceof type.errors) return c.json({ error: req.summary } satisfies ErrorResponse, 400);
     if (!req.repo && !ctx.defaultRepo) {
       return c.json({ error: "repo is required: the server was not started in a repository" } satisfies ErrorResponse, 400);
@@ -88,6 +77,7 @@ export function runsRoutes(ctx: ServerContext): Hono {
   app.get("/:id", async (c) => {
     const id = c.req.param("id");
     const found = await findRun(id);
+    if (found instanceof InvalidRunError) return c.json({ error: found.message } satisfies ErrorResponse, 422);
     return found ? c.json(found) : c.json(notFound(id), 404);
   });
 
@@ -111,6 +101,7 @@ export function runsRoutes(ctx: ServerContext): Hono {
     }
     const found = await findRun(id);
     if (!found) return c.json(notFound(id), 404);
+    if (found instanceof InvalidRunError) return c.json({ error: found.message } satisfies ErrorResponse, 422);
     const file = found.files.find((f) => f.path === filePath);
     if (!file) return c.json({ error: `${filePath} is not part of run ${id}` } satisfies ErrorResponse, 404);
     if ((side === "base" && file.status === "added") || (side === "head" && file.status === "removed")) {

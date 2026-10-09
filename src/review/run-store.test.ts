@@ -10,6 +10,7 @@ import {
   createRunDir,
   deleteRun,
   findPriorRunId,
+  InvalidRunError,
   listRuns,
   loadRun,
   runDir,
@@ -78,6 +79,22 @@ describe("run store", () => {
     expect(existsSync(runDir("local-1"))).toBe(false);
     expect(existsSync(path.join(reviews, "local-10.md"))).toBe(true);
     expect(await deleteRun("never-existed")).toEqual([]);
+  });
+
+  test("an invalid run.json is listed with a summary and refused by loadRun", async () => {
+    const run = { ...loadFixture("worktree").build(), id: "broken-1", createdAt: "2026-10-08T03:00:00.000Z" };
+    await createRunDir(run.id);
+    await writeFile(
+      path.join(runDir(run.id), "run.json"),
+      JSON.stringify({ ...run, files: [{ path: "a.ts" }] }),
+    );
+
+    await expect(loadRun("broken-1")).rejects.toBeInstanceOf(InvalidRunError);
+    const header = (await listRuns()).find((h) => h.id === "broken-1");
+    expect(header?.status).toBe("complete");
+    expect(header?.repo).toEqual(run.repo);
+    expect(header?.invalid).toContain("files[0]");
+    expect(await deleteRun("broken-1")).toContain(runDir("broken-1"));
   });
 });
 

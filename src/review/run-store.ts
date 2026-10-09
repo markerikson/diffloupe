@@ -6,7 +6,18 @@ import os from "node:os";
 import path from "node:path";
 import { appendFile, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { text } from "./core/lib/proc.ts";
-import type { FindingSeverity, ReviewRun, ReviewTarget, RunHeader, RunUserState } from "../types/review-run.ts";
+import { type } from "arktype";
+import {
+  ReviewRunSchema,
+  ReviewTargetSchema,
+  RunRepoSchema,
+  RunStatusSchema,
+  type FindingSeverity,
+  type ReviewRun,
+  type ReviewTarget,
+  type RunHeader,
+  type RunUserState,
+} from "../types/review-run.ts";
 
 export function dataDir(): string {
   return path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share"), "diffloupe");
@@ -50,8 +61,23 @@ export async function writeRun(run: ReviewRun): Promise<void> {
   await writeFile(path.join(runDir(run.id), "run.json"), `${JSON.stringify(run, null, 2)}\n`);
 }
 
+/** A `run.json` that parsed as JSON but failed `ReviewRunSchema`. */
+export class InvalidRunError extends Error {
+  constructor(
+    readonly id: string,
+    readonly summary: string,
+    readonly raw: unknown,
+  ) {
+    super(`run ${id} has an invalid run.json: ${summary}`);
+    this.name = "InvalidRunError";
+  }
+}
+
 export async function loadRun(id: string): Promise<ReviewRun> {
-  return JSON.parse(await readFile(path.join(runDir(id), "run.json"), "utf8")) as ReviewRun;
+  const raw: unknown = JSON.parse(await readFile(path.join(runDir(id), "run.json"), "utf8"));
+  const run = ReviewRunSchema(raw);
+  if (run instanceof type.errors) throw new InvalidRunError(id, run.summary, raw);
+  return run;
 }
 
 export async function loadState(id: string): Promise<RunUserState> {
@@ -73,7 +99,31 @@ function countBySeverity(run: ReviewRun): Record<FindingSeverity, number> {
   return counts;
 }
 
-/** Every run with a readable `run.json`, newest first. */
+function field<T>(validate: (v: unknown) => T | type.errors, value: unknown, fallback: T): T {
+  const out = validate(value);
+  return out instanceof type.errors ? fallback : out;
+}
+
+/** Best-effort header for a run.json that failed validation, so the run list can still show and delete it. */
+function invalidHeader(err: InvalidRunError): RunHeader {
+  const raw = (typeof err.raw === "object" && err.raw !== null ? err.raw : {}) as Record<string, unknown>;
+  const meta = (typeof raw.meta === "object" && raw.meta !== null ? raw.meta : {}) as Record<string, unknown>;
+  return {
+    id: err.id,
+    status: field(RunStatusSchema, raw.status, "failed"),
+    createdAt: typeof raw.createdAt === "string" ? raw.createdAt : "",
+    target: field(ReviewTargetSchema, raw.target, { kind: "worktree" }),
+    repo: field(RunRepoSchema, raw.repo, { root: "" }),
+    findingCounts: { blocker: 0, "should-fix": 0, "nice-to-have": 0, question: 0 },
+    costUsd: typeof meta.costUsd === "number" ? meta.costUsd : 0,
+    invalid: err.summary,
+  };
+}
+
+/**
+ * Every run with a readable `run.json`, newest first. Runs whose file fails
+ * validation are listed with `invalid` set.
+ */
 export async function listRuns(): Promise<RunHeader[]> {
   let ids: string[];
   try {
@@ -94,8 +144,9 @@ export async function listRuns(): Promise<RunHeader[]> {
         findingCounts: countBySeverity(run),
         costUsd: run.meta?.costUsd ?? 0,
       });
-    } catch {
-      // A directory without a finished run.json: interrupted before the end.
+    } catch (err) {
+      // Otherwise a directory without a finished run.json: interrupted before the end.
+      if (err instanceof InvalidRunError) headers.push(invalidHeader(err));
     }
   }
   return headers.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -132,8 +183,9 @@ export async function deleteRun(id: string): Promise<string[]> {
   let repoRoot: string | undefined;
   try {
     repoRoot = (await loadRun(id)).repo.root;
-  } catch {
-    // No run.json; the artifacts and directory can still go.
+  } catch (err) {
+    // Without a valid run.json the artifacts and directory can still go.
+    if (err instanceof InvalidRunError) repoRoot = invalidHeader(err).repo.root || undefined;
   }
 
   const art = artifactsDir();

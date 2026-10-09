@@ -1,64 +1,94 @@
 /**
  * Request and response shapes for the local server's HTTP API, and the event
- * stream a run produces. Type-only.
+ * stream a run produces. Shared with the web UI, so this file imports nothing
+ * from the review core; `schema-drift.ts` checks the copies stay in sync.
  */
-import type { ReviewEvent } from "../review/core/pipeline.ts";
-import type { ReviewModelStage } from "../review/options.ts";
+import { type } from "arktype";
 
-/** Body of `POST /api/runs`. Also what the CLI hands the run manager directly. */
-export interface StartRunRequest {
-  /** Target spec; see parseTargetSpec. Defaults to the working tree. */
-  target?: string;
-  /** Repository root. Defaults to the server's repository. */
-  repo?: string;
-  base?: string;
-  intent?: string;
-  models?: Partial<Record<ReviewModelStage, string>>;
-  effort?: string;
-  maxCostUsd?: number;
-  /** Per-repo settings file; see review/settings.ts. */
-  settingsFile?: string;
-}
+/**
+ * Body of `POST /api/runs`. Also what the CLI hands the run manager directly.
+ * `target` is a spec for parseTargetSpec and defaults to the working tree;
+ * `repo` defaults to the server's repository; `settingsFile` is a per-repo
+ * settings file (see review/settings.ts).
+ */
+export const StartRunRequestSchema = type({
+  "+": "reject",
+  "target?": "string",
+  "repo?": "string",
+  "base?": "string",
+  "intent?": "string",
+  "models?": {
+    "+": "reject",
+    "review?": "string",
+    "coordinator?": "string",
+    "walkthrough?": "string",
+  },
+  "effort?": "string",
+  "maxCostUsd?": "number > 0",
+  "settingsFile?": "string",
+});
+export type StartRunRequest = typeof StartRunRequestSchema.infer;
 
-export interface StartRunResponse {
-  id: string;
-  url: string;
-}
+export const StartRunResponseSchema = type({ id: "string", url: "string" });
+export type StartRunResponse = typeof StartRunResponseSchema.infer;
 
-/** Events the run manager adds around the core's own. */
-export type RunEvent =
-  | ReviewEvent
-  | {
-      type: "done";
-      status: "complete";
-      /** All findings in run.json, carried-over ones included. */
-      findings: number;
-      /** Findings carried over from the prior run of the same target. Absent in older event logs. */
-      carriedOver?: number;
-      costUsd: number;
-      wallMs: number;
-      /** The target held no reviewable code; nothing was sent to a model. */
-      noChanges?: boolean;
-    }
-  | { type: "cancelled" }
-  | { type: "error"; message: string };
+export const ReviewStageSchema = type(
+  "'resolving_target' | 'checking_registry' | 'building_map' | 'grouping' | 'reviewing' | 'coordinating' | 'walkthrough' | 'verifying' | 'writing'",
+);
+export type ReviewStage = typeof ReviewStageSchema.infer;
+
+/** The review core's own events; mirrors `ReviewEvent` in review/core/pipeline.ts. */
+export const CoreEventSchema = type({ type: "'stage'", stage: ReviewStageSchema })
+  .or({
+    type: "'slice'",
+    index: "number",
+    total: "number",
+    title: "string",
+    status: "'started' | 'ok' | 'failed'",
+    "costUsd?": "number",
+    "wallMs?": "number",
+    "findings?": "number",
+  })
+  .or({ type: "'log'", message: "string" })
+  .or({ type: "'cost'", totalUsd: "number" })
+  .or({ type: "'budget'", totalUsd: "number", limitUsd: "number", skippedSlices: "number" });
+export type CoreEvent = typeof CoreEventSchema.infer;
+
+/**
+ * Events the run manager adds around the core's own. On `done`, `findings`
+ * counts every finding in run.json, carried-over ones included; `carriedOver`
+ * is absent in older event logs; `noChanges` means the target held no
+ * reviewable code and nothing was sent to a model.
+ */
+export const RunEventSchema = CoreEventSchema.or({
+  type: "'done'",
+  status: "'complete'",
+  findings: "number",
+  "carriedOver?": "number",
+  costUsd: "number",
+  wallMs: "number",
+  "noChanges?": "boolean",
+})
+  .or({ type: "'cancelled'" })
+  .or({ type: "'error'", message: "string" });
+export type RunEvent = typeof RunEventSchema.infer;
 
 /** One line of `events.jsonl`, and one SSE message. */
-export type StoredEvent = RunEvent & { seq: number; at: string };
+export const StoredEventSchema = RunEventSchema.and({ seq: "number", at: "string" });
+export type StoredEvent = typeof StoredEventSchema.infer;
 
 export type TerminalEventType = "done" | "cancelled" | "error";
 
-export interface HealthResponse {
-  app: "diffloupe";
-  version: string;
-  pid: number;
-  defaultRepo: string | null;
-  activeRunId: string | null;
-  gh: { available: boolean; authed: boolean; message?: string };
-  opencode: { path: string | null; version: string | null };
-}
+export const HealthResponseSchema = type({
+  app: "'diffloupe'",
+  version: "string",
+  pid: "number",
+  defaultRepo: "string | null",
+  activeRunId: "string | null",
+  gh: { available: "boolean", authed: "boolean", "message?": "string" },
+  opencode: { path: "string | null", version: "string | null" },
+});
+export type HealthResponse = typeof HealthResponseSchema.infer;
 
-export interface ErrorResponse {
-  error: string;
-  activeRunId?: string;
-}
+export const ErrorResponseSchema = type({ error: "string", "activeRunId?": "string" });
+export type ErrorResponse = typeof ErrorResponseSchema.infer;

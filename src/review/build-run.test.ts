@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { loadFixture } from "./__fixtures__/load.ts";
 import { describeAnchors } from "./anchors.ts";
-import { buildReviewRun } from "./build-run.ts";
-import type { DiffAnchor, ReviewRun } from "../types/review-run.ts";
+import { type } from "arktype";
+import { buildPendingRun, buildReviewRun } from "./build-run.ts";
+import { ReviewRunSchema, type DiffAnchor, type ReviewRun } from "../types/review-run.ts";
 
 const FIXTURES = ["small-commit", "large-pr", "renames", "worktree", "docs-only"];
 
@@ -218,5 +219,21 @@ describe("buildReviewRun details", () => {
     expect(run.status).toBe("complete");
     expect(run.findings).toEqual([]);
     expect(run.groups.map((g) => g.id)).toEqual(["other", "docs", "skipped"]);
+  });
+});
+
+describe("ReviewRunSchema", () => {
+  for (const name of FIXTURES) {
+    test(`${name}: built run validates`, () => {
+      const out = ReviewRunSchema(loadFixture(name).build());
+      expect(out instanceof type.errors ? out.summary : "ok").toBe("ok");
+    });
+  }
+
+  test("pending run validates", () => {
+    const fixture = loadFixture("large-pr");
+    const { id, createdAt, repo, target, base, head, patch, coreSource } = fixture.input;
+    const out = ReviewRunSchema(buildPendingRun({ id, createdAt, repo, target, base, head, patch, coreSource }));
+    expect(out instanceof type.errors ? out.summary : "ok").toBe("ok");
   });
 });
