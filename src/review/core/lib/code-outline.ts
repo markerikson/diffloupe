@@ -127,11 +127,12 @@ const CPP_IMPORT_QUERY = `
 // ============================================================================
 
 function findPackageFile(pkg: string, file: string): string {
-  // DIFFLOUPE_WASM_DIR holds the grammars flat (for a packaged build);
-  // otherwise search node_modules upward from this file.
-  const override = process.env.DIFFLOUPE_WASM_DIR;
-  if (override && existsSync(join(override, file))) return join(override, file);
+  // DIFFLOUPE_WASM_DIR or a `wasm/` dir beside the bundle holds the grammars
+  // flat (packaged build); otherwise search node_modules upward from this file.
   const __dirname = import.meta.dir;
+  for (const flatDir of [process.env.DIFFLOUPE_WASM_DIR, join(__dirname, "wasm")]) {
+    if (flatDir && existsSync(join(flatDir, file))) return join(flatDir, file);
+  }
   let dir = __dirname;
   for (let i = 0; i < 8; i++) {
     const candidate = join(dir, "node_modules", pkg, file);
@@ -166,7 +167,9 @@ export class OutlineExtractor {
   }
 
   static async create(): Promise<OutlineExtractor> {
-    await Parser.init();
+    await Parser.init({
+      locateFile: (name: string) => findPackageFile("web-tree-sitter", name),
+    });
     return new OutlineExtractor(new Parser());
   }
 
