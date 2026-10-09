@@ -1,9 +1,10 @@
-import { defineConfig } from "vite";
+import { resolve } from "node:path";
 import react from "@vitejs/plugin-react";
-import { resolve } from "path";
+import Icons from "unplugin-icons/vite";
+import { defineConfig } from "vite";
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), Icons({ compiler: "jsx", jsx: "react" })],
   root: resolve(__dirname),
   build: {
     outDir: resolve(__dirname, "../../dist/web"),

@@ -5,25 +5,23 @@
     "moduleResolution": "bundler",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "jsx": "react-jsx",
+    "types": ["vite/client", "unplugin-icons/types/react"],
 
     "strict": true,
     "noUncheckedIndexedAccess": true,
-    "noPropertyAccessFromIndexSignature": false,
+    "exactOptionalPropertyTypes": true,
 
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "forceConsistentCasingInFileNames": true,
 
-    "esModuleInterop": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "resolveJsonModule": true,
-    "isolatedModules": true,
-
-    "paths": {
-      "@/*": ["../*"]
-    }
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true
   },
-  "include": ["./**/*"]
+  "include": ["./**/*", "../types/review-run.ts", "../server/types.ts"],
+  "exclude": ["./**/*.test.ts"]
 }

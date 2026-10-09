@@ -1,0 +1,49 @@
+:root {
+  color-scheme: light dark;
+
+  --bg: light-dark(#ffffff, #0d0d0f);
+  --bg-raised: light-dark(#f7f7f8, #16161a);
+  --bg-code: light-dark(#f2f2f4, #1c1c21);
+  --bg-hover: #8881;
+  --bg-active: #8882;
+  --fg: light-dark(#1c1c1f, #e6e6e9);
+  --fg-fade: light-dark(#1c1c1fb3, #e6e6e9b3);
+  --fg-mute: light-dark(#1c1c1f80, #e6e6e980);
+  --border: light-dark(#e2e2e6, #2a2a30);
+
+  --accent: light-dark(#d9552a, #f57a4f);
+  --teal: light-dark(#1f8f72, #5fc2a4);
+  --magenta: light-dark(#9c3a95, #c65fbf);
+  --success: light-dark(#1a7f37, #4ac26b);
+  --error: light-dark(#cf222e, #f47067);
+  --warning: light-dark(#9a6700, #d4a72c);
+  --info: light-dark(#0969da, #6cb6ff);
+  --critical: light-dark(#d97706, #fbbf24);
+
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+
+  --radius: 6px;
+  --radius-lg: 10px;
+
+  --z-file-header: 10;
+  --z-nav: 30;
+  --z-dropdown: 40;
+  --z-tooltip: 45;
+  --z-toast: 50;
+  --z-drawer-backdrop: 80;
+  --z-drawer: 90;
+  --z-modal-backdrop: 100;
+  --z-modal: 101;
+  --z-modal-top: 102;
+
+  --header-height: 0px;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
