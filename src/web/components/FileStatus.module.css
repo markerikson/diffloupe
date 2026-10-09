@@ -1,0 +1,28 @@
+.status {
+  --c: var(--warning);
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--c);
+  background: color-mix(in srgb, var(--c) 12%, transparent);
+}
+
+.status[data-status="added"] {
+  --c: var(--success);
+}
+
+.status[data-status="removed"] {
+  --c: var(--error);
+}
+
+.status[data-status="renamed"],
+.status[data-status="copied"] {
+  --c: var(--info);
+}

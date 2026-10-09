@@ -1,0 +1,86 @@
+.chapter,
+.unit {
+  scroll-margin-top: var(--header-height);
+}
+
+.chapter {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1rem 0.75rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.chapterTitle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  text-align: left;
+}
+
+.chapterTitle h2 {
+  font-size: 1.5rem;
+  font-weight: 500;
+  line-height: 1.25;
+}
+
+.caret {
+  flex: none;
+  color: var(--fg-fade);
+}
+
+.chapterIcon {
+  font-size: 1.35rem;
+}
+
+.chapterStats {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding-left: 1.6rem;
+  color: var(--fg-fade);
+  font-size: 12px;
+}
+
+.chapterSummary {
+  max-width: 50rem;
+  padding: 0 0.5rem 0 1.6rem;
+  color: var(--fg-fade);
+  font-size: 14px;
+}
+
+.unit {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 0.75rem;
+}
+
+@media (min-width: 1024px) {
+  .unit {
+    display: grid;
+    grid-template-columns: minmax(16rem, 1fr) 4fr;
+    align-items: start;
+  }
+}
+
+.files {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.file {
+  min-width: 0;
+}
+
+.marker {
+  scroll-margin-top: var(--header-height);
+}
+
+.empty {
+  color: var(--fg-fade);
+  font-size: 13px;
+  font-style: italic;
+}

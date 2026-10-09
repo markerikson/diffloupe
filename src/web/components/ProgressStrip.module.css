@@ -1,0 +1,66 @@
+.strip {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  min-width: 0;
+  padding: 0.35rem 0.75rem;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--info) 10%, transparent);
+  font-size: 12px;
+}
+
+.stage {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.slices {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.bar {
+  position: relative;
+  width: 8rem;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-active);
+  overflow: hidden;
+}
+
+.fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--info);
+  transition: width 0.3s;
+}
+
+.failed {
+  color: var(--error);
+}
+
+.active,
+.message {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-fade);
+}
+
+.active {
+  flex: 1 1 auto;
+}
+
+.message {
+  flex: 0 1 auto;
+}
+
+.cost {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}

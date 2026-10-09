@@ -1,0 +1,34 @@
+.icon {
+  flex: none;
+}
+
+.icon[data-icon="bug"] {
+  color: var(--error);
+}
+
+.icon[data-icon="wrench"] {
+  color: var(--accent);
+}
+
+.icon[data-icon="path"] {
+  color: var(--info);
+}
+
+.icon[data-icon="flask"] {
+  color: var(--teal);
+}
+
+.icon[data-icon="doc"] {
+  color: var(--magenta);
+}
+
+.icon[data-icon="gear"],
+.icon[data-icon="missing"] {
+  color: var(--fg-fade);
+}
+
+.critical {
+  display: inline-flex;
+  flex: none;
+  color: var(--critical);
+}

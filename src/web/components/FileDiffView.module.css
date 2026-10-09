@@ -1,0 +1,55 @@
+.frame {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: clip;
+  background: var(--bg);
+}
+
+.caret {
+  display: inline-flex;
+  padding: 0.2rem;
+  border-radius: 4px;
+  color: var(--fg-fade);
+}
+
+.caret:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+.plainHeader {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.5rem;
+  padding: 0 0.75rem 0 0.5rem;
+  font-size: 13px;
+}
+
+.path {
+  flex: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+.meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.tag {
+  color: var(--fg-fade);
+  font-size: 12px;
+}
+
+.placeholder {
+  padding: 1rem;
+  border-top: 1px solid var(--border);
+  color: var(--fg-fade);
+  font-size: 13px;
+}

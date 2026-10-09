@@ -1,0 +1,36 @@
+.badge {
+  --c: var(--fg-fade);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: var(--c);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.badge[data-status="running"] {
+  --c: var(--info);
+}
+
+.badge[data-status="complete"] {
+  --c: var(--success);
+}
+
+.badge[data-status="failed"] {
+  --c: var(--error);
+}
+
+.icon {
+  flex: none;
+  font-size: 1.15em;
+}
+
+.badge[data-status="running"] .icon {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

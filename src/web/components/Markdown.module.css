@@ -1,0 +1,44 @@
+.markdown {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5em;
+  overflow-wrap: anywhere;
+}
+
+.markdown ul,
+.markdown ol {
+  margin: 0;
+  padding-left: 1.25em;
+}
+
+.markdown li + li {
+  margin-top: 0.15em;
+}
+
+.markdown code {
+  padding: 0.05em 0.3em;
+  border-radius: 4px;
+  background: var(--bg-code);
+  font-size: 0.9em;
+}
+
+.markdown pre {
+  margin: 0;
+  padding: 0.5em 0.75em;
+  border-radius: var(--radius);
+  background: var(--bg-code);
+  overflow-x: auto;
+}
+
+.markdown pre code {
+  padding: 0;
+  background: none;
+}
+
+.markdown a {
+  color: var(--info);
+}
+
+.heading {
+  font-weight: 600;
+}

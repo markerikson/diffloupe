@@ -1,0 +1,15 @@
+.stats {
+  display: inline-flex;
+  gap: 0.25rem;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.add {
+  color: var(--success);
+}
+
+.del {
+  color: var(--error);
+}

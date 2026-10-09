@@ -1,0 +1,59 @@
+.tree {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  height: 24px;
+  padding-right: 0.25rem;
+  border-radius: 4px;
+}
+
+.row:hover {
+  background: var(--bg-hover);
+}
+
+.row[data-active="true"] {
+  background: var(--bg-active);
+}
+
+.folder {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+  color: var(--fg-fade);
+}
+
+.file {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  text-align: left;
+}
+
+.name {
+  flex: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree[data-layout="list"] .name {
+  direction: rtl;
+}
+
+.missing {
+  color: var(--fg-mute);
+  font-style: italic;
+}
