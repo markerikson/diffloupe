@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import pc from "picocolors";
+import { describeAnchors } from "../review/anchors.js";
 import { deleteRun, listRuns, loadRun } from "../review/run-store.js";
 import type { DiffAnchor, ReviewRun, ReviewTarget, RunFinding, RunHeader } from "../types/review-run.js";
 
@@ -98,6 +99,7 @@ export function formatRun(run: ReviewRun): string {
   out.push(
     "",
     `${run.findings.length} findings, ${run.files.length} files, $${run.meta.costUsd.toFixed(2)}, ${Math.round(run.meta.wallMs / 1000)}s`,
+    `anchors: ${describeAnchors(run)}`,
   );
   return out.join("\n");
 }

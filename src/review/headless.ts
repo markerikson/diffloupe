@@ -6,6 +6,7 @@ import path from "node:path";
 import { copyFile, readFile, writeFile } from "node:fs/promises";
 import { getAnthropicApiKey, loadConfig } from "../services/config.ts";
 import type { ReviewRun, ReviewTarget } from "../types/review-run.ts";
+import { describeAnchors } from "./anchors.ts";
 import type { ReviewConfig } from "./core/config.ts";
 import { text } from "./core/lib/proc.ts";
 import { runReview, type ReviewEvent, type RunReviewResult } from "./core/pipeline.ts";
@@ -218,6 +219,7 @@ export async function runHeadlessReview(opts: ReviewCommandOptions): Promise<num
       throw err;
     }
     await writeRun(run);
+    log(`  anchors: ${describeAnchors(run)}`);
 
     if (!result.record) {
       log("No code changes to review.");

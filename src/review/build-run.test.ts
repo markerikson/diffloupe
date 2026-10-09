@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { loadFixture } from "./__fixtures__/load.ts";
+import { describeAnchors } from "./anchors.ts";
+import { buildReviewRun } from "./build-run.ts";
 import type { DiffAnchor, ReviewRun } from "../types/review-run.ts";
 
 const FIXTURES = ["small-commit", "large-pr", "renames", "worktree", "docs-only"];
@@ -124,6 +126,7 @@ describe("buildReviewRun details", () => {
     expect(group("skipped").files).toEqual(["bun.lock"]);
     expect(group("u-ui").critical).toBe(false);
 
+    expect(describeAnchors(run)).toMatch(/^7 line, 2 nearby, 5 file \([a-z-]+(, [a-z-]+)*\)$/);
     expect(run.stops[1]!.locations).toHaveLength(1);
     expect(run.overCapFindings).toHaveLength(2);
     expect(run.unreviewed).toEqual({ overCap: ["src/ui/button.tsx"], failed: ["Database 2/2"] });
@@ -147,6 +150,46 @@ describe("buildReviewRun details", () => {
       "  1 file(s) in no review unit: src/util/misc.ts",
       "  1 finding(s) name files outside the patch",
     ]);
+  });
+
+  test("a unit spread over chapters splits into one leaf per chapter", () => {
+    const fx = loadFixture("large-pr");
+    const run = buildReviewRun({
+      ...fx.input,
+      log: () => {},
+      result: {
+        ...fx.input.result,
+        units: [
+          {
+            id: "all",
+            title: "Everything",
+            files: ["src/api/server.ts", "test/query.test.ts", "src/api/routes.ts", "src/db/query.ts", "src/db/schema.ts"],
+          },
+        ],
+      },
+    });
+    const leaves = run.groups.filter((g) => g.id.startsWith("u-"));
+    expect(leaves.map((g) => [g.id, g.parentId, g.title, g.files])).toEqual([
+      ["u-all-c1", "c1", "Everything", ["src/api/server.ts", "src/api/routes.ts"]],
+      ["u-all-c2", "c2", "Everything", ["test/query.test.ts", "src/db/query.ts", "src/db/schema.ts"]],
+    ]);
+  });
+
+  test("uncited files follow their subject, then the deepest shared directory", () => {
+    const fx = loadFixture("large-pr");
+    const run = buildReviewRun({
+      ...fx.input,
+      log: () => {},
+      result: {
+        ...fx.input.result,
+        units: [{ id: "all", title: "Everything", files: ["src/api/routes.ts", "src/db/query.ts", "src/db/schema.ts", "src/util/misc.ts"] }],
+      },
+    });
+    const parentOf = (file: string) => run.groups.find((g) => g.files.includes(file))?.parentId;
+    expect(parentOf("src/api/routes.ts")).toBe("c1");
+    expect(parentOf("src/db/schema.ts")).toBe("c2");
+    // Shares only `src/` with both chapters, so it takes the earlier one.
+    expect(parentOf("src/util/misc.ts")).toBe("c1");
   });
 
   test("renames: statuses, previous paths, binary and removed files", () => {

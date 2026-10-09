@@ -1,8 +1,21 @@
 import type { FileDiffMetadata, Hunk } from "@pierre/diffs";
-import type { DiffAnchor, DiffSide } from "../types/review-run.ts";
+import type { DiffAnchor, DiffSide, ReviewRun } from "../types/review-run.ts";
 
 /** A cited line this far or closer to a hunk snaps to the nearest visible line. */
 export const SNAP_LIMIT = 20;
+
+/** "12 line, 1 nearby, 2 file (not-in-diff)" over every finding and stop anchor in a run. */
+export function describeAnchors(run: Pick<ReviewRun, "findings" | "overCapFindings" | "stops">): string {
+  const anchors = [
+    ...run.findings.map((f) => f.anchor),
+    ...run.overCapFindings.map((f) => f.anchor),
+    ...run.stops.flatMap((s) => s.locations),
+  ];
+  const count = (kind: DiffAnchor["kind"]) => anchors.filter((a) => a.kind === kind).length;
+  const reasons = [...new Set(anchors.flatMap((a) => (a.kind === "file" && a.reason ? [a.reason] : [])))];
+  const file = `${count("file")} file${reasons.length ? ` (${reasons.join(", ")})` : ""}`;
+  return `${count("line")} line, ${count("nearby")} nearby, ${file}`;
+}
 
 export interface VisibleRange {
   start: number;

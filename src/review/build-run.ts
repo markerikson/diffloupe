@@ -148,6 +148,81 @@ function uniq(items: string[]): string[] {
   return [...new Set(items)];
 }
 
+function sharedDirDepth(a: string, b: string): number {
+  const da = a.split("/").slice(0, -1);
+  const db = b.split("/").slice(0, -1);
+  let n = 0;
+  while (n < da.length && n < db.length && da[n] === db[n]) n++;
+  return n;
+}
+
+interface UnitLeaf {
+  id: string;
+  unit: ReviewUnit;
+  files: string[];
+  chapter?: number;
+}
+
+/**
+ * The walkthrough often spreads one review unit over several chapters, so
+ * chapters are assigned per file: a file joins the chapter of the first stop
+ * that cites it. An uncited test file follows the file it tests (same path,
+ * then same file name). Any other uncited file follows the cited
+ * file in its unit sharing the deepest directory, then the chapter holding
+ * most of its unit's cited files. A unit spanning chapters becomes one leaf
+ * per chapter.
+ */
+function splitByChapter(leaves: UnitLeaf[], stops: GuideStop[]): UnitLeaf[] {
+  const chapterOfFile = new Map<string, number>();
+  for (const s of stops) {
+    const ci = Number(s.chapterId.slice(1)) - 1;
+    for (const l of s.locations) if (!chapterOfFile.has(l.file)) chapterOfFile.set(l.file, ci);
+  }
+  return leaves.flatMap((leaf) => {
+    const cited = leaf.files.flatMap((f) => {
+      const ci = chapterOfFile.get(f);
+      return ci === undefined ? [] : [{ file: f, ci }];
+    });
+    if (!cited.length) return [leaf];
+    const counts = new Map<number, number>();
+    for (const { ci } of cited) counts.set(ci, (counts.get(ci) ?? 0) + 1);
+    let home = 0;
+    let homeCount = 0;
+    for (const [ci, n] of counts) {
+      if (n > homeCount || (n === homeCount && ci < home)) {
+        home = ci;
+        homeCount = n;
+      }
+    }
+    const place = (f: string) => {
+      const subject = f.replace(/\.(test|spec)(\.[^./]+)$/, "$2");
+      const direct = chapterOfFile.get(f) ?? chapterOfFile.get(subject);
+      if (direct !== undefined) return direct;
+      if (subject !== f) {
+        const name = subject.slice(subject.lastIndexOf("/") + 1);
+        const twin = [...chapterOfFile].find(([c]) => c.endsWith(`/${name}`) || c === name);
+        if (twin) return twin[1];
+      }
+      let best: { depth: number; ci: number } | undefined;
+      for (const c of cited) {
+        const depth = sharedDirDepth(f, c.file);
+        if (depth > 0 && (!best || depth > best.depth || (depth === best.depth && c.ci < best.ci)))
+          best = { depth, ci: c.ci };
+      }
+      return best?.ci ?? home;
+    };
+    const byChapter = new Map<number, string[]>();
+    for (const f of leaf.files) {
+      const ci = place(f);
+      byChapter.set(ci, [...(byChapter.get(ci) ?? []), f]);
+    }
+    const split = byChapter.size > 1;
+    return [...byChapter]
+      .sort((a, b) => a[0] - b[0])
+      .map(([ci, files]) => ({ id: split ? `${leaf.id}-c${ci + 1}` : leaf.id, unit: leaf.unit, files, chapter: ci }));
+  });
+}
+
 export function buildReviewRun(input: BuildReviewRunInput): ReviewRun {
   const log = input.log ?? ((m: string) => console.error(m));
   const record = input.result.record as CoreRecord | null;
@@ -224,17 +299,8 @@ export function buildReviewRun(input: BuildReviewRunInput): ReviewRun {
       log(`  unit "${unit.title}": ${missing.length} file(s) not in the patch: ${missing.join(", ")}`);
     return { id, unit, files: take(unit.files) };
   };
-  const unitLeaves = unitOrder.map(leafFor).filter((l) => l.files.length);
-
-  // ---- assign units to chapters
-  const chapterOf = new Map<string, number>();
-  if (chapters.length) {
-    for (const leaf of unitLeaves) {
-      const set = new Set(leaf.files);
-      const stop = stops.find((s) => s.locations.some((l) => set.has(l.file)));
-      if (stop) chapterOf.set(leaf.id, Number(stop.chapterId.slice(1)) - 1);
-    }
-  }
+  const unitLeaves = splitByChapter(unitOrder.map(leafFor).filter((l) => l.files.length), stops);
+  const chapterOf = new Map(unitLeaves.flatMap((l) => (l.chapter === undefined ? [] : [[l.id, l.chapter] as const])));
 
   const groups: RunGroup[] = [];
   const leaf = (id: string, title: string, paths: string[], extra: Partial<RunGroup> = {}): RunGroup => ({
