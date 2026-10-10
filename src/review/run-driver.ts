@@ -24,7 +24,7 @@ import { loadReviewSettings, settingsToConfig, type ReviewSettings } from "./set
 import { resolveRunSetup, runModels, setupConfig } from "./setup.ts";
 import { parseTargetSpec, resolveTarget, TargetError, type ResolvedTarget } from "./targets.ts";
 
-const INSTALL_HINTS: Record<string, string> = {
+export const INSTALL_HINTS: Record<string, string> = {
   git: "https://git-scm.com/downloads",
   opencode: "https://opencode.ai/docs/ (npm i -g opencode-ai)",
   tilth: "https://github.com/jahala/tilth (cargo install tilth)",

@@ -118,15 +118,21 @@ describe("run store", () => {
     expect(existsSync(path.join(maps, "pr-1-abc.md"))).toBe(true);
   });
 
-  test("orphaned scratch entries are those with no run directory", async () => {
+  test("orphaned scratch: files with no run directory, OpenCode dirs with no running run", async () => {
+    const running = { ...loadFixture("worktree").build(), id: "live-1", status: "running" as const };
+    await createRunDir(running.id);
+    await writeRun(running);
     await createRunDir("owner-1");
     await writeFile(path.join(scratchDir(), "owner-1-s00.json"), "{}");
     await writeFile(path.join(scratchDir(), "gone-1-s00.json"), "{}");
-    await mkdir(path.join(scratchDir(), "oc", "shared", "state", "gone-1-walk"), { recursive: true });
+    const state = path.join(scratchDir(), "oc", "shared", "state");
+    for (const tag of ["gone-1-walk", "owner-1-s00", "live-1-s00"]) await mkdir(path.join(state, tag), { recursive: true });
 
     const orphans = await orphanScratch();
     expect(orphans).toContain(path.join(scratchDir(), "gone-1-s00.json"));
-    expect(orphans).toContain(path.join(scratchDir(), "oc", "shared", "state", "gone-1-walk"));
+    expect(orphans).toContain(path.join(state, "gone-1-walk"));
+    expect(orphans).toContain(path.join(state, "owner-1-s00"));
+    expect(orphans).not.toContain(path.join(state, "live-1-s00"));
     expect(orphans).not.toContain(path.join(scratchDir(), "owner-1-s00.json"));
     expect(orphans).not.toContain(path.join(scratchDir(), "oc"));
   });

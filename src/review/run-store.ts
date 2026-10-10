@@ -269,8 +269,9 @@ export function pruneCandidates(headers: RunHeader[], opts: PruneOptions): RunHe
 }
 
 /**
- * Scratch files and per-call OpenCode directories whose run no longer has a
- * directory under `runs/`: left by deleted runs or older versions.
+ * Scratch files whose run no longer has a directory under `runs/`, and
+ * per-call OpenCode directories whose run is not running: left by deleted
+ * runs, killed processes, or older versions.
  */
 export async function orphanScratch(): Promise<string[]> {
   let ids: string[] = [];
@@ -279,19 +280,20 @@ export async function orphanScratch(): Promise<string[]> {
   } catch {
     // No runs: every scratch entry is an orphan.
   }
-  const owned = (name: string) => ids.some((id) => name.startsWith(`${id}-`) || name.startsWith(`${id}.`));
+  const running = (await listRuns()).filter((h) => h.status === "running").map((h) => h.id);
+  const ownedBy = (name: string, owners: string[]) =>
+    owners.some((id) => name.startsWith(`${id}-`) || name.startsWith(`${id}.`));
   const orphans: string[] = [];
-  for (const base of [scratchDir(), ...openCodeCallDirs()]) {
+  const collect = async (base: string, keep: (name: string) => boolean) => {
     let names: string[];
     try {
       names = await readdir(base);
     } catch {
-      continue;
+      return;
     }
-    for (const name of names) {
-      if (base === scratchDir() && !name.endsWith(".json")) continue;
-      if (!owned(name)) orphans.push(path.join(base, name));
-    }
-  }
+    for (const name of names) if (!keep(name)) orphans.push(path.join(base, name));
+  };
+  await collect(scratchDir(), (name) => !name.endsWith(".json") || ownedBy(name, ids));
+  for (const base of openCodeCallDirs()) await collect(base, (name) => ownedBy(name, running));
   return orphans;
 }
