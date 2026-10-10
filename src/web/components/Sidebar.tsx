@@ -1,13 +1,14 @@
 import PhCaretDown from "~icons/ph/caret-down";
 import PhCaretRight from "~icons/ph/caret-right";
-import type { ReviewRun, RunGroup } from "../../types/review-run.ts";
+import type { ReviewRun, RunFinding, RunGroup } from "../../types/review-run.ts";
 import { plural } from "../lib/format.ts";
 import type { GroupStats, GroupTree } from "../lib/group-tree.ts";
 import { keepInView, scrollToGroup } from "../lib/navigate.ts";
 import { useEffect, useRef } from "react";
-import { selectSidebarMode, sidebarModeSet } from "../store/focus.ts";
+import { type SidebarMode, selectSidebarMode, sidebarModeSet } from "../store/focus.ts";
 import { useAppDispatch, useAppSelector } from "../store/hooks.ts";
 import { DiffStats } from "./DiffStats.tsx";
+import { FindingNavList } from "./FindingNavList.tsx";
 import { GuideList } from "./GuideList.tsx";
 import { CriticalMark, GroupIcon } from "./Icon.tsx";
 import styles from "./Sidebar.module.css";
@@ -55,24 +56,31 @@ function SidebarRow({ group, stats, depth, visible, fold }: SidebarRowProps) {
 }
 
 interface SidebarProps {
-  run: Pick<ReviewRun, "groups" | "stops">;
+  run: Pick<ReviewRun, "groups" | "stops" | "findings" | "overCapFindings">;
   tree: GroupTree;
   visible: ReadonlySet<string>;
   folded: ReadonlySet<string>;
   onToggleFold: (groupId: string) => void;
+  /** Findings on the page, in page order. */
+  findings: readonly RunFinding[];
+  overCap: ReadonlySet<string>;
 }
 
-export function Sidebar({ run, tree, visible, folded, onToggleFold }: SidebarProps) {
+const MODE_LABEL: Record<SidebarMode, string> = { groups: "Groups", findings: "Findings", guide: "Guide" };
+
+export function Sidebar({ run, tree, visible, folded, onToggleFold, findings, overCap }: SidebarProps) {
   const dispatch = useAppDispatch();
   const savedMode = useAppSelector(selectSidebarMode);
-  const hasGuide = run.stops.length > 0;
-  const mode = hasGuide ? savedMode : "groups";
+  const modes: SidebarMode[] = ["groups"];
+  if (run.findings.length + run.overCapFindings.length > 0) modes.push("findings");
+  if (run.stops.length > 0) modes.push("guide");
+  const mode = modes.includes(savedMode) ? savedMode : "groups";
 
   return (
     <div className={styles.sidebar}>
-      {hasGuide && (
+      {modes.length > 1 && (
         <div className={styles.modes} role="group" aria-label="Sidebar view">
-          {(["groups", "guide"] as const).map((m) => (
+          {modes.map((m) => (
             <button
               key={m}
               type="button"
@@ -80,23 +88,28 @@ export function Sidebar({ run, tree, visible, folded, onToggleFold }: SidebarPro
               aria-pressed={mode === m}
               onClick={() => dispatch(sidebarModeSet(m))}
             >
-              {m === "groups" ? "Groups" : "Guide"}
+              {MODE_LABEL[m]}
+              {m === "findings" && <span className={styles.modeCount}>{findings.length}</span>}
             </button>
           ))}
         </div>
       )}
-      {mode === "guide" ? (
+      {mode === "guide" && (
         <nav className={styles.nav} aria-label="Walkthrough">
           <GuideList groups={run.groups} stops={run.stops} />
         </nav>
-      ) : (
-        <GroupList tree={tree} visible={visible} folded={folded} onToggleFold={onToggleFold} />
       )}
+      {mode === "findings" && (
+        <nav className={styles.nav} aria-label="Findings">
+          <FindingNavList findings={findings} overCap={overCap} />
+        </nav>
+      )}
+      {mode === "groups" && <GroupList tree={tree} visible={visible} folded={folded} onToggleFold={onToggleFold} />}
     </div>
   );
 }
 
-function GroupList({ tree, visible, folded, onToggleFold }: Omit<SidebarProps, "run">) {
+function GroupList({ tree, visible, folded, onToggleFold }: Pick<SidebarProps, "tree" | "visible" | "folded" | "onToggleFold">) {
   const navRef = useRef<HTMLElement>(null);
   const firstVisible = tree.ordered.find((g) => visible.has(g.id))?.id;
   useEffect(() => {

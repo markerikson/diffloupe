@@ -3,10 +3,14 @@ import type { GuideStop } from "../../types/review-run.ts";
 
 export interface GoToOptions {
   scroll?: boolean;
+  /** The URL already names this target (Back/Forward or a pasted link), so leave history alone. */
+  fromUrl?: boolean;
 }
 
 export interface RunNav {
   runId: string;
+  /** Scrolls back to the summary and adds a history entry, so Back returns to where the reader was. */
+  goToTop(): void;
   goToFile(path: string): void;
   /** Focuses a finding; `scroll: false` when its card is already on screen. */
   goToFinding(id: string, opts?: GoToOptions): void;

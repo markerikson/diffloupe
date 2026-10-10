@@ -6,7 +6,16 @@ import { helpSet } from "../store/focus.ts";
 import { useAppStore } from "../store/hooks.ts";
 import { fileCollapseToggled, selectCollapsedFiles } from "../store/view.ts";
 
-export type KeyAction = "nextFile" | "prevFile" | "nextFinding" | "prevFinding" | "nextStop" | "prevStop" | "toggleFile" | "help";
+export type KeyAction =
+  | "nextFile"
+  | "prevFile"
+  | "nextFinding"
+  | "prevFinding"
+  | "nextStop"
+  | "prevStop"
+  | "toggleFile"
+  | "top"
+  | "help";
 
 const ACTIONS: Record<string, KeyAction> = {
   j: "nextFile",
@@ -16,6 +25,7 @@ const ACTIONS: Record<string, KeyAction> = {
   "]": "nextStop",
   "[": "prevStop",
   x: "toggleFile",
+  t: "top",
   "?": "help",
 };
 
@@ -112,6 +122,9 @@ export function useKeyboardNav(lists: NavLists | null, nav: RunNav, runId: strin
           if (!wasCollapsed && groupId) scrollToFile(groupId, path, { focus: true });
           return;
         }
+        case "top":
+          nav.goToTop();
+          return;
         case "help":
           store.dispatch(helpSet(true));
           return;

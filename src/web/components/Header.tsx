@@ -11,7 +11,9 @@ import PhSun from "~icons/ph/sun";
 import PhTextAlignLeft from "~icons/ph/text-align-left";
 import PhTreeStructure from "~icons/ph/tree-structure";
 import PhWrapText from "~icons/ph/arrow-u-down-left";
+import PhArrowLineUp from "~icons/ph/arrow-line-up";
 import PhKeyboard from "~icons/ph/keyboard";
+import { useRunNav } from "../lib/run-nav.ts";
 import { helpSet } from "../store/focus.ts";
 import { formatCost, formatRelative, formatTarget, plural, shortSha } from "../lib/format.ts";
 import type { GroupTree } from "../lib/group-tree.ts";
@@ -115,8 +117,12 @@ function ViewControls({ collapseActions, wide }: { collapseActions: readonly Col
   const layout = useAppSelector(selectFileTreeLayout);
   const sidebar = useAppSelector(selectSidebar);
   const ThemeIcon = THEME_ICON[theme];
+  const nav = useRunNav();
   return (
     <div className={styles.controls}>
+      <ToggleButton title="Back to the summary (t)" onClick={() => nav.goToTop()}>
+        <PhArrowLineUp aria-hidden />
+      </ToggleButton>
       <CollapseMenu actions={collapseActions} />
       <ToggleButton
         title={diffStyle === "split" ? "Split view (switch to unified)" : "Unified view (switch to split)"}

@@ -2,22 +2,23 @@ import { Virtualizer } from "@pierre/diffs";
 import { VirtualizerContext } from "@pierre/diffs/react";
 import { getRouteApi } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { RunFile } from "../../types/review-run.ts";
+import type { RunFile, RunFinding } from "../../types/review-run.ts";
 import { CopyFallbackDialog } from "../components/CopyFallbackDialog.tsx";
 import { ChapterBand, type FileSelection, UnitSection } from "../components/GroupSection.tsx";
 import { Header } from "../components/Header.tsx";
 import { KeyboardHelp } from "../components/KeyboardHelp.tsx";
 import { Sidebar } from "../components/Sidebar.tsx";
-import { SummaryBlock } from "../components/SummaryBlock.tsx";
+import { SUMMARY_ID, SummaryBlock } from "../components/SummaryBlock.tsx";
 import { useKeyboardNav } from "../hooks/useKeyboardNav.ts";
 import { type RunAnnotation, anchorSelection, fileAnnotations } from "../lib/annotations.ts";
 import { copyText } from "../lib/clipboard.ts";
 import { buildGroupTree } from "../lib/group-tree.ts";
+import { revisitingEntry, useHistoryScroll } from "../lib/history-scroll.ts";
 import { WIDE_QUERY, useMediaQuery } from "../lib/media.ts";
 import { scrollToCard, scrollToFile } from "../lib/navigate.ts";
 import { navLists } from "../lib/navigation.ts";
 import { parseRunPatch } from "../lib/patch.ts";
-import { type RunNav, RunNavContext } from "../lib/run-nav.ts";
+import { type GoToOptions, type RunNav, RunNavContext } from "../lib/run-nav.ts";
 import { useScrollSpy } from "../lib/scroll-spy.ts";
 import { useGetRunPatchQuery, useGetRunQuery } from "../store/api.ts";
 import {
@@ -47,8 +48,8 @@ const EMPTY: readonly string[] = [];
 
 type RunSearch = ReturnType<typeof route.useSearch>;
 
-function withFocus(prev: RunSearch, focus: { finding: string } | { stop: string }): RunSearch {
-  const { finding: _f, stop: _s, ...rest } = prev;
+function withFocus(prev: RunSearch, focus: { finding: string } | { stop: string } | null): RunSearch {
+  const { finding: _f, stop: _s, file: _p, ...rest } = prev;
   return { ...rest, ...focus };
 }
 
@@ -138,10 +139,30 @@ export function RunPage() {
     [dispatch, index, runId, tree],
   );
 
-  const nav = useMemo(
-    (): RunNav => ({
+  const nav = useMemo((): RunNav => {
+    /**
+     * Jumps get their own history entry so Back returns to the previous spot;
+     * focusing a card that is already on screen only rewrites the current one.
+     */
+    const record = (focus: { finding: string } | { stop: string }, opts: GoToOptions | undefined) => {
+      if (opts?.fromUrl) return;
+      void navigate({
+        search: (prev) => withFocus(prev, focus),
+        replace: opts?.scroll === false,
+        resetScroll: false,
+      });
+    };
+    return {
       runId,
       stops: run?.stops ?? [],
+      goToTop() {
+        dispatch(findingFocused({ id: null }));
+        dispatch(stopFocused({ id: null }));
+        // The router saves the current scroll position for Back, then resets to the top.
+        void navigate({ search: (prev) => withFocus(prev, null) }).then(() =>
+          document.getElementById(SUMMARY_ID)?.focus({ preventScroll: true }),
+        );
+      },
       goToFile(path) {
         dispatch(fileFocused(path));
         reveal(path, null);
@@ -151,7 +172,7 @@ export function RunPage() {
         if (!f) return;
         if (index.overCap.has(id) && !live.current.showOverCap) dispatch(overCapToggled());
         dispatch(findingFocused({ id, file: f.anchor.file }));
-        void navigate({ search: (prev) => withFocus(prev, { finding: id }), replace: true });
+        record({ finding: id }, opts);
         if (opts?.scroll !== false) reveal(f.anchor.file, `finding-${id}`);
       },
       goToStop(id, location = 0, opts) {
@@ -159,7 +180,8 @@ export function RunPage() {
         if (!stop) return;
         const loc = stop.locations[location];
         dispatch(stopFocused({ id, location, ...(loc ? { file: loc.file } : {}) }));
-        void navigate({ search: (prev) => withFocus(prev, { stop: id }), replace: true });
+        // Moving between locations of one stop keeps the same URL, so it rewrites the entry.
+        record({ stop: id }, location > 0 ? { ...opts, scroll: false } : opts);
         if (loc && opts?.scroll !== false) reveal(loc.file, `stop-${id}-${location}`);
       },
       async copy(text) {
@@ -167,9 +189,8 @@ export function RunPage() {
         if (!ok) setFallbackText(text);
         return ok;
       },
-    }),
-    [dispatch, index, navigate, reveal, run?.stops, runId],
-  );
+    };
+  }, [dispatch, index, navigate, reveal, run?.stops, runId]);
 
   useEffect(() => {
     if (!searchFile || !run || !virtualizer) return;
@@ -180,13 +201,21 @@ export function RunPage() {
   }, [searchFile, run, virtualizer, dispatch, runId]);
 
   const ready = run !== undefined && virtualizer !== null;
+  // Back/Forward restores the scroll position saved with that entry, so only refocus.
+  useHistoryScroll();
+  const fromUrl = (): GoToOptions => ({ fromUrl: true, scroll: !revisitingEntry() });
+
+  // Only follow URL changes (Back/Forward, pasted links); focus changes made on the page already update the URL.
   useEffect(() => {
-    if (ready && searchFinding && searchFinding !== focusedFinding) nav.goToFinding(searchFinding);
-    // Only follow URL changes; focus changes made on the page already update the URL.
+    if (!ready) return;
+    if (searchFinding && searchFinding !== focusedFinding) nav.goToFinding(searchFinding, fromUrl());
+    else if (!searchFinding && focusedFinding) dispatch(findingFocused({ id: null }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, searchFinding]);
   useEffect(() => {
-    if (ready && searchStop && searchStop !== focusedStop) nav.goToStop(searchStop);
+    if (!ready) return;
+    if (searchStop && searchStop !== focusedStop) nav.goToStop(searchStop, 0, fromUrl());
+    else if (!searchStop && focusedStop) dispatch(stopFocused({ id: null }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, searchStop]);
 
@@ -230,7 +259,15 @@ export function RunPage() {
           {showSidebar && (
             <aside className={styles.aside}>
               <div className={styles.asideInner}>
-                <Sidebar run={run} tree={tree} visible={visible} folded={folded} onToggleFold={onToggleFold} />
+                <Sidebar
+                  run={run}
+                  tree={tree}
+                  visible={visible}
+                  folded={folded}
+                  onToggleFold={onToggleFold}
+                  findings={lists?.findings ?? EMPTY_FINDINGS}
+                  overCap={index.overCap}
+                />
               </div>
             </aside>
           )}
@@ -298,6 +335,7 @@ export function RunPage() {
 }
 
 const EMPTY_FILES: readonly RunFile[] = [];
+const EMPTY_FINDINGS: readonly RunFinding[] = [];
 
 export function RunPageSkeleton() {
   return (

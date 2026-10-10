@@ -8,6 +8,11 @@
   background: var(--bg-raised);
   font-size: 14px;
   line-height: 1.55;
+  scroll-margin-top: calc(var(--header-height) + 1rem);
+}
+
+.summary:focus {
+  outline: none;
 }
 
 .summary p {

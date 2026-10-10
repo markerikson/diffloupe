@@ -13,6 +13,8 @@ import { SEVERITY_LABEL } from "./FindingCard.tsx";
 import { Markdown } from "./Markdown.tsx";
 import styles from "./SummaryBlock.module.css";
 
+export const SUMMARY_ID = "summary";
+
 const ALIGNMENT_LABEL = {
   aligned: "Matches the description",
   partial: "Partly matches the description",
@@ -114,7 +116,7 @@ export function SummaryBlock({ run }: { run: ReviewRun }) {
   const oneLine = intent.mismatches?.[0];
 
   return (
-    <section className={styles.summary} aria-label="Review summary">
+    <section id={SUMMARY_ID} tabIndex={-1} className={styles.summary} aria-label="Review summary">
       {reportedCount === 0 ? (
         <p>No new issues found in the changed files.</p>
       ) : (

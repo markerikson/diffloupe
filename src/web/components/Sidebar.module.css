@@ -29,6 +29,12 @@
   color: var(--fg);
 }
 
+.modeCount {
+  margin-left: 0.3rem;
+  color: var(--fg-mute);
+  font-variant-numeric: tabular-nums;
+}
+
 .nav {
   font-size: 13px;
 }

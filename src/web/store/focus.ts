@@ -1,6 +1,6 @@
 import { createSlice, type PayloadAction } from "@reduxjs/toolkit";
 
-export type SidebarMode = "groups" | "guide";
+export type SidebarMode = "groups" | "findings" | "guide";
 
 export interface FocusState {
   runId: string | null;
