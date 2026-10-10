@@ -13,9 +13,13 @@ import {
   InvalidRunError,
   listRuns,
   loadRun,
+  orphanScratch,
+  pruneCandidates,
   runDir,
+  scratchDir,
   writeRun,
 } from "./run-store.ts";
+import type { RunHeader } from "../types/review-run.ts";
 import { formatAnchor, formatRun, formatRunList, formatRunSummary } from "./format-run.ts";
 
 let tmp: string;
@@ -95,6 +99,61 @@ describe("run store", () => {
     expect(header?.repo).toEqual(run.repo);
     expect(header?.invalid).toContain("files[0]");
     expect(await deleteRun("broken-1")).toContain(runDir("broken-1"));
+  });
+
+  test("deleting a run removes its scratch files and OpenCode dirs but not the shared map", async () => {
+    const run = { ...loadFixture("worktree").build(), id: "scratchy-1", createdAt: "2026-10-08T04:00:00.000Z" };
+    await createRunDir(run.id);
+    await writeRun(run);
+    const ocData = path.join(scratchDir(), "oc", "shared", "data", "scratchy-1-s00");
+    const maps = path.join(artifactsDir(), "maps");
+    await mkdir(ocData, { recursive: true });
+    await mkdir(maps, { recursive: true });
+    await writeFile(path.join(scratchDir(), "scratchy-1-merge.json"), "{}");
+    await writeFile(path.join(maps, "pr-1-abc.md"), "map");
+
+    const removed = await deleteRun("scratchy-1");
+    expect(removed).toContain(path.join(scratchDir(), "scratchy-1-merge.json"));
+    expect(removed).toContain(ocData);
+    expect(existsSync(path.join(maps, "pr-1-abc.md"))).toBe(true);
+  });
+
+  test("orphaned scratch entries are those with no run directory", async () => {
+    await createRunDir("owner-1");
+    await writeFile(path.join(scratchDir(), "owner-1-s00.json"), "{}");
+    await writeFile(path.join(scratchDir(), "gone-1-s00.json"), "{}");
+    await mkdir(path.join(scratchDir(), "oc", "shared", "state", "gone-1-walk"), { recursive: true });
+
+    const orphans = await orphanScratch();
+    expect(orphans).toContain(path.join(scratchDir(), "gone-1-s00.json"));
+    expect(orphans).toContain(path.join(scratchDir(), "oc", "shared", "state", "gone-1-walk"));
+    expect(orphans).not.toContain(path.join(scratchDir(), "owner-1-s00.json"));
+    expect(orphans).not.toContain(path.join(scratchDir(), "oc"));
+  });
+});
+
+describe("pruneCandidates", () => {
+  const day = 86_400_000;
+  const now = Date.parse("2026-10-10T00:00:00.000Z");
+  const base = loadFixture("worktree").build();
+  const header = (id: string, daysAgo: number, status: RunHeader["status"] = "complete"): RunHeader => ({
+    id,
+    status,
+    createdAt: new Date(now - daysAgo * day).toISOString(),
+    target: base.target,
+    repo: base.repo,
+    findingCounts: { blocker: 0, "should-fix": 0, "nice-to-have": 0, question: 0 },
+    costUsd: 0,
+  });
+
+  test("keeps the newest runs and anything younger than the cutoff", () => {
+    const headers = [header("a", 1), header("b", 40), header("c", 50), header("d", 60, "running"), header("e", 5)];
+    const ids = (keep: number, olderThanDays: number) =>
+      pruneCandidates(headers, { keep, olderThanMs: olderThanDays * day, now }).map((h) => h.id);
+    expect(ids(1, 30)).toEqual(["b", "c"]);
+    expect(ids(3, 30)).toEqual(["c"]);
+    expect(ids(0, 0)).toEqual(["a", "e", "b", "c"]);
+    expect(ids(20, 0)).toEqual([]);
   });
 });
 

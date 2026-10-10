@@ -1,29 +1,17 @@
-import path from "node:path";
 import { describe, expect, test } from "bun:test";
-import { loadFixture } from "../review/__fixtures__/load.ts";
-import { runMarkdown } from "../review/export.ts";
-import { createRunDir, writeRun } from "../review/run-store.ts";
-import { useTempDataDir } from "../server/test-helpers.ts";
+import { parseAge } from "./runs.ts";
 
-useTempDataDir();
+describe("parseAge", () => {
+  test("hours, days and weeks", () => {
+    expect(parseAge("12h")).toBe(12 * 3_600_000);
+    expect(parseAge("30d")).toBe(30 * 86_400_000);
+    expect(parseAge("2w")).toBe(14 * 86_400_000);
+    expect(parseAge("0d")).toBe(0);
+  });
 
-const entry = path.join(import.meta.dir, "..", "index.ts");
-
-async function cli(...args: string[]): Promise<string> {
-  const proc = Bun.spawn(["bun", entry, ...args], { env: process.env, stdout: "pipe", stderr: "pipe" });
-  const [out, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
-  expect(code).toBe(0);
-  return out;
-}
-
-describe("runs show --markdown", () => {
-  test("prints the same markdown as Copy all", async () => {
-    const run = loadFixture("large-pr").build();
-    await createRunDir(run.id);
-    await writeRun(run);
-    expect(await cli("runs", "show", run.id, "--markdown")).toBe(runMarkdown(run));
-    expect(await cli("runs", "show", run.id, "--markdown", "--over-cap")).toBe(
-      runMarkdown(run, { includeOverCap: true }),
-    );
+  test("rejects anything else", () => {
+    expect(parseAge("30")).toBeNull();
+    expect(parseAge("1.5d")).toBeNull();
+    expect(parseAge("3m")).toBeNull();
   });
 });

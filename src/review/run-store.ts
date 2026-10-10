@@ -173,9 +173,33 @@ export async function findPriorRunId(
     ?.id;
 }
 
+export function scratchDir(): string {
+  return path.join(dataDir(), "scratch");
+}
+
+/** Per-call OpenCode data and state directories, named `<run id>-<stage>`. */
+export function openCodeCallDirs(): string[] {
+  const shared = path.join(scratchDir(), "oc", "shared");
+  return [path.join(shared, "data"), path.join(shared, "state")];
+}
+
 /**
- * Deletes a run: its directory, every artifact named by its tag, and the ref
- * that pins a synthetic commit. Returns what was removed.
+ * Directories holding files named after a run: artifacts, agent output in
+ * `scratch/`, and per-call OpenCode directories. Maps are keyed by target and
+ * shared across runs, so they are not listed.
+ */
+function runFileDirs(): string[] {
+  const art = artifactsDir();
+  return [
+    ...["logs", "prompts", "raw", "reviews", "runs"].map((sub) => path.join(art, sub)),
+    scratchDir(),
+    ...openCodeCallDirs(),
+  ];
+}
+
+/**
+ * Deletes a run: its directory, every artifact and scratch file named by its
+ * tag, and the ref that pins a synthetic commit. Returns what was removed.
  */
 export async function deleteRun(id: string): Promise<string[]> {
   const removed: string[] = [];
@@ -188,17 +212,16 @@ export async function deleteRun(id: string): Promise<string[]> {
     if (err instanceof InvalidRunError) repoRoot = invalidHeader(err).repo.root || undefined;
   }
 
-  const art = artifactsDir();
-  for (const sub of ["logs", "prompts", "raw", "reviews", "runs"]) {
+  for (const base of runFileDirs()) {
     let names: string[];
     try {
-      names = await readdir(path.join(art, sub));
+      names = await readdir(base);
     } catch {
       continue;
     }
     for (const name of names) {
       if (name.startsWith(`${id}-`) || name.startsWith(`${id}.`)) {
-        const p = path.join(art, sub, name);
+        const p = path.join(base, name);
         await rm(p, { recursive: true, force: true });
         removed.push(p);
       }
@@ -223,4 +246,52 @@ export async function deleteRun(id: string): Promise<string[]> {
     // Already gone.
   }
   return removed;
+}
+
+export interface PruneOptions {
+  /** Only runs created longer ago than this are candidates. */
+  olderThanMs: number;
+  /** The newest runs to keep regardless of age. */
+  keep: number;
+  now?: number;
+}
+
+/**
+ * Runs `runs prune` would delete: past the newest `keep` and older than
+ * `olderThanMs`. Running runs are never selected.
+ */
+export function pruneCandidates(headers: RunHeader[], opts: PruneOptions): RunHeader[] {
+  const cutoff = (opts.now ?? Date.now()) - opts.olderThanMs;
+  return headers
+    .toSorted((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .slice(Math.max(0, opts.keep))
+    .filter((h) => h.status !== "running" && Date.parse(h.createdAt) < cutoff);
+}
+
+/**
+ * Scratch files and per-call OpenCode directories whose run no longer has a
+ * directory under `runs/`: left by deleted runs or older versions.
+ */
+export async function orphanScratch(): Promise<string[]> {
+  let ids: string[] = [];
+  try {
+    ids = await readdir(runsDir());
+  } catch {
+    // No runs: every scratch entry is an orphan.
+  }
+  const owned = (name: string) => ids.some((id) => name.startsWith(`${id}-`) || name.startsWith(`${id}.`));
+  const orphans: string[] = [];
+  for (const base of [scratchDir(), ...openCodeCallDirs()]) {
+    let names: string[];
+    try {
+      names = await readdir(base);
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      if (base === scratchDir() && !name.endsWith(".json")) continue;
+      if (!owned(name)) orphans.push(path.join(base, name));
+    }
+  }
+  return orphans;
 }

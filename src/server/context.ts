@@ -2,7 +2,7 @@ import { readdir, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { run } from "../review/core/lib/proc.ts";
-import { dataDir } from "../review/run-store.ts";
+import { listRuns, openCodeCallDirs } from "../review/run-store.ts";
 import type { HealthResponse } from "./types.ts";
 import type { RunManager } from "./run-manager.ts";
 
@@ -55,8 +55,8 @@ function pidAlive(pid: number): boolean {
 
 /**
  * Removes what an earlier process that was killed outright left behind:
- * review worktrees whose owning process is gone, and per-run OpenCode data
- * directories older than a day.
+ * review worktrees whose owning process is gone, and per-call OpenCode data
+ * directories whose run is no longer running.
  */
 export async function cleanupStale(defaultRepo: string | null, log: (message: string) => void): Promise<void> {
   const tmp = os.tmpdir();
@@ -76,9 +76,8 @@ export async function cleanupStale(defaultRepo: string | null, log: (message: st
   }
   if (defaultRepo) await run("git", ["-C", defaultRepo, "worktree", "prune"], { allowFail: true }).catch(() => {});
 
-  const shared = path.join(dataDir(), "scratch", "oc", "shared");
-  for (const kind of ["data", "state"]) {
-    const base = path.join(shared, kind);
+  const running = (await listRuns()).filter((h) => h.status === "running").map((h) => h.id);
+  for (const base of openCodeCallDirs()) {
     let tags: string[];
     try {
       tags = await readdir(base);
@@ -88,7 +87,11 @@ export async function cleanupStale(defaultRepo: string | null, log: (message: st
     for (const tag of tags) {
       const dir = path.join(base, tag);
       try {
-        if (Date.now() - (await stat(dir)).mtimeMs > DAY_MS) await rm(dir, { recursive: true, force: true });
+        // A run marked running may belong to another live process; one that
+        // has not touched its directory for a day was killed.
+        const active =
+          running.some((id) => tag.startsWith(`${id}-`)) && Date.now() - (await stat(dir)).mtimeMs < DAY_MS;
+        if (!active) await rm(dir, { recursive: true, force: true });
       } catch {
         // Removed concurrently.
       }
