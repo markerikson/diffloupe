@@ -7,15 +7,15 @@ import path from "node:path";
 import { appendFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { CancelledError } from "../review/core/runner.ts";
-import type { ReviewEvent } from "../review/core/pipeline.ts";
 import { executeRun, prepareRun, type ExecutedRun, type PreparedRun } from "../review/run-driver.ts";
+import { withGroups } from "../review/run-groups.ts";
 import { runDir } from "../review/run-store.ts";
 import type { ReviewRun } from "../types/review-run.ts";
 import type { RunEvent, StartRunRequest, StoredEvent } from "./types.ts";
 
 export interface ExecuteOptions {
   signal: AbortSignal;
-  onProgress: (e: ReviewEvent) => void;
+  onProgress: (e: RunEvent) => void;
   log: (message: string) => void;
 }
 
@@ -119,7 +119,7 @@ export class RunManager {
     return this.active?.id === id;
   }
 
-  /** The `run.json` written at start, while the run is active. */
+  /** The `run.json` written at start, with groups once known, while the run is active. */
   pendingRun(id: string): ReviewRun | undefined {
     return this.active?.id === id ? this.active.pending : undefined;
   }
@@ -209,6 +209,7 @@ export class RunManager {
   }
 
   private emit(active: ActiveRun, e: RunEvent): void {
+    if (e.type === "groups") active.pending = withGroups(active.pending, e);
     const stored: StoredEvent = { ...e, seq: ++active.seq, at: new Date().toISOString() };
     try {
       appendFileSync(eventsPath(active.id), `${JSON.stringify(stored)}\n`);

@@ -537,6 +537,23 @@ export type BuildPendingRunInput = Pick<
  * in one group, nothing else. Written when a run starts so the UI has a file
  * list to show, and replaced by `buildReviewRun`'s output at the end.
  */
+/**
+ * The running run once the core has formed its review units: the groups
+ * `buildReviewRun` would make from them without a walkthrough, and no findings.
+ */
+export function buildGroupedPendingRun(
+  input: BuildPendingRunInput,
+  units: ReviewUnit[],
+  byClass: RunReviewResult["byClass"],
+): ReviewRun {
+  const run = buildReviewRun({
+    ...input,
+    result: { record: null, units, byClass, costUsd: 0, wallMs: 0 },
+    log: () => {},
+  });
+  return { ...run, status: "running" };
+}
+
 export function buildPendingRun(input: BuildPendingRunInput): ReviewRun {
   const files = toRunFiles(parseRunPatch(input.patch), input.patch, { skip: [], docs: [], code: [] });
   for (const f of files) f.groupId = "all";

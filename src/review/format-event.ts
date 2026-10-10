@@ -9,6 +9,10 @@ export function formatEvent(e: RunEvent): string | null {
       return e.message;
     case "cost":
       return null;
+    case "groups": {
+      const n = e.groups.filter((g) => g.files.length).length;
+      return `  ${e.files.length} file(s) in ${n} group(s)`;
+    }
     case "budget":
       return (
         `  cost limit reached: $${e.totalUsd.toFixed(2)} of $${e.limitUsd.toFixed(2)}, ` +

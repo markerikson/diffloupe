@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { loadFixture } from "./__fixtures__/load.ts";
 import { describeAnchors } from "./anchors.ts";
 import { type } from "arktype";
-import { buildPendingRun, buildReviewRun } from "./build-run.ts";
+import { buildGroupedPendingRun, buildPendingRun, buildReviewRun } from "./build-run.ts";
 import { ReviewRunSchema, type DiffAnchor, type ReviewRun } from "../types/review-run.ts";
 
 const FIXTURES = ["small-commit", "large-pr", "renames", "worktree", "docs-only"];
@@ -229,6 +229,22 @@ describe("ReviewRunSchema", () => {
       expect(out instanceof type.errors ? out.summary : "ok").toBe("ok");
     });
   }
+
+  test("grouped pending run: unit groups and the trailing section, still running", () => {
+    const fx = loadFixture("large-pr");
+    const { id, createdAt, repo, target, base, head, patch, coreSource, result } = fx.input;
+    const run = buildGroupedPendingRun({ id, createdAt, repo, target, base, head, patch, coreSource }, result.units, result.byClass);
+    expect(ReviewRunSchema(run) instanceof type.errors).toBe(false);
+    expect(run.status).toBe("running");
+    expect(run.findings).toEqual([]);
+    expect(run.stops).toEqual([]);
+    expect(run.groups.some((g) => g.id.startsWith("c"))).toBe(false);
+    // Same leaf groups as the finished run, just without chapter parents.
+    const leaves = (r: ReviewRun) =>
+      r.groups.filter((g) => g.files.length).map((g) => [g.id, g.title, g.files.toSorted()]);
+    expect(leaves(run).toSorted()).toEqual(leaves(fx.build()).toSorted());
+    for (const f of run.files) expect(run.groups.find((g) => g.id === f.groupId)?.files).toContain(f.path);
+  });
 
   test("pending run validates", () => {
     const fixture = loadFixture("large-pr");

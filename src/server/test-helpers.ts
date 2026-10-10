@@ -2,13 +2,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll } from "bun:test";
-import type { ReviewEvent } from "../review/core/pipeline.ts";
 import { CancelledError } from "../review/core/runner.ts";
 import { loadFixture } from "../review/__fixtures__/load.ts";
 import { createRunDir, writeRun } from "../review/run-store.ts";
 import type { ExecutedRun } from "../review/run-driver.ts";
 import type { ReviewRun } from "../types/review-run.ts";
 import type { ServerContext } from "./context.ts";
+import type { RunEvent } from "./types.ts";
 import { bindDriver, RunManager, type RunDriver } from "./run-manager.ts";
 
 /** Points the run store at a temp directory for the file's tests. */
@@ -38,7 +38,7 @@ export interface FakePrep {
 let fakeRunCount = 0;
 
 export class FakeDriver implements RunDriver<FakePrep> {
-  emit: (e: ReviewEvent) => void = () => {};
+  emit: (e: RunEvent) => void = () => {};
   private settle: { resolve: (r: ExecutedRun) => void; reject: (err: unknown) => void } | null = null;
   prepareError: Error | null = null;
 
@@ -54,7 +54,7 @@ export class FakeDriver implements RunDriver<FakePrep> {
 
   execute(
     _prep: FakePrep,
-    opts: { signal: AbortSignal; onProgress: (e: ReviewEvent) => void },
+    opts: { signal: AbortSignal; onProgress: (e: RunEvent) => void },
   ): Promise<ExecutedRun> {
     this.emit = opts.onProgress;
     return new Promise<ExecutedRun>((resolve, reject) => {

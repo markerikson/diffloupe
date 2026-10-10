@@ -12,6 +12,7 @@ type Assert<T extends true> = T;
 
 export type SchemaDriftChecks = [
   Assert<Equals<ReviewStage, CoreReviewStage>>,
-  Assert<Equals<CoreEvent, ReviewEvent>>,
+  // executeRun turns the core's `units` event into the run manager's `groups` event.
+  Assert<Equals<CoreEvent, Exclude<ReviewEvent, { type: "units" }>>>,
   Assert<Equals<keyof NonNullable<StartRunRequest["models"]>, ReviewModelStage>>,
 ];

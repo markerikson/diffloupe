@@ -46,6 +46,27 @@ describe("RunManager", () => {
     expect(seen).toEqual([1, 2, 3]);
   });
 
+  test("a groups event replaces the groups of the run served while it is active", async () => {
+    const { driver, runs } = setup();
+    const { id, done } = await runs.start({});
+    const before = runs.pendingRun(id)!;
+    const [first, ...rest] = before.files;
+    driver.emit({
+      type: "groups",
+      groups: [
+        { id: "u-a", title: "A", files: [first!.path], findingIds: [], stopIds: [], critical: false },
+        { id: "u-b", title: "B", files: rest.map((f) => f.path), findingIds: [], stopIds: [], critical: false },
+      ],
+      files: before.files.map((f, i) => ({ path: f.path, groupId: i === 0 ? "u-a" : "u-b", classification: "code" })),
+    });
+    const after = runs.pendingRun(id)!;
+    expect(after.groups.map((g) => g.id)).toEqual(["u-a", "u-b"]);
+    expect(after.files.map((f) => f.groupId)).toEqual(before.files.map((_, i) => (i === 0 ? "u-a" : "u-b")));
+    expect((await readEvents(id)).at(-1)?.type).toBe("groups");
+    driver.finish({ ...after, status: "complete" });
+    await done;
+  });
+
   test("writes the pending run at start and replaces it at the end", async () => {
     const { driver, runs } = setup();
     const { id, done } = await runs.start({});

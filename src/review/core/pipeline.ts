@@ -64,7 +64,9 @@ export type ReviewEvent =
   /** Running total after every agent call. */
   | { type: "cost"; totalUsd: number }
   /** Slices stopped being started because the running total reached `maxCostUsd`. */
-  | { type: "budget"; totalUsd: number; limitUsd: number; skippedSlices: number };
+  | { type: "budget"; totalUsd: number; limitUsd: number; skippedSlices: number }
+  /** The review units, known once grouping finishes and before any slice starts. */
+  | { type: "units"; units: ReviewUnit[]; byClass: RunReviewResult["byClass"] };
 
 export interface RunReviewOptions {
   /** The local clone that supplies the git object store. */
@@ -330,6 +332,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
   // Indexed by slice so the list reads in slice order, not completion order.
   const checkedBySlice: string[][] = [];
 
+  emit({ type: "units", units, byClass });
   emit({ type: "stage", stage: "reviewing" });
   let cursor = 0;
   let budgetStopped = false;

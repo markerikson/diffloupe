@@ -7,7 +7,7 @@
 import path from "node:path";
 import { copyFile, readFile, writeFile } from "node:fs/promises";
 import { getAnthropicApiKey, loadConfig } from "../services/config.ts";
-import type { StartRunRequest } from "../server/types.ts";
+import type { RunEvent, StartRunRequest } from "../server/types.ts";
 import type { ReviewRun, ReviewTarget } from "../types/review-run.ts";
 import type { ReviewConfig } from "./core/config.ts";
 import { text } from "./core/lib/proc.ts";
@@ -15,7 +15,9 @@ import type { Target } from "./core/lib/target.ts";
 import { runReview, type ReviewEvent, type RunReviewResult } from "./core/pipeline.ts";
 import { describeAnchors } from "./anchors.ts";
 import type { ReviewCommandOptions, ReviewModelStage } from "./options.ts";
+import type { BuildPendingRunInput } from "./build-run.ts";
 import { parseZeroContextDiff, priorComments, type LineHunk } from "./prior-run.ts";
+import { groupsEvent } from "./run-groups.ts";
 import { artifactsDir, createRunDir, dataDir, findPriorRunId, loadRun, loadState, writeRun } from "./run-store.ts";
 import { loadReviewSettings, settingsToConfig, type ReviewSettings } from "./settings.ts";
 import { parseTargetSpec, resolveTarget, TargetError, type ResolvedTarget } from "./targets.ts";
@@ -224,7 +226,8 @@ export async function prepareRun(
 
 export interface ExecuteRunOptions {
   signal: AbortSignal;
-  onProgress: (event: ReviewEvent) => void;
+  /** Receives the core's events, with its `units` event turned into a `groups` event. */
+  onProgress: (event: RunEvent) => void;
   log: (message: string) => void;
 }
 
@@ -240,6 +243,25 @@ export interface ExecutedRun {
  */
 export async function executeRun(prep: PreparedRun, opts: ExecuteRunOptions): Promise<ExecutedRun> {
   const { id, dir } = prep;
+  const { buildReviewRun, buildGroupedPendingRun } = await import("./build-run.ts");
+  // Replaced once the review units are known, so a reload mid-run and a failed
+  // or cancelled run keep the groups instead of one "All changes" group.
+  let pending = prep.pending;
+  let pendingWrite: Promise<void> = Promise.resolve();
+  const onProgress = (e: ReviewEvent) => {
+    if (e.type !== "units") {
+      opts.onProgress(e);
+      return;
+    }
+    pending = buildGroupedPendingRun(pendingInput(prep), e.units, e.byClass);
+    opts.onProgress(groupsEvent(pending));
+    const written = pending;
+    pendingWrite = pendingWrite.then(() =>
+      writeRun(written).catch((err: unknown) => {
+        opts.log(`  could not save the grouped run: ${err instanceof Error ? err.message : String(err)}`);
+      }),
+    );
+  };
   let result: RunReviewResult;
   try {
     result = await runReview({
@@ -252,12 +274,13 @@ export async function executeRun(prep: PreparedRun, opts: ExecuteRunOptions): Pr
       ...(prep.maxCostUsd !== undefined ? { maxCostUsd: prep.maxCostUsd } : {}),
       ...(prep.intent ? { intent: prep.intent } : {}),
       ...(prep.previous ? { prior: priorComments(prep.previous.run) } : {}),
-      onProgress: opts.onProgress,
+      onProgress,
     });
   } catch (err) {
     const cancelled = opts.signal.aborted;
+    await pendingWrite;
     await writeRun({
-      ...prep.pending,
+      ...pending,
       status: cancelled ? "cancelled" : "failed",
       ...(cancelled ? {} : { error: err instanceof Error ? err.message : String(err) }),
     });
@@ -271,33 +294,39 @@ export async function executeRun(prep: PreparedRun, opts: ExecuteRunOptions): Pr
   await writeFile(path.join(dir, "raw", "units.json"), `${JSON.stringify(result.units, null, 2)}\n`);
   await writeFile(path.join(dir, "raw", "byClass.json"), `${JSON.stringify(result.byClass, null, 2)}\n`);
 
-  const { buildReviewRun } = await import("./build-run.ts");
   let run: ReviewRun;
+  await pendingWrite;
   try {
     run = buildReviewRun({
-      id,
-      createdAt: prep.createdAt,
-      repo: prep.pending.repo,
-      target: prep.reviewTarget,
-      base: prep.target.base,
-      head: prep.target.head,
-      ...(prep.intent ? { statedIntent: prep.intent } : {}),
-      patch: prep.patch,
+      ...pendingInput(prep),
       result,
-      untrackedSkipped: prep.untrackedSkipped,
-      coreSource: prep.coreSource,
-      ...(prep.priorRunId ? { priorRunId: prep.priorRunId } : {}),
       ...(prep.previous ? { previous: prep.previous } : {}),
       log: opts.log,
     });
   } catch (err) {
     const message = `building run.json: ${err instanceof Error ? err.message : String(err)}`;
-    await writeRun({ ...prep.pending, status: "failed", error: message });
+    await writeRun({ ...pending, status: "failed", error: message });
     throw new Error(message, { cause: err });
   }
   await writeRun(run);
   opts.log(`  anchors: ${describeAnchors(run)}`);
   return { run, reviewed: result.record !== null };
+}
+
+function pendingInput(prep: PreparedRun): BuildPendingRunInput {
+  return {
+    id: prep.id,
+    createdAt: prep.createdAt,
+    repo: prep.pending.repo,
+    target: prep.reviewTarget,
+    base: prep.target.base,
+    head: prep.target.head,
+    ...(prep.intent ? { statedIntent: prep.intent } : {}),
+    patch: prep.patch,
+    untrackedSkipped: prep.untrackedSkipped,
+    coreSource: prep.coreSource,
+    ...(prep.priorRunId ? { priorRunId: prep.priorRunId } : {}),
+  };
 }
 
 /**

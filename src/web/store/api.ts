@@ -2,6 +2,7 @@ import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 import { type } from "arktype";
 import { HealthResponseSchema, type ReviewStage } from "../../server/types.ts";
 import { ReviewRunSchema, RunHeaderSchema, type ReviewRun } from "../../types/review-run.ts";
+import { withGroups } from "../../review/run-groups.ts";
 import { followRunEvents } from "./run-events.ts";
 
 export interface RunProgress {
@@ -63,6 +64,14 @@ export const api = createApi({
 
         const stop = followRunEvents(id, {
           onEvent(event) {
+            if (event.type === "groups") {
+              updateCachedData((draft) => {
+                const next = withGroups(draft, event);
+                draft.groups = next.groups;
+                draft.files = next.files;
+              });
+              return;
+            }
             updateCachedData((draft) => {
               const p = (draft.progress ??= emptyProgress());
               switch (event.type) {

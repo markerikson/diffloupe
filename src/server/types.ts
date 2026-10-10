@@ -4,6 +4,7 @@
  * from the review core; `schema-drift.ts` checks the copies stay in sync.
  */
 import { type } from "arktype";
+import { RunGroupSchema } from "../types/review-run.ts";
 
 /**
  * Body of `POST /api/runs`. Also what the CLI hands the run manager directly.
@@ -55,12 +56,24 @@ export const CoreEventSchema = type({ type: "'stage'", stage: ReviewStageSchema 
 export type CoreEvent = typeof CoreEventSchema.infer;
 
 /**
+ * The run's groups once the core has formed its review units: flat unit groups
+ * plus the trailing docs and skipped section. Walkthrough chapters arrive only
+ * with the finished run.
+ */
+export const GroupsEventSchema = type({
+  type: "'groups'",
+  groups: RunGroupSchema.array(),
+  files: type({ path: "string", groupId: "string", classification: "'code' | 'docs' | 'skip'" }).array(),
+});
+export type GroupsEvent = typeof GroupsEventSchema.infer;
+
+/**
  * Events the run manager adds around the core's own. On `done`, `findings`
  * counts every finding in run.json, carried-over ones included; `carriedOver`
  * is absent in older event logs; `noChanges` means the target held no
  * reviewable code and nothing was sent to a model.
  */
-export const RunEventSchema = CoreEventSchema.or({
+export const RunEventSchema = CoreEventSchema.or(GroupsEventSchema).or({
   type: "'done'",
   status: "'complete'",
   findings: "number",
