@@ -34,10 +34,11 @@ export function GroupIcon({ icon, className }: GroupIconProps) {
   );
 }
 
-export function CriticalMark() {
+export function CriticalMark({ reason }: { reason?: string | undefined }) {
+  const label = reason ? `Critical: ${reason}` : "Critical";
   return (
-    <span className={styles.critical} title="Critical">
-      <PhCircleWavyWarningDuotone aria-label="Critical" />
+    <span className={styles.critical} title={label}>
+      <PhCircleWavyWarningDuotone aria-label={label} />
     </span>
   );
 }

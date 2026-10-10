@@ -1,4 +1,5 @@
-import type { RunFile, RunGroup } from "../../types/review-run.ts";
+import type { GuideStop, RunFile, RunFinding, RunGroup } from "../../types/review-run.ts";
+import { plural } from "./format.ts";
 
 export interface GroupStats {
   files: number;
@@ -6,6 +7,13 @@ export interface GroupStats {
   deletions: number;
   /** The group or any of its units is marked critical. */
   critical: boolean;
+  /** Why it is critical, e.g. "1 blocker, 2 should-fix findings". */
+  criticalReason?: string;
+}
+
+export interface GroupNotes {
+  findings: readonly Pick<RunFinding, "id" | "severity">[];
+  stops: readonly Pick<GuideStop, "id" | "importance">[];
 }
 
 export interface ChapterEntry {
@@ -26,7 +34,11 @@ export interface GroupTree {
  * Arranges `run.groups` into chapters with their units, keeping run order.
  * Consecutive parentless units share one chapter-less entry.
  */
-export function buildGroupTree(groups: readonly RunGroup[], files: readonly RunFile[]): GroupTree {
+export function buildGroupTree(
+  groups: readonly RunGroup[],
+  files: readonly RunFile[],
+  notes: GroupNotes = { findings: [], stops: [] },
+): GroupTree {
   const byId = new Map(groups.map((g) => [g.id, g]));
   const fileByPath = new Map(files.map((f) => [f.path, f]));
   const chapters: ChapterEntry[] = [];
@@ -79,8 +91,42 @@ export function buildGroupTree(groups: readonly RunGroup[], files: readonly RunF
     if (chapter) stats.set(chapter.id, total);
   }
 
+  const reasonOf = criticalReasons(notes);
+  for (const { chapter, units } of chapters) {
+    for (const u of units) setReason(stats.get(u.id), reasonOf([u]));
+    if (chapter) setReason(stats.get(chapter.id), reasonOf([chapter, ...units]));
+  }
+
   const ordered = chapters.flatMap(({ chapter, units }) => (chapter ? [chapter, ...units] : units));
   return { chapters, stats, byId, ordered };
+}
+
+function setReason(stats: GroupStats | undefined, reason: string | undefined): void {
+  if (stats?.critical && reason) stats.criticalReason = reason;
+}
+
+const SEVERITY_ORDER = ["blocker", "should-fix"] as const;
+
+/** Mirrors `isCritical` in build-run.ts: blocker or should-fix findings, or critical guide stops. */
+function criticalReasons({ findings, stops }: GroupNotes) {
+  const severityOf = new Map(findings.map((f) => [f.id, f.severity]));
+  const criticalStops = new Set(stops.filter((s) => s.importance === "critical").map((s) => s.id));
+  return (groups: readonly RunGroup[]): string | undefined => {
+    const findingIds = new Set(groups.flatMap((g) => g.findingIds));
+    const stopIds = new Set(groups.flatMap((g) => g.stopIds));
+    const counts = SEVERITY_ORDER.map((sev) => ({
+      sev,
+      n: [...findingIds].filter((id) => severityOf.get(id) === sev).length,
+    })).filter((c) => c.n > 0);
+    const parts: string[] = [];
+    if (counts.length) {
+      const total = counts.reduce((sum, c) => sum + c.n, 0);
+      parts.push(`${counts.map((c) => `${c.n} ${c.sev}`).join(", ")} ${total === 1 ? "finding" : "findings"}`);
+    }
+    const stopCount = [...stopIds].filter((id) => criticalStops.has(id)).length;
+    if (stopCount) parts.push(plural(stopCount, "critical walkthrough stop"));
+    return parts.length ? parts.join("; ") : undefined;
+  };
 }
 
 /** A chapter is a top-level group that holds no files itself or has units under it. */

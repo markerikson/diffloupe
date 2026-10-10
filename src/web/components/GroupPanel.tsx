@@ -50,7 +50,7 @@ export function GroupPanel({
           </button>
           <GroupIcon icon={group.icon} className={styles.icon} />
           <h2 className={styles.title}>{group.title}</h2>
-          {stats.critical && <CriticalMark />}
+          {stats.critical && <CriticalMark reason={stats.criticalReason} />}
         </div>
         <div className={styles.stats}>
           <DiffStats additions={stats.additions} deletions={stats.deletions} />

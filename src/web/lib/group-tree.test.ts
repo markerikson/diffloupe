@@ -68,4 +68,27 @@ describe("buildGroupTree", () => {
     expect(tree.stats.get("ch")?.critical).toBe(true);
     expect(tree.stats.get("u2")?.critical).toBe(false);
   });
+
+  test("critical groups explain why", () => {
+    const tree = buildGroupTree(
+      [
+        g("ch", { stopIds: ["s1"], critical: true }),
+        g("u1", { parentId: "ch", files: ["a.ts"], findingIds: ["f1", "f2", "f3"], critical: true }),
+        g("u2", { parentId: "ch", files: ["b.ts"], findingIds: ["f4"] }),
+      ],
+      [],
+      {
+        findings: [
+          { id: "f1", severity: "blocker" },
+          { id: "f2", severity: "should-fix" },
+          { id: "f3", severity: "should-fix" },
+          { id: "f4", severity: "question" },
+        ],
+        stops: [{ id: "s1", importance: "critical" }],
+      },
+    );
+    expect(tree.stats.get("u1")?.criticalReason).toBe("1 blocker, 2 should-fix findings");
+    expect(tree.stats.get("u2")?.criticalReason).toBeUndefined();
+    expect(tree.stats.get("ch")?.criticalReason).toBe("1 blocker, 2 should-fix findings; 1 critical walkthrough stop");
+  });
 });

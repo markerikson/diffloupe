@@ -57,7 +57,7 @@ export function RunPage() {
   const collapsed = useMemo(() => new Set(collapsedList), [collapsedList]);
   const folded = useMemo(() => new Set(foldedList), [foldedList]);
 
-  const tree = useMemo(() => (run ? buildGroupTree(run.groups, run.files) : null), [run]);
+  const tree = useMemo(() => (run ? buildGroupTree(run.groups, run.files, run) : null), [run]);
   const filesByGroup = useMemo(() => {
     const map = new Map<string, RunFile[]>();
     for (const f of run?.files ?? []) {

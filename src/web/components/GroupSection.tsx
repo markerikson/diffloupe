@@ -30,13 +30,21 @@ export const ChapterBand = memo(function ChapterBand({ chapter, stats, unitCount
         {folded ? <PhCaretRight aria-hidden className={styles.caret} /> : <PhCaretDown aria-hidden className={styles.caret} />}
         <GroupIcon icon={chapter.icon} className={styles.chapterIcon} />
         <h2>{chapter.title}</h2>
-        {stats.critical && <CriticalMark />}
+        {stats.critical && <CriticalMark reason={stats.criticalReason} />}
       </button>
-      <div className={styles.chapterStats}>
-        <DiffStats additions={stats.additions} deletions={stats.deletions} />
-        <span>{plural(stats.files, "file")}</span>
-        {unitCount > 0 && <span>{plural(unitCount, "unit")}</span>}
-      </div>
+      {stats.files > 0 ? (
+        <div className={styles.chapterStats}>
+          <DiffStats additions={stats.additions} deletions={stats.deletions} />
+          <span>{plural(stats.files, "file")}</span>
+          {unitCount > 0 && <span>{plural(unitCount, "unit")}</span>}
+        </div>
+      ) : (
+        chapter.stopIds.length > 0 && (
+          <div className={styles.chapterStats}>
+            <span>Walkthrough only: no files of its own. Its stops point at files in other groups.</span>
+          </div>
+        )
+      )}
       {chapter.summary && <Markdown source={chapter.summary} className={styles.chapterSummary} />}
     </section>
   );

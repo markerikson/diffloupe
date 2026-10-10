@@ -37,14 +37,15 @@ function SidebarRow({ group, stats, depth, visible, fold }: SidebarRowProps) {
         <span className={styles.label}>
           <GroupIcon icon={group.icon} className={styles.icon} />
           <span className={styles.title}>{group.title}</span>
-          {stats?.critical && <CriticalMark />}
+          {stats?.critical && <CriticalMark reason={stats.criticalReason} />}
         </span>
-        {stats && (
+        {stats && stats.files > 0 && (
           <span className={styles.sub}>
             <DiffStats additions={stats.additions} deletions={stats.deletions} />
             <span>・{plural(stats.files, "file")}</span>
           </span>
         )}
+        {stats?.files === 0 && group.stopIds.length > 0 && <span className={styles.sub}>Walkthrough only</span>}
       </button>
     </li>
   );
