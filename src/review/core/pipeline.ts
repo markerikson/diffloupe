@@ -706,6 +706,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     "wall time": `${(wallMs / 60000).toFixed(1)} min`,
     cost: `$${totalCost.toFixed(2)}`,
     model: MODEL,
+    ...(MODEL_MERGE !== MODEL ? { "coordinator model": MODEL_MERGE } : {}),
     "walkthrough model": MODEL_WALK,
     // "0 stops" reads as "nothing worth stopping at". When the guide produced
     // nothing at all, say so — that is a failed call, not a quiet diff.
@@ -755,7 +756,9 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     // Effort is recorded alongside the model because it moves cost and findings
     // as much as the model does, and a stored run is the only evidence of which
     // configuration produced a given result.
-    pr, base, head, runner: RUNNER, model: MODEL, effort: EFFORT, effortAux: EFFORT_AUX, tag: tagBase,
+    pr, base, head, runner: RUNNER, model: MODEL, effort: EFFORT, effortAux: EFFORT_AUX,
+    models: { review: MODEL, coordinator: MODEL_MERGE, walkthrough: MODEL_WALK },
+    tag: tagBase,
     wallMs, totalCostUsd: totalCost,
     mergeMode, preTrimmed, budgetStopped,
     sliceRuns,

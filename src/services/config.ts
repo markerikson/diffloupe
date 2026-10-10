@@ -15,8 +15,20 @@ import { fileExists, readTextFile } from "../runtime/index.js";
  * Shape of the config file
  */
 export interface DiffLoupeConfig {
-  apiKeys?: {
-    anthropic?: string;
+  /**
+   * API keys keyed by OpenCode provider id (`anthropic`, `openai`, ...). Given
+   * to the OpenCode processes a review starts, never to DiffLoupe's own
+   * environment.
+   */
+  apiKeys?: Record<string, string>;
+  /** Provider prefix for a bare model name. Default `anthropic`. */
+  provider?: string;
+  opencode?: {
+    /**
+     * Use the `model` from the user's global OpenCode config for any stage
+     * DiffLoupe has no model for. Default true.
+     */
+    useDefaultModel?: boolean;
   };
   /** Model IDs for `diffloupe review`, per stage. */
   models?: {
@@ -71,35 +83,6 @@ export async function loadConfig(): Promise<DiffLoupeConfig> {
     cachedConfig = {};
     return cachedConfig;
   }
-}
-
-/**
- * Get the Anthropic API key from available sources.
- *
- * Priority:
- * 1. Explicit key passed as argument (e.g., from CLI --api-key)
- * 2. Config file (~/.config/diffloupe/config.json)
- * 3. ANTHROPIC_API_KEY environment variable
- *
- * @param explicitKey - Key passed explicitly (e.g., via CLI flag)
- * @returns The API key or undefined if not found
- */
-export async function getAnthropicApiKey(
-  explicitKey?: string
-): Promise<string | undefined> {
-  // Priority 1: Explicit key
-  if (explicitKey) {
-    return explicitKey;
-  }
-
-  // Priority 2: Config file
-  const config = await loadConfig();
-  if (config.apiKeys?.anthropic) {
-    return config.apiKeys.anthropic;
-  }
-
-  // Priority 3: Environment variable
-  return process.env["ANTHROPIC_API_KEY"];
 }
 
 /**

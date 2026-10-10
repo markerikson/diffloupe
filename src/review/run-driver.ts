@@ -6,7 +6,7 @@
  */
 import path from "node:path";
 import { copyFile, readFile, writeFile } from "node:fs/promises";
-import { getAnthropicApiKey, loadConfig } from "../services/config.ts";
+import { loadConfig } from "../services/config.ts";
 import type { RunEvent, StartRunRequest } from "../server/types.ts";
 import type { ReviewRun, ReviewTarget } from "../types/review-run.ts";
 import type { ReviewConfig } from "./core/config.ts";
@@ -19,7 +19,9 @@ import type { BuildPendingRunInput } from "./build-run.ts";
 import { parseZeroContextDiff, priorComments, type LineHunk } from "./prior-run.ts";
 import { groupsEvent } from "./run-groups.ts";
 import { artifactsDir, createRunDir, dataDir, findPriorRunId, loadRun, loadState, writeRun } from "./run-store.ts";
+import { describeSource, MODEL_STAGES } from "./models.ts";
 import { loadReviewSettings, settingsToConfig, type ReviewSettings } from "./settings.ts";
+import { resolveRunSetup, runModels, setupConfig } from "./setup.ts";
 import { parseTargetSpec, resolveTarget, TargetError, type ResolvedTarget } from "./targets.ts";
 
 const INSTALL_HINTS: Record<string, string> = {
@@ -114,6 +116,7 @@ export interface PreparedRun {
   previous?: { run: ReviewRun; dismissed: string[]; lineMap: Map<string, LineHunk[]> };
   untrackedSkipped: string[];
   coreSource: string;
+  models?: NonNullable<ReviewRun["meta"]["models"]>;
   /** The `run.json` written at start; the base of a failed or cancelled run. */
   pending: ReviewRun;
 }
@@ -127,31 +130,28 @@ export async function prepareRun(
   req: StartRunRequest,
   defaultRepo: string,
   log: (message: string) => void,
+  deps: { resolveSetup?: typeof resolveRunSetup } = {},
 ): Promise<PreparedRun> {
   checkTools(req.target);
   const repo = path.resolve(req.repo ?? defaultRepo);
   const intent = req.intent?.trim() || undefined;
 
-  // Precedence: request fields, then the settings file, then
-  // ~/.config/diffloupe/config.json, then the core defaults.
   const userConfig = await loadConfig();
   const settings: ReviewSettings = req.settingsFile ? await loadReviewSettings(path.resolve(req.settingsFile)) : {};
+  const setup = await (deps.resolveSetup ?? resolveRunSetup)({
+    cli: { ...(req.models ? { models: req.models } : {}), ...(req.effort ? { effort: req.effort } : {}) },
+    settings,
+    userConfig,
+  });
+  const problems = [...setup.credentials.errors, ...(setup.catalog?.errors ?? [])];
+  if (problems.length) throw new TargetError(problems.join("\n"));
   const config: Partial<ReviewConfig> = {
     artifacts: artifactsDir(),
     out: path.join(dataDir(), "scratch"),
     ...settingsToConfig(settings),
-    ...modelConfig({ ...userConfig.models, ...settings.models, ...req.models }),
+    ...setupConfig(setup),
   };
-  const effort = req.effort ?? settings.effort ?? userConfig.effort;
-  if (effort) config.effort = effort;
   const maxCostUsd = req.maxCostUsd ?? userConfig.maxCostUsd;
-
-  // OpenCode runs with relocated data directories, so it never sees the
-  // user's stored login; the provider key has to come through the environment.
-  if (!process.env.ANTHROPIC_API_KEY) {
-    const key = await getAnthropicApiKey();
-    if (key) process.env.ANTHROPIC_API_KEY = key;
-  }
 
   const resolved = await resolveTarget(repo, req.target, req.base ? { base: req.base } : {});
   const { target, changes, tag } = resolved;
@@ -160,7 +160,18 @@ export async function prepareRun(
   log(`  ${target.base.slice(0, 10)}..${target.head.slice(0, 10)}`);
   log(`  ${changes.files} file(s) changed, +${changes.insertions} -${changes.deletions}`);
   log(`  run ${tag}`);
-  if (maxCostUsd !== undefined) log(`  cost limit $${maxCostUsd.toFixed(2)}`);
+  for (const stage of MODEL_STAGES) {
+    const m = setup.models[stage];
+    log(`  ${stage}: ${m.model} (${describeSource(m.source)})`);
+  }
+  for (const warning of setup.credentials.warnings) log(`  warning: ${warning}`);
+  if (maxCostUsd !== undefined) {
+    log(
+      setup.catalog?.zeroCost.includes("review")
+        ? "  cost limit not enforced: models report no cost"
+        : `  cost limit $${maxCostUsd.toFixed(2)}`,
+    );
+  }
   if (resolved.skippedUntracked.length) {
     log(`  skipped ${resolved.skippedUntracked.length} untracked file(s) over 1 MB:`);
     for (const f of resolved.skippedUntracked) log(`    ${f}`);
@@ -188,6 +199,7 @@ export async function prepareRun(
     log(`  ${previous.run.findings.length} finding(s) from prior run ${previous.run.id}`);
   }
   const source = await coreSource();
+  const models = runModels(setup);
 
   const { buildPendingRun } = await import("./build-run.ts");
   const pending = buildPendingRun({
@@ -202,6 +214,7 @@ export async function prepareRun(
     untrackedSkipped: resolved.skippedUntracked,
     coreSource: source,
     ...(priorRunId ? { priorRunId } : {}),
+    models,
   });
   await writeRun(pending);
 
@@ -220,6 +233,7 @@ export async function prepareRun(
     ...(previous ? { previous } : {}),
     untrackedSkipped: resolved.skippedUntracked,
     coreSource: source,
+    models,
     pending,
   };
 }
@@ -326,6 +340,7 @@ function pendingInput(prep: PreparedRun): BuildPendingRunInput {
     untrackedSkipped: prep.untrackedSkipped,
     coreSource: prep.coreSource,
     ...(prep.priorRunId ? { priorRunId: prep.priorRunId } : {}),
+    ...(prep.models ? { models: prep.models } : {}),
   };
 }
 

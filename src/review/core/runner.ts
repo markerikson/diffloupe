@@ -1,8 +1,25 @@
 import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { chmod, mkdir, rm } from "node:fs/promises";
 import { ensureDir, readJson, readText, removeIfPresent, writeJson, writeText } from "./lib/io.ts";
-import { DIR, SUBJECT, ARTIFACTS, PROVIDER, MAX_STEPS, DEADLINE_MS, MODEL, EFFORT, OUT, SIGNAL, repoName } from "./config.ts";
+import {
+  DIR,
+  SUBJECT,
+  ARTIFACTS,
+  PROVIDER,
+  MAX_STEPS,
+  DEADLINE_MS,
+  MODEL,
+  EFFORT,
+  OUT,
+  SIGNAL,
+  PROVIDERS,
+  CHILD_ENV,
+  AUTH_IMPORT,
+  repoName,
+} from "./config.ts";
+import { run } from "./lib/proc.ts";
 
 // ---------------------------------------------------------------- cancellation
 
@@ -220,6 +237,7 @@ export function summarizeOpenCodeTools(stdout: string, cwd = ""): ToolSummary {
 
 export let openCodeHome: Promise<string> | undefined;
 export let openCodeHomeKey: string | undefined;
+let openCodeProviders: string | undefined;
 
 /**
  * Write the configuration directory the OpenCode runner reads, once per run.
@@ -242,6 +260,11 @@ export function openCodeConfig(system: string, guidance: string): Promise<string
   if (openCodeHome && openCodeHomeKey !== key) {
     throw new Error("openCodeConfig called with a different prompt after the config was written");
   }
+  // A long-lived server runs many reviews, and the user's providers can change
+  // between them. Runs do not overlap, so rewriting here races nothing.
+  const providers = JSON.stringify(PROVIDERS);
+  if (openCodeHome && openCodeProviders !== providers) openCodeHome = undefined;
+  openCodeProviders = providers;
   openCodeHomeKey = key;
   openCodeHome ??= (async () => {
     const home = path.join(OUT, "oc", "shared");
@@ -260,6 +283,7 @@ export function openCodeConfig(system: string, guidance: string): Promise<string
 export function resetOpenCodeConfig() {
   openCodeHome = undefined;
   openCodeHomeKey = undefined;
+  openCodeProviders = undefined;
 }
 
 /** `provider/model` for a model name that may or may not carry its provider. */
@@ -278,6 +302,9 @@ export function openCodeSettings(system: string, guidance: string) {
     // context in the middle of an investigation. The step cap ends a slice long
     // before its context fills, so there is nothing for it to rescue.
     compaction: { auto: false },
+    // Custom providers and provider settings from the user's own config, so a
+    // model defined there resolves here too.
+    ...(Object.keys(PROVIDERS).length ? { providers: PROVIDERS } : {}),
     mcp: {
       servers: {
         // Without this the reviewer has no structural reader, and it shows:
@@ -445,8 +472,46 @@ export async function agent(
   const model = opts.model ?? MODEL;
   const effort = opts.effort ?? EFFORT;
   const spec: Invocation = await openCodeInvocation(system, { ...opts, model, effort });
-  const env: Record<string, string | undefined> = { ...process.env, ...spec.env };
+  const env: Record<string, string | undefined> = { ...process.env, ...CHILD_ENV, ...spec.env };
   for (const key of spec.unsetEnv) delete env[key];
+  const privateDirs = [spec.env.XDG_DATA_HOME, spec.env.XDG_STATE_HOME].filter((d) => d !== undefined);
+  try {
+    return await runAgent(prompt, opts, spec, env);
+  } finally {
+    // The private data directory holds the session database and any imported
+    // API key. Nothing reads it after the process exits: usage and governor
+    // logs are written under ARTIFACTS.
+    if (process.env.DIFFLOUPE_KEEP_SCRATCH !== "1") {
+      await Promise.all(privateDirs.map((d) => rm(d, { recursive: true, force: true }).catch(() => {})));
+    }
+  }
+}
+
+/** Imports the run's saved credentials into a call's fresh data directory. */
+async function importCredentials(env: Record<string, string | undefined>, dataDir: string | undefined): Promise<void> {
+  if (!AUTH_IMPORT || !dataDir) return;
+  await mkdir(dataDir, { recursive: true, mode: 0o700 });
+  await chmod(dataDir, 0o700);
+  const res = await run("opencode", ["auth", "import", "--standalone"], {
+    env: env as NodeJS.ProcessEnv,
+    cwd: SUBJECT,
+    input: AUTH_IMPORT,
+    allowFail: true,
+    timeoutMs: 60_000,
+  });
+  if (res.code !== 0) {
+    throw new Error(`opencode auth import failed (exit ${res.code}): ${res.stderr.trim().slice(0, 500)}`);
+  }
+}
+
+async function runAgent(
+  prompt: string,
+  opts: { outFile: string; tag: string },
+  spec: Invocation,
+  env: Record<string, string | undefined>,
+) {
+  if (SIGNAL?.aborted) throw new CancelledError();
+  await importCredentials(env, spec.env.XDG_DATA_HOME);
   if (SIGNAL?.aborted) throw new CancelledError();
   if (!exitHookInstalled) {
     exitHookInstalled = true;

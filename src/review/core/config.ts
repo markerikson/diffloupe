@@ -206,6 +206,16 @@ export let SURFACES: SurfacePatterns = {
 /** Repo-specific additions to the map builder's and registry check's EXCLUDE lists. */
 export let EXTRA_EXCLUDES: string[] = [];
 
+/** The `providers` block written into the generated OpenCode config. Empty writes none. */
+export let PROVIDERS: Record<string, unknown> = {};
+/** Extra environment for every OpenCode child: provider keys that must not reach this process's env. */
+export let CHILD_ENV: Record<string, string> = {};
+/**
+ * `opencode auth import` input for every call's data directory, as JSON. Empty
+ * imports nothing. Holds API keys, so it is never written anywhere but stdin.
+ */
+export let AUTH_IMPORT = "";
+
 export interface ReviewConfig {
   provider: string;
   model: string;
@@ -228,6 +238,9 @@ export interface ReviewConfig {
   out: string;
   extraExcludes: string[];
   surfaces: SurfacePatterns;
+  providers: Record<string, unknown>;
+  childEnv: Record<string, string>;
+  authImport: string;
 }
 
 /**
@@ -266,6 +279,9 @@ export function applyConfig(o: Partial<ReviewConfig>): void {
   if (o.out !== undefined) OUT = o.out;
   if (o.extraExcludes !== undefined) EXTRA_EXCLUDES = o.extraExcludes;
   if (o.surfaces !== undefined) SURFACES = o.surfaces;
+  if (o.providers !== undefined) PROVIDERS = o.providers;
+  if (o.childEnv !== undefined) CHILD_ENV = o.childEnv;
+  if (o.authImport !== undefined) AUTH_IMPORT = o.authImport;
 }
 
 /** Aborted when the run is cancelled. Assigned by runReview(). */

@@ -67,6 +67,8 @@ export interface BuildReviewRunInput {
   untrackedSkipped?: string[];
   coreSource: string;
   priorRunId?: string;
+  /** The model each stage was resolved to before the run started. */
+  models?: NonNullable<ReviewRun["meta"]["models"]>;
   /**
    * The earlier run of this target whose findings were handed to the review as
    * prior comments. `lineMap` holds `git diff -U0 <its head> <this head>` hunks,
@@ -510,6 +512,7 @@ export function buildReviewRun(input: BuildReviewRunInput): ReviewRun {
     meta: {
       ...(record?.model ? { model: record.model } : {}),
       ...(record?.effort ? { effort: record.effort } : {}),
+      ...(input.models ? { models: input.models } : {}),
       wallMs: record?.wallMs ?? input.result.wallMs,
       costUsd: record?.totalCostUsd ?? input.result.costUsd,
       slices,
@@ -529,7 +532,18 @@ export function buildReviewRun(input: BuildReviewRunInput): ReviewRun {
 
 export type BuildPendingRunInput = Pick<
   BuildReviewRunInput,
-  "id" | "createdAt" | "repo" | "target" | "base" | "head" | "statedIntent" | "patch" | "untrackedSkipped" | "priorRunId" | "coreSource"
+  | "id"
+  | "createdAt"
+  | "repo"
+  | "target"
+  | "base"
+  | "head"
+  | "statedIntent"
+  | "patch"
+  | "untrackedSkipped"
+  | "priorRunId"
+  | "coreSource"
+  | "models"
 >;
 
 /**
@@ -584,7 +598,14 @@ export function buildPendingRun(input: BuildPendingRunInput): ReviewRun {
     overCapFindings: [],
     resolved: [],
     unreviewed: { overCap: [], failed: [] },
-    meta: { wallMs: 0, costUsd: 0, slices: [], rejectedCount: 0, coreSource: input.coreSource },
+    meta: {
+      ...(input.models ? { models: input.models } : {}),
+      wallMs: 0,
+      costUsd: 0,
+      slices: [],
+      rejectedCount: 0,
+      coreSource: input.coreSource,
+    },
     untrackedSkipped: input.untrackedSkipped ?? [],
     ...(input.priorRunId ? { priorRunId: input.priorRunId } : {}),
   };

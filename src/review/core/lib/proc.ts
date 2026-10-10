@@ -20,6 +20,10 @@ export interface RunOptions {
   /** Return a non-zero result instead of throwing. */
   allowFail?: boolean;
   env?: NodeJS.ProcessEnv;
+  /** Written to stdin, which is otherwise closed. */
+  input?: string;
+  /** Kill the child with SIGKILL after this long. */
+  timeoutMs?: number;
 }
 
 export function run(cmd: string, args: string[], opts: RunOptions = {}): Promise<RunResult> {
@@ -27,14 +31,23 @@ export function run(cmd: string, args: string[], opts: RunOptions = {}): Promise
     const child = spawn(cmd, args, {
       cwd: opts.cwd,
       env: opts.env ?? process.env,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [opts.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     });
+    if (opts.input !== undefined) {
+      child.stdin?.on("error", () => {});
+      child.stdin?.end(opts.input);
+    }
+    const timer = opts.timeoutMs ? setTimeout(() => child.kill("SIGKILL"), opts.timeoutMs) : undefined;
     const out: Buffer[] = [];
     const err: Buffer[] = [];
-    child.stdout.on("data", (c: Buffer) => out.push(c));
-    child.stderr.on("data", (c: Buffer) => err.push(c));
-    child.on("error", reject);
+    child.stdout?.on("data", (c: Buffer) => out.push(c));
+    child.stderr?.on("data", (c: Buffer) => err.push(c));
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      reject(e);
+    });
     child.on("close", (code, signal) => {
+      clearTimeout(timer);
       // A child killed by a signal reports a null exit code. Defaulting that to
       // 0 turns an OOM kill, a timeout or a SIGPIPE into an apparent success
       // carrying whatever partial output was collected — which for a `git diff`

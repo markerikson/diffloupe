@@ -2,6 +2,7 @@
  * Per-repo review settings, loaded from the file passed to `--config`.
  *
  * {
+ *   "provider": "anthropic",
  *   "models": { "review": "...", "coordinator": "...", "walkthrough": "..." },
  *   "effort": "medium",
  *   "surfaces": { "deploy": ["^infra/"], "tooling": ["^docs/"] },
@@ -20,6 +21,7 @@ import { TargetError } from "./targets.ts";
 const ReviewSettings = type({
   "+": "reject",
   "$schema?": "string",
+  "provider?": "string",
   "models?": {
     "+": "reject",
     "review?": "string",

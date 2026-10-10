@@ -31,7 +31,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/acemarke/diffloupe.git"
+    "url": "git+https://github.com/markerikson/diffloupe.git"
   },
   "keywords": [
     "cli",

@@ -198,6 +198,12 @@ export const ReviewRunSchema = type({
   meta: {
     "model?": "string",
     "effort?": "string",
+    /** The model each stage ran, as `provider/model[#variant]`, and where the choice came from. */
+    "models?": {
+      review: { model: "string", "source?": "string" },
+      coordinator: { model: "string", "source?": "string" },
+      walkthrough: { model: "string", "source?": "string" },
+    },
     wallMs: "number",
     costUsd: "number",
     slices: RunSliceSchema.array(),
