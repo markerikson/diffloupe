@@ -182,16 +182,16 @@ const MARK: Record<CheckStatus, string> = { ok: pc.green("ok  "), warn: pc.yello
 export function createDoctorCommand(): Command {
   return new Command("doctor")
     .description("Check tools, models, credentials and disk use")
-    .option("--settings <file>", "Repo settings file, as passed to review")
-    .action(async (options: { settings?: string }) => {
+    .option("--config <file>", "Per-repo review settings, as passed to review")
+    .action(async (options: { config?: string }) => {
       const checks = await runDoctorChecks({
         platform: process.platform,
         bunVersion: Bun.version,
         which: (cmd) => Bun.which(cmd),
         exec,
         setup: async () => {
-          const settings: ReviewSettings = options.settings
-            ? await loadReviewSettings(path.resolve(options.settings))
+          const settings: ReviewSettings = options.config
+            ? await loadReviewSettings(path.resolve(options.config))
             : {};
           return resolveRunSetup({ settings, userConfig: await loadConfig() });
         },

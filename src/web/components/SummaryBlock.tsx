@@ -269,7 +269,7 @@ export function SummaryBlock({ run }: { run: ReviewRun }) {
 
       <footer className={styles.footer}>
         {overview.changeType && <span>{overview.changeType}</span>}
-        <span>{formatCost(meta.costUsd)}</span>
+        <span>{meta.costUsd > 0 || run.status === "running" ? formatCost(meta.costUsd) : "cost not reported"}</span>
         {meta.wallMs > 0 && <span>{formatDuration(meta.wallMs)}</span>}
         {meta.model && <span>{meta.effort ? `${meta.model} (${meta.effort})` : meta.model}</span>}
         <span>{run.status}</span>

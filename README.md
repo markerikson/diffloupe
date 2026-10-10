@@ -36,16 +36,16 @@ Each review is saved as a run that you can list and reopen. Reviewing the same t
 |------|-------|
 | [Bun](https://bun.sh) 1.3 or later | Runs the CLI and the server. |
 | `git` | |
-| [OpenCode](https://opencode.ai) 2.x | Runs every agent (`npm i -g opencode-ai`). Tested with 2.0.26. DiffLoupe writes its own OpenCode config for each run, so your OpenCode settings, agents and plugins are not used. |
+| [OpenCode](https://opencode.ai) 2.x | Runs every agent (`npm i -g opencode-ai`). Tested with 2.0.26. DiffLoupe writes its own OpenCode config for each run, so your agents, plugins and MCP servers are not used. Your default model and your `providers` block are. |
 | [tilth](https://github.com/jahala/tilth) | Code reading tools for the reviewers (`cargo install tilth`). Tested with 0.9.0. |
 | [`gh`](https://cli.github.com) | Only for pull requests. Run `gh auth login` first. |
-| An Anthropic API key | `ANTHROPIC_API_KEY` in the environment, or `apiKeys.anthropic` in the config file. |
+| A model provider credential | See [Credentials](#credentials). |
 
-**The API key is required even if you are logged in to OpenCode.** Each review agent runs OpenCode with its own data directory, so OpenCode never sees your stored login. The key has to come from the environment or the DiffLoupe config file.
+Run `diffloupe doctor` to check all of this, along with which models a review will use and where each credential comes from.
 
-**Cost.** The defaults are Claude Opus 5.5 for the reviewers and the coordinator, and Claude Sonnet 5.5 for the walkthrough and group naming. Real runs so far: about $0.10 for a one-file commit, about $1 for a small PR, and $4–5 for a large one. Use `--max-cost` or `maxCostUsd` in the config to set a limit. The run page and `diffloupe runs` show what each run cost.
+**Cost.** With the built-in defaults (Claude Opus 5.5 for the reviewers and the coordinator, Claude Sonnet 5.5 for the walkthrough and group naming), real runs so far cost about $0.10 for a one-file commit, about $1 for a small PR, and $4–5 for a large one. If your OpenCode config sets a default model, DiffLoupe uses it for every stage instead, which changes the cost. Use `--max-cost` or `maxCostUsd` to set a limit. The run page and `diffloupe runs` show what each run cost. Models whose provider reports no price show "cost not reported", and `--max-cost` cannot be enforced for them.
 
-**Platforms.** Developed and tested on Linux and WSL2. On WSL the server binds `127.0.0.1` and the Windows browser reaches it through `localhost`. macOS should work but has not been tried. Native Windows has not been tried.
+**Platforms.** Developed and tested on Linux and WSL2. On WSL the server binds `127.0.0.1` and the Windows browser reaches it through `localhost`. macOS should work but has not been tried. Native Windows is not supported; use WSL.
 
 ## Install
 
@@ -132,9 +132,14 @@ Runs the server until you stop it. `-C` sets the repository that runs use by def
 | `diffloupe runs [--json]` | List saved runs, newest first |
 | `diffloupe runs show <id> [--json]` | Show a run: groups with their files and findings, walkthrough stops, totals |
 | `diffloupe runs show <id> --markdown [--over-cap]` | Print the findings as markdown, the same text as Copy all in the UI |
-| `diffloupe runs rm <id>` | Delete a run and its artifacts |
+| `diffloupe runs rm <id>` | Delete a run, its artifacts and its scratch files |
+| `diffloupe runs prune [--older-than 30d] [--keep 20] [--yes]` | Delete runs older than the cutoff, except the newest `--keep`, plus scratch files no run owns. Lists what it would delete unless `--yes` is given |
 
 Runs are stored under `$XDG_DATA_HOME/diffloupe/runs/<id>/` (`~/.local/share/diffloupe/runs/` by default). Each holds `run.json`, the reviewed `diff.patch`, the progress log, and the raw review output.
+
+### `diffloupe doctor`
+
+Checks Bun, git, OpenCode, tilth and `gh`; prints the model for each stage and where it came from, and the source of each provider credential; and shows how much disk the data directory uses. Exits non-zero if a review could not run. `--config <file>` includes a per-repo settings file in the model lookup.
 
 ## Configuration
 
@@ -142,21 +147,22 @@ Runs are stored under `$XDG_DATA_HOME/diffloupe/runs/<id>/` (`~/.local/share/dif
 
 ```json
 {
-  "apiKeys": { "anthropic": "sk-ant-..." },
+  "provider": "anthropic",
   "models": { "review": "claude-opus-5-5", "coordinator": "claude-opus-5-5", "walkthrough": "claude-sonnet-5-5" },
   "effort": "medium",
+  "apiKeys": { "anthropic": "sk-ant-..." },
+  "opencode": { "useDefaultModel": true },
   "maxCostUsd": 5,
   "port": 4517,
   "host": "127.0.0.1"
 }
 ```
 
-Every field is optional. Model ids without a provider prefix are Anthropic models.
-
 **Per-repo settings** (`--config <file>`):
 
 ```json
 {
+  "provider": "anthropic",
   "models": { "review": "...", "coordinator": "...", "walkthrough": "..." },
   "effort": "medium",
   "surfaces": { "deploy": ["^infra/"], "tooling": ["^docs/"] },
@@ -164,9 +170,35 @@ Every field is optional. Model ids without a provider prefix are Anthropic model
 }
 ```
 
+Every field is optional.
+
+| Setting | User config | Per-repo settings | CLI | Environment | Default |
+|---------|-------------|-------------------|-----|-------------|---------|
+| Reviewer model | `models.review` | `models.review` | `--model review=<id>` | `REVIEW_MODEL` | OpenCode default model, else `anthropic/claude-opus-5-5` |
+| Coordinator model | `models.coordinator` | `models.coordinator` | `--model coordinator=<id>` | `REVIEW_MODEL_MERGE` | OpenCode default model, else `anthropic/claude-opus-5-5` |
+| Walkthrough model | `models.walkthrough` | `models.walkthrough` | `--model walkthrough=<id>` | `REVIEW_MODEL_WALK` | OpenCode default model, else `anthropic/claude-sonnet-5-5` |
+| Provider for bare model ids | `provider` | `provider` | | `REVIEW_PROVIDER` | `anthropic` |
+| Effort | `effort` | `effort` | `--effort` | `REVIEW_EFFORT`, `REVIEW_EFFORT_AUX` | `medium` for built-in default models only |
+| Use the OpenCode default model | `opencode.useDefaultModel` | | | | `true` |
+| API keys by provider id | `apiKeys.<provider>` | | | | |
+| Cost limit (USD) | `maxCostUsd` | | `--max-cost` | | none |
+| Server address | `host`, `port` | | `--host`, `--port` | | `127.0.0.1:4517` |
+
+**Model lookup.** Each stage is looked up on its own. `REVIEW_*` environment variables win, then command-line options, then the per-repo settings file, then the user config, then the `model` in your global OpenCode config (`~/.config/opencode/opencode.json(c)`), then the built-in defaults. A model id without a `/` gets the provider prefix, so `claude-opus-5-5` means `anthropic/claude-opus-5-5`.
+
+**Effort** is passed to OpenCode as the model variant (`provider/model#high`), so it must be a variant the model offers. It is only added when you set it, or when the model is a built-in default. A model from your OpenCode config runs without a variant unless you set an effort. A `#variant` written in the model id always wins.
+
 `surfaces` are regex sources matched against repo-relative paths. They decide which findings count toward "prod risk": anything not matched as deploy or tooling counts as product code. `extraExcludes` are path substrings left out of the code map.
 
-Precedence: command-line options, then the per-repo settings file, then the user config.
+### Credentials
+
+Each review agent runs OpenCode with its own data directory, so DiffLoupe has to hand it a credential for every provider the chosen models use. For each provider, the first of these that exists is used:
+
+1. The provider's environment variable, such as `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`. A `providers.<id>.env` list in your OpenCode config is honored.
+2. `apiKeys.<provider>` in `~/.config/diffloupe/config.json`. It is passed to the OpenCode processes only, not to DiffLoupe's own environment.
+3. An API key you saved with `opencode auth login`. DiffLoupe reads it with `opencode auth export` and imports it into each agent's data directory, which is deleted when the agent exits.
+
+OAuth logins (such as a Claude or ChatGPT subscription) are not shared with the agents; use an API key for those providers. Providers that authenticate from the machine, such as Amazon Bedrock, Google Vertex, Ollama and LM Studio, are not checked. If a provider has no credential, the review stops before it starts and names the provider, the stage, and the ways to add one.
 
 ## Inspirations
 
