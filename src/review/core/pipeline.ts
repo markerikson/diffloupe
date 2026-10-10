@@ -462,7 +462,8 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
   if (sliceRuns.length > 0 && okSlices.length === 0) {
     throw new Error(
       `all ${sliceRuns.length} review slices failed — no review was produced. ` +
-        `Check ANTHROPIC_API_KEY and ${path.join(ARTIFACTS, "logs")}`,
+        `Run \`diffloupe doctor\` to check credentials, and see the agent output in ` +
+        `${path.join(ARTIFACTS, "raw")} and ${path.join(ARTIFACTS, "logs")}`,
     );
   }
   if (okSlices.length < sliceRuns.length) {

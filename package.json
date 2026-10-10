@@ -17,7 +17,7 @@
     "dev": "bun run --watch src/index.ts",
     "dev:web": "vite --config src/web/vite.config.ts",
     "prebuild": "rm -rf dist",
-    "build": "bun build src/index.ts --outdir=dist --target=bun --minify --banner '#!/usr/bin/env bun' && bun scripts/copy-assets.ts && bun run build:web",
+    "build": "bun build src/index.ts --outdir=dist --target=bun --minify --banner '#!/usr/bin/env -S bun --no-env-file' && bun scripts/copy-assets.ts && bun run build:web",
     "build:web": "vite build --config src/web/vite.config.ts",
     "prepublishOnly": "bun run build && bun run typecheck",
     "test": "bun test src",

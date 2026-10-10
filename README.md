@@ -200,6 +200,8 @@ Each review agent runs OpenCode with its own data directory, so DiffLoupe has to
 
 OAuth logins (such as a Claude or ChatGPT subscription) are not shared with the agents; use an API key for those providers. Providers that authenticate from the machine, such as Amazon Bedrock, Google Vertex, Ollama and LM Studio, are not checked. If a provider has no credential, the review stops before it starts and names the provider, the stage, and the ways to add one.
 
+The `diffloupe` command does not load `.env` files, so a `.env` in the repo you review cannot supply or override a key. `diffloupe doctor` shows which source each provider's credential comes from.
+
 ## Inspirations
 
 - [pulls.review](https://pulls.review) - the page layout: grouped files, sticky group panels, per-group file trees

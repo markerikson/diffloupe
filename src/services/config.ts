@@ -53,7 +53,8 @@ export interface DiffLoupeConfig {
  * Default config file location following XDG convention
  */
 export function getConfigPath(): string {
-  return join(homedir(), ".config", "diffloupe", "config.json");
+  const base = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
+  return join(base, "diffloupe", "config.json");
 }
 
 let cachedConfig: DiffLoupeConfig | null = null;
