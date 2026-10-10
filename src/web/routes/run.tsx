@@ -6,7 +6,7 @@ import { api } from "../store/api.ts";
 import { filesCollapsedSet, selectCollapsedFiles } from "../store/view.ts";
 import { rootRoute, RouteError } from "./root.tsx";
 
-const RunSearchSchema = type({ "file?": "string" });
+const RunSearchSchema = type({ "file?": "string", "finding?": "string", "stop?": "string" });
 
 const isNotFound = (err: unknown) =>
   typeof err === "object" && err !== null && "status" in err && err.status === 404;

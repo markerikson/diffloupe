@@ -1,7 +1,9 @@
+import type { SelectedLineRange } from "@pierre/diffs";
 import { memo, useCallback } from "react";
 import PhCaretDown from "~icons/ph/caret-down";
 import PhCaretRight from "~icons/ph/caret-right";
 import type { RunFile, RunGroup } from "../../types/review-run.ts";
+import type { RunAnnotation } from "../lib/annotations.ts";
 import { plural } from "../lib/format.ts";
 import type { GroupStats } from "../lib/group-tree.ts";
 import { groupElementId, scrollToFile } from "../lib/navigate.ts";
@@ -59,6 +61,14 @@ interface UnitSectionProps {
   diffs: PatchFiles;
   collapsed: ReadonlySet<string>;
   activePath: string | undefined;
+  annotations: ReadonlyMap<string, RunAnnotation[]>;
+  /** The focused finding or stop location, when it is in one of this unit's files. */
+  selection: FileSelection | null;
+}
+
+export interface FileSelection {
+  path: string;
+  range: SelectedLineRange | null;
 }
 
 export const UnitSection = memo(function UnitSection({
@@ -70,6 +80,8 @@ export const UnitSection = memo(function UnitSection({
   diffs,
   collapsed,
   activePath,
+  annotations,
+  selection,
 }: UnitSectionProps) {
   const dispatch = useAppDispatch();
   const allCollapsed = files.length > 0 && files.every((f) => collapsed.has(f.path));
@@ -106,8 +118,21 @@ export const UnitSection = memo(function UnitSection({
       <div className={styles.files}>
         {files.map((file) => (
           <div key={file.path} className={styles.file}>
-            <div data-file-start data-path={file.path} className={styles.marker} />
-            <FileDiffView runId={runId} file={file} diff={diffs.get(file.path)} collapsed={collapsed.has(file.path)} />
+            <div
+              data-file-start
+              data-path={file.path}
+              className={styles.marker}
+              tabIndex={-1}
+              aria-label={`File ${file.path}`}
+            />
+            <FileDiffView
+              runId={runId}
+              file={file}
+              diff={diffs.get(file.path)}
+              collapsed={collapsed.has(file.path)}
+              annotations={annotations.get(file.path)}
+              selection={selection?.path === file.path ? selection.range : null}
+            />
           </div>
         ))}
         {files.length === 0 && <p className={styles.empty}>No files in this group.</p>}

@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import pc from "picocolors";
+import { runMarkdown } from "../review/export.js";
 import { formatRun, formatRunList } from "../review/format-run.js";
 import { deleteRun, listRuns, loadRun } from "../review/run-store.js";
 import type { ReviewRun } from "../types/review-run.js";
@@ -27,8 +28,14 @@ export function createRunsCommand(): Command {
     .description("Show a saved run: groups, files, findings and anchors")
     .argument("<id>", "Run id")
     .option("--json", "Print run.json", false)
-    .action(async (id: string, options: { json: boolean }) => {
+    .option("--markdown", "Print the findings as markdown, as the web UI's Copy all does", false)
+    .option("--over-cap", "With --markdown, include findings over the posting cap", false)
+    .action(async (id: string, options: { json: boolean; markdown: boolean; overCap: boolean }) => {
       const run = await loadOrExit(id);
+      if (options.markdown) {
+        process.stdout.write(runMarkdown(run, { includeOverCap: options.overCap }));
+        return;
+      }
       console.log(options.json ? JSON.stringify(run, null, 2) : formatRun(run));
     });
 

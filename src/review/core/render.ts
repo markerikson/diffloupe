@@ -8,7 +8,10 @@ import { INLINE_MODE, repoName } from "./config.ts";
 import { type Finding } from "./findings.ts";
 import { type PriorComment } from "./context.ts";
 import { type Walkthrough } from "./prompts.ts";
-import { type Surface, classifySurface, SURFACE_RANK, primarySurface, SURFACE_TAG, CONF, SEV, EFFORT_TAG, anchorCovers, CAT, leadSentences } from "./surface.ts";
+import { classifySurface, SURFACE_RANK, primarySurface, SURFACE_TAG, CONF, SEV, EFFORT_TAG, anchorCovers, CAT, leadSentences } from "./surface.ts";
+import { mergeRisk, prodRisk, TIER_TITLE, type Verdict } from "./verdict.ts";
+
+const RISK_DOT = { high: "🔴", moderate: "🟡", low: "🟢" } as const;
 import { MAX_POSTED } from "./coordinate.ts";
 
 export function renderReview(o: {
@@ -277,11 +280,6 @@ export function renderReview(o: {
   // tells the next reviewer to repeat a claim it can already see.
   const posted = (o.inlineMode ?? "none") === "none" ? [] : fresh.filter(inTier);
   const postedSet = new Set(posted);
-  // Kept separate from the tier: the verdict line answers "can this break
-  // production", which stays false on a tooling change no matter how many
-  // findings are promoted into view.
-  const productFindings = reported.filter((f) => classifySurface(f.file) === "product");
-
   // Numbered across both groups in render order, so a bullet in either list can
   // point at its evidence block and the numbers never collide.
   const evidenceOrder = [...tierFindings, ...otherFindings];
@@ -329,29 +327,14 @@ export function renderReview(o: {
     // agreements with a human's existing comment and appear in no bullet list —
     // counting them here makes the headline disagree with the tally printed two
     // lines under it, over findings the reader cannot find anywhere in between.
-    const blockers = reported.filter((f) => f.severity === "blocker").length;
-    const shoulds = reported.filter((f) => f.severity === "should-fix").length;
-    const risk = blockers
-      ? `🔴 **Merge risk: high** — ${blockers} ${blockers === 1 ? "blocker" : "blockers"} open.`
-      : shoulds
-        ? `🟡 **Merge risk: moderate** — ${shoulds} should-fix ${shoulds === 1 ? "finding" : "findings"} open.`
-        : "🟢 **Merge risk: low** — nothing found that should block this.";
-    s.push(risk);
+    const line = (v: Verdict) => `${RISK_DOT[v.level]} **${v.label}** — ${v.detail}`;
+    s.push(line(mergeRisk(reported)));
     s.push("");
     // Stated up here next to merge risk because it is the one line that decides
     // whether the rest of this comment is worth opening. Severity is deliberately
     // not folded in: a blocker in a test helper is still not a production risk,
     // and collapsing the two axes is what made the old single list unreadable.
-    const prodSevere = productFindings.filter(
-      (f) => f.severity === "blocker" || f.severity === "should-fix",
-    ).length;
-    s.push(
-      productFindings.length === 0
-        ? "🟢 **Prod risk: none** — everything found is in tooling, deploy or test code."
-        : prodSevere
-          ? `🔴 **Prod risk: ${prodSevere}** — ${prodSevere === 1 ? "finding" : "findings"} in production code worth acting on.`
-          : `🟡 **Prod risk: low** — ${productFindings.length} in production code, none above a question.`,
-    );
+    s.push(line(prodRisk(reported.map((f) => ({ severity: f.severity, surface: classifySurface(f.file) })))));
     s.push("");
     s.push(
       Object.entries(SEV)
@@ -541,11 +524,6 @@ export function renderReview(o: {
   // Titled by tier. "Prod risk" would be a false claim on a change that ships
   // nothing, and the reader of a tooling change still needs a name for the list
   // that matters.
-  const TIER_TITLE: Record<Surface, string> = {
-    product: "Prod risk",
-    deploy: "Deploy risk",
-    tooling: "Main findings — tooling",
-  };
   if (tierFindings.length) {
     s.push(`#### ${TIER_TITLE[tier]} (${tierFindings.length})`);
     s.push("");

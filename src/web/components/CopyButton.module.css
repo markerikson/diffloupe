@@ -1,0 +1,15 @@
+.button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: var(--radius);
+  color: var(--fg-fade);
+  font-size: 12px;
+}
+
+.button:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}

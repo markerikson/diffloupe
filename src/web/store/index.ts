@@ -1,5 +1,6 @@
 import { configureStore, createListenerMiddleware, isAnyOf } from "@reduxjs/toolkit";
 import { api } from "./api.ts";
+import { focusSlice } from "./focus.ts";
 import {
   diffStyleSet,
   fileTreeLayoutSet,
@@ -18,6 +19,7 @@ export function makeStore() {
     reducer: {
       [api.reducerPath]: api.reducer,
       [viewSlice.reducerPath]: viewSlice.reducer,
+      [focusSlice.reducerPath]: focusSlice.reducer,
     },
     middleware: (getDefaultMiddleware) => getDefaultMiddleware().prepend(listener.middleware).concat(api.middleware),
   });

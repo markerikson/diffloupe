@@ -20,6 +20,7 @@ import type {
 import { anchor } from "./anchors.ts";
 import { classifyFile, type Finding } from "./core/findings.ts";
 import { fingerprint } from "./core/lib/marker.ts";
+import { classifySurface } from "./core/surface.ts";
 import type { RunReviewResult } from "./core/pipeline.ts";
 import type { ReviewUnit, Walkthrough } from "./core/prompts.ts";
 import { fingerprintOf, mapLine, type LineHunk } from "./prior-run.ts";
@@ -123,6 +124,7 @@ function toRunFiles(parsed: FileDiffMetadata[], patch: string, byClass: RunRevie
       ...(f.newObjectId ? { blob: f.newObjectId } : {}),
       groupId: "",
       classification: cls.get(f.name) ?? classifyFile(f.name),
+      surface: classifySurface(f.name),
     };
   });
 }
@@ -149,6 +151,7 @@ function toRunFinding(f: Finding, id: string, file: FileDiffMetadata | undefined
     ...(f.suggested_code ? { suggestedCode: f.suggested_code } : {}),
     ...(f.cross_file_refs?.length ? { crossFileRefs: f.cross_file_refs.map(parseRef) } : {}),
     ...(f.repeat_of !== undefined ? { repeatOf: f.repeat_of } : {}),
+    surface: classifySurface(f.file),
   };
 }
 

@@ -1,0 +1,76 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`runMarkdown snapshot 1`] = `
+"# Review findings: PR #42 Add routes
+
+Base \`ad555642469a\`, head \`b7e77e972a23\`
+
+### [blocker] Unvalidated input reaches the server
+
+\`src/api/server.ts:51-53\`
+
+Unvalidated input reaches the server: explanation.
+
+**Evidence:** src/api/server.ts:51
+
+**Suggestion:** Validate input
+
+### [should-fix] Query per row
+
+\`src/db/query.ts:100\`
+
+Query per row: explanation.
+
+**Evidence:** src/db/query.ts:100
+
+### [nice-to-have] Cited line sits between hunks
+
+\`src/db/query.ts:25\`
+
+Cited line sits between hunks: explanation.
+
+**Evidence:** src/db/query.ts:25
+
+### [nice-to-have] File that is not in the diff
+
+\`src/gone.ts:5\`
+
+File that is not in the diff: explanation.
+
+**Evidence:** src/gone.ts:5
+
+### [question] Guide wording
+
+\`docs/guide.md:3\`
+
+Guide wording: explanation.
+
+**Evidence:** docs/guide.md:3
+
+### [question] Is the schema change intended?
+
+\`src/db/schema.ts\`
+
+Is the schema change intended?: explanation.
+
+**Evidence:** src/db/schema.ts:0
+
+## Over the posting cap (2)
+
+### [nice-to-have] Far from any hunk
+
+\`src/api/server.ts:118\`
+
+Far from any hunk: explanation.
+
+**Evidence:** src/api/server.ts:118
+
+### [nice-to-have] Hard-coded colour
+
+\`src/ui/button.tsx:20\`
+
+Hard-coded colour: explanation.
+
+**Evidence:** src/ui/button.tsx:20
+"
+`;

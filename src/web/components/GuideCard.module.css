@@ -1,0 +1,112 @@
+.card {
+  margin: 0.35rem 0.5rem;
+  padding: 0.5rem 0.75rem 0.5rem;
+  border: 1px dashed var(--teal);
+  border-radius: var(--radius);
+  background: light-dark(#1f8f720d, #5fc2a412);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: normal;
+  color: var(--fg);
+}
+
+.card[data-importance="critical"] {
+  border-color: var(--critical);
+}
+
+.card[data-focused="true"] {
+  border-style: solid;
+  box-shadow: 0 0 0 1px var(--teal);
+}
+
+.card:focus {
+  outline: none;
+}
+
+.card:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 1px;
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.icon {
+  flex: none;
+  align-self: center;
+  color: var(--teal);
+}
+
+.kicker {
+  flex: none;
+  color: var(--teal);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.title {
+  flex: auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.importance {
+  flex: none;
+  color: var(--fg-mute);
+  font-size: 12px;
+}
+
+.card[data-importance="critical"] .importance {
+  color: var(--critical);
+}
+
+.label {
+  color: var(--fg-fade);
+  font-size: 12px;
+}
+
+.note {
+  color: var(--fg-fade);
+  font-size: 12px;
+  font-style: italic;
+}
+
+.body {
+  margin-top: 0.25rem;
+}
+
+.nav {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+}
+
+.nav button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: var(--radius);
+  color: var(--fg-fade);
+  font-size: 12px;
+}
+
+.nav button:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+.nav button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}

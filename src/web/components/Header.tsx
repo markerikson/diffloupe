@@ -11,6 +11,8 @@ import PhSun from "~icons/ph/sun";
 import PhTextAlignLeft from "~icons/ph/text-align-left";
 import PhTreeStructure from "~icons/ph/tree-structure";
 import PhWrapText from "~icons/ph/arrow-u-down-left";
+import PhKeyboard from "~icons/ph/keyboard";
+import { helpSet } from "../store/focus.ts";
 import { formatCost, formatRelative, formatTarget, plural, shortSha } from "../lib/format.ts";
 import type { GroupTree } from "../lib/group-tree.ts";
 import { WIDE_QUERY, useMediaQuery } from "../lib/media.ts";
@@ -142,6 +144,9 @@ function ViewControls({ collapseActions, wide }: { collapseActions: readonly Col
       )}
       <ToggleButton title={`Theme: ${theme}`} onClick={() => dispatch(themeSet(NEXT_THEME[theme]))}>
         <ThemeIcon aria-hidden />
+      </ToggleButton>
+      <ToggleButton title="Keyboard shortcuts (?)" onClick={() => dispatch(helpSet(true))}>
+        <PhKeyboard aria-hidden />
       </ToggleButton>
     </div>
   );

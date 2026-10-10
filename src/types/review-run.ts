@@ -59,6 +59,12 @@ export type DiffAnchor = typeof DiffAnchorSchema.infer;
 export const RunFileStatusSchema = type("'added' | 'removed' | 'modified' | 'renamed' | 'copied'");
 export type RunFileStatus = typeof RunFileStatusSchema.infer;
 
+/**
+ * Where a file runs, from `classifySurface` with the repo's settings applied.
+ * Optional because runs written before it existed lack it.
+ */
+export const SurfaceSchema = type("'product' | 'deploy' | 'tooling'");
+
 /** `blob` is the blob id on the head side; all zeros for a removed file. */
 export const RunFileSchema = type({
   path: "string",
@@ -70,6 +76,7 @@ export const RunFileSchema = type({
   "blob?": "string",
   groupId: "string",
   classification: "'code' | 'docs' | 'skip'",
+  "surface?": SurfaceSchema,
 });
 export type RunFile = typeof RunFileSchema.infer;
 
@@ -132,6 +139,7 @@ export const RunFindingSchema = type({
   "crossFileRefs?": type({ file: "string", "line?": "number" }).array(),
   "repeatOf?": "number",
   "carriedFrom?": "string",
+  "surface?": SurfaceSchema,
 });
 export type RunFinding = typeof RunFindingSchema.infer;
 

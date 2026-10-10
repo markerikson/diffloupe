@@ -1,9 +1,10 @@
 import { type Finding } from "./findings.ts";
 import { SURFACES } from "./config.ts";
+import { primaryOf, type Surface } from "./verdict.ts";
+
+export { SURFACE_ORDER, SURFACE_RANK, type Surface } from "./verdict.ts";
 
 // ---------------------------------------------------------------- render
-
-export type Surface = "product" | "deploy" | "tooling";
 
 /**
  * Where a file runs. A bug in shipped product code costs users; the same bug in
@@ -42,10 +43,6 @@ export function classifySurface(file: string): Surface {
   return "product";
 }
 
-export const SURFACE_RANK = { product: 0, deploy: 1, tooling: 2 } as const;
-
-export const SURFACE_ORDER = ["product", "deploy", "tooling"] as const;
-
 /**
  * The most production-proximate surface this change actually touches.
  *
@@ -65,8 +62,7 @@ export const SURFACE_ORDER = ["product", "deploy", "tooling"] as const;
  */
 export function primarySurface(changedFiles: string[], findings: Finding[]): Surface {
   const pool = changedFiles.length ? changedFiles : findings.map((f) => f.file);
-  const present = new Set(pool.map(classifySurface));
-  return SURFACE_ORDER.find((s) => present.has(s)) ?? "product";
+  return primaryOf(pool.map(classifySurface));
 }
 
 export const SURFACE_TAG: Record<string, string> = {

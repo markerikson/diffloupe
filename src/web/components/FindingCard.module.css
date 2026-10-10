@@ -1,0 +1,134 @@
+.card {
+  --sev: var(--info);
+  margin: 0.35rem 0.5rem;
+  padding: 0.5rem 0.75rem 0.6rem;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--sev);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: normal;
+  color: var(--fg);
+}
+
+.card[data-severity="blocker"] {
+  --sev: var(--error);
+}
+
+.card[data-severity="should-fix"] {
+  --sev: var(--warning);
+}
+
+.card[data-severity="nice-to-have"] {
+  --sev: var(--info);
+}
+
+.card[data-severity="question"] {
+  --sev: var(--magenta);
+}
+
+.card[data-focused="true"] {
+  border-color: var(--sev);
+  box-shadow: 0 0 0 1px var(--sev);
+}
+
+.card:focus {
+  outline: none;
+}
+
+.card:focus-visible {
+  outline: 2px solid var(--accent);
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.severity {
+  flex: none;
+  color: var(--sev);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.title {
+  flex: auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
+  color: var(--fg-mute);
+  font-size: 12px;
+}
+
+.badge {
+  padding: 0 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--fg-fade);
+  text-decoration: none;
+}
+
+a.badge:hover {
+  color: var(--fg);
+  text-decoration: underline;
+}
+
+.note {
+  margin-top: 0.25rem;
+  color: var(--fg-fade);
+  font-size: 12px;
+  font-style: italic;
+}
+
+.body {
+  margin-top: 0.35rem;
+}
+
+.details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.details h4 {
+  margin: 0 0 0.15rem;
+  color: var(--fg-fade);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.code {
+  margin: 0.35rem 0 0;
+  padding: 0.5rem;
+  overflow-x: auto;
+  border-radius: var(--radius);
+  background: var(--bg-code);
+  font-size: 12px;
+}
+
+.more {
+  margin-top: 0.35rem;
+  color: var(--fg-fade);
+  font-size: 12px;
+}
+
+.more:hover {
+  color: var(--fg);
+  text-decoration: underline;
+}
