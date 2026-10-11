@@ -108,6 +108,41 @@
   color: var(--fg-mute);
 }
 
+.kind {
+  padding: 0.05rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg-fade);
+  font-size: 11px;
+}
+
+.kind[data-kind="review"] {
+  color: var(--accent);
+}
+
+.filters {
+  display: inline-flex;
+  margin-left: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.filter {
+  padding: 0.2rem 0.65rem;
+  color: var(--fg-fade);
+  font-size: 12px;
+}
+
+.filter + .filter {
+  border-left: 1px solid var(--border);
+}
+
+.filter[aria-pressed="true"] {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
 .delete {
   display: inline-flex;
   padding: 0.25rem;

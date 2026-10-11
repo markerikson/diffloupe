@@ -1,4 +1,4 @@
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import PhColumns from "~icons/ph/columns";
 import PhDesktop from "~icons/ph/desktop";
@@ -19,7 +19,9 @@ import { formatCost, formatRelative, formatTarget, plural, shortSha } from "../l
 import type { GroupTree } from "../lib/group-tree.ts";
 import { WIDE_QUERY, useMediaQuery } from "../lib/media.ts";
 import { scrollToGroup } from "../lib/navigate.ts";
-import type { RunWithProgress } from "../store/api.ts";
+import { runKind } from "../../types/review-run.ts";
+import { errorMessage } from "../routes/root.tsx";
+import { useStartRunMutation, type RunWithProgress } from "../store/api.ts";
 import { useAppDispatch, useAppSelector } from "../store/hooks.ts";
 import {
   diffStyleSet,
@@ -192,6 +194,30 @@ function GroupTabs({ tree, visible }: { tree: GroupTree; visible: ReadonlySet<st
   );
 }
 
+/** Starts a full review of the same base and head as this diff run, then opens it. */
+function ReviewButton({ run }: { run: RunWithProgress }) {
+  const [startRun, { isLoading, error }] = useStartRunMutation();
+  const navigate = useNavigate();
+  const onClick = async () => {
+    const res = await startRun({ kind: "review", fromRun: run.id });
+    if ("data" in res && res.data) void navigate({ to: "/runs/$runId", params: { runId: res.data.id } });
+  };
+  return (
+    <>
+      <button
+        type="button"
+        className={styles.action}
+        disabled={isLoading || run.status === "running"}
+        onClick={() => void onClick()}
+        title="Start a full review of this base and head"
+      >
+        {isLoading ? "Starting review…" : "Review these changes"}
+      </button>
+      {error && <span className={styles.actionError}>{errorMessage(error)}</span>}
+    </>
+  );
+}
+
 interface HeaderProps {
   run: RunWithProgress;
   tree: GroupTree;
@@ -211,6 +237,7 @@ export function Header({ run, tree, visible, collapseActions }: HeaderProps) {
   const baseRef = target.kind === "pr" ? target.baseRef : shortSha(run.base);
   const headRef = target.kind === "pr" ? target.headRef : shortSha(run.head);
   const cost = run.status === "running" ? (run.progress?.costUsd ?? 0) : run.meta.costUsd;
+  const isDiff = runKind(run) === "diff";
 
   return (
     <header ref={ref} data-app-header className={styles.header} data-hidden={hidden} data-scrolled={scrolled}>
@@ -245,13 +272,18 @@ export function Header({ run, tree, visible, collapseActions }: HeaderProps) {
           <span>{plural(run.files.length, "file")}</span>
           <DiffStats additions={totals.additions} deletions={totals.deletions} />
           <span className={styles.right}>
+            {isDiff && <ReviewButton run={run} />}
             <span title={run.repo.root}>{run.repo.slug ?? run.repo.root}</span>
             <span>{formatRelative(run.createdAt)}</span>
-            <span title="Model cost">{formatCost(cost)}</span>
+            {(!isDiff || cost > 0) && <span title="Model cost">{formatCost(cost)}</span>}
           </span>
         </div>
         {run.status === "running" && <ProgressStrip progress={run.progress} />}
-        {run.status === "failed" && run.error && <p className={styles.error}>Review failed: {run.error}</p>}
+        {run.status === "failed" && run.error && (
+          <p className={styles.error}>
+            {isDiff ? "Run" : "Review"} failed: {run.error}
+          </p>
+        )}
         {(!wide || !sidebar) && <GroupTabs tree={tree} visible={visible} />}
       </div>
     </header>

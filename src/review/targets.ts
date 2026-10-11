@@ -57,6 +57,15 @@ export interface ResolveOptions {
   /** For staged and worktree targets: diff against merge-base(base, HEAD) instead of HEAD. */
   base?: string;
   now?: Date;
+  /** True when a tag already names a run; the tag then gets a `-2`, `-3`… suffix. */
+  isTaken?: (tag: string) => boolean;
+}
+
+function freeTag(tag: string, isTaken: ResolveOptions["isTaken"]): string {
+  if (!isTaken) return tag;
+  let candidate = tag;
+  for (let n = 2; isTaken(candidate); n++) candidate = `${tag}-${n}`;
+  return candidate;
 }
 
 /** Untracked files above this size are not snapshotted into a working-tree review. */
@@ -192,7 +201,7 @@ export async function resolveTarget(
   }
 
   const repoName = slug.split("/").pop() ?? path.basename(repo);
-  const tag = makeTag(repoName, spec, head, opts.now);
+  const tag = freeTag(makeTag(repoName, spec, head, opts.now), opts.isTaken);
   if (synthetic) {
     // A snapshot commit is reachable from nothing, so pin it until the user
     // clears refs/diffloupe/ — the review reads it through a worktree.
@@ -209,6 +218,30 @@ export async function resolveTarget(
     skippedUntracked,
     ...(pullRequest ? { pullRequest } : {}),
   };
+}
+
+/**
+ * Targets a base/head pair an earlier run already resolved. A snapshot head is
+ * pinned again under the new tag, so it outlives the earlier run's ref.
+ */
+export async function pinnedTarget(
+  repo: string,
+  spec: TargetSpec,
+  base: string,
+  head: string,
+  opts: Pick<ResolveOptions, "now" | "isTaken"> = {},
+): Promise<ResolvedTarget> {
+  const present = await Promise.all([base, head].map((sha) => hasCommit(repo, sha)));
+  const missing = [base, head].filter((_, i) => !present[i]);
+  if (missing.length) throw new TargetError(`commit ${missing[0]} is no longer in ${repo}`);
+  const slug = await repoSlug(repo);
+  const repoName = slug.split("/").pop() ?? path.basename(repo);
+  const tag = freeTag(makeTag(repoName, spec, head, opts.now), opts.isTaken);
+  if (spec.kind === "staged" || spec.kind === "worktree") {
+    await text("git", ["-C", repo, "update-ref", `refs/diffloupe/${tag}`, head]);
+  }
+  const target: Target = { base, head, slug, ...(spec.kind === "pr" ? { pr: String(spec.pr) } : {}) };
+  return { spec, target, tag, changes: await countChanges(repo, base, head), skippedUntracked: [] };
 }
 
 async function fetchPullRequest(repo: string, pr: number, ghRepo: string | undefined): Promise<PullRequestInfo> {

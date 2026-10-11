@@ -131,6 +131,26 @@
   margin-left: auto;
 }
 
+.action {
+  padding: 0.15rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--fg);
+  font-size: 12px;
+}
+
+.action:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.action:disabled {
+  opacity: 0.6;
+}
+
+.actionError {
+  color: var(--error);
+}
+
 .error {
   padding: 0.35rem 0.75rem;
   border-radius: var(--radius);

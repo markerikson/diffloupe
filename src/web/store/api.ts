@@ -1,6 +1,11 @@
 import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 import { type } from "arktype";
-import { HealthResponseSchema, type ReviewStage } from "../../server/types.ts";
+import {
+  HealthResponseSchema,
+  StartRunResponseSchema,
+  type ReviewStage,
+  type StartRunRequest,
+} from "../../server/types.ts";
 import { ReviewRunSchema, RunHeaderSchema, type ReviewRun } from "../../types/review-run.ts";
 import { withGroups } from "../../review/run-groups.ts";
 import { followRunEvents } from "./run-events.ts";
@@ -115,6 +120,11 @@ export const api = createApi({
       argSchema: RunIdSchema,
       providesTags: (_result, _error, id) => [{ type: "Run", id }],
     }),
+    startRun: build.mutation({
+      query: (body: StartRunRequest) => ({ url: "/runs", method: "POST", body }),
+      responseSchema: StartRunResponseSchema,
+      invalidatesTags: ["RunList"],
+    }),
     deleteRun: build.mutation<{ removed: boolean }, string>({
       query: (id) => ({ url: `/runs/${encodeURIComponent(id)}`, method: "DELETE" }),
       argSchema: RunIdSchema,
@@ -123,4 +133,11 @@ export const api = createApi({
   }),
 });
 
-export const { useGetHealthQuery, useListRunsQuery, useGetRunQuery, useGetRunPatchQuery, useDeleteRunMutation } = api;
+export const {
+  useGetHealthQuery,
+  useListRunsQuery,
+  useGetRunQuery,
+  useGetRunPatchQuery,
+  useStartRunMutation,
+  useDeleteRunMutation,
+} = api;

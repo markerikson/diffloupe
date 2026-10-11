@@ -55,7 +55,7 @@ export function runsRoutes(ctx: ServerContext): Hono {
     }
     const req = StartRunRequestSchema(body);
     if (req instanceof type.errors) return c.json({ error: req.summary } satisfies ErrorResponse, 400);
-    if (!req.repo && !ctx.defaultRepo) {
+    if (!req.repo && !req.fromRun && !ctx.defaultRepo) {
       return c.json({ error: "repo is required: the server was not started in a repository" } satisfies ErrorResponse, 400);
     }
     try {

@@ -5,6 +5,7 @@
  * finished (or failed, or cancelled) run.
  */
 import path from "node:path";
+import { existsSync } from "node:fs";
 import { copyFile, readFile, writeFile } from "node:fs/promises";
 import { loadConfig } from "../services/config.ts";
 import type { RunEvent, StartRunRequest } from "../server/types.ts";
@@ -19,11 +20,27 @@ import type { ReviewCommandOptions, ReviewModelStage } from "./options.ts";
 import type { BuildPendingRunInput } from "./build-run.ts";
 import { parseZeroContextDiff, priorComments, type LineHunk } from "./prior-run.ts";
 import { groupsEvent } from "./run-groups.ts";
-import { artifactsDir, createRunDir, dataDir, findPriorRunId, loadRun, loadState, writeRun } from "./run-store.ts";
+import {
+  artifactsDir,
+  createRunDir,
+  dataDir,
+  findPriorRunId,
+  loadRun,
+  loadState,
+  runDir,
+  writeRun,
+} from "./run-store.ts";
 import { describeSource, MODEL_STAGES } from "./models.ts";
 import { loadReviewSettings, settingsToConfig, type ReviewSettings } from "./settings.ts";
 import { resolveRunSetup, runModels, setupConfig } from "./setup.ts";
-import { parseTargetSpec, resolveTarget, TargetError, type ResolvedTarget } from "./targets.ts";
+import {
+  parseTargetSpec,
+  pinnedTarget,
+  resolveTarget,
+  TargetError,
+  type ResolvedTarget,
+  type TargetSpec,
+} from "./targets.ts";
 
 export const INSTALL_HINTS: Record<string, string> = {
   git: "https://git-scm.com/downloads",
@@ -149,9 +166,16 @@ export async function prepareRun(
   const kind: RunKind = req.kind ?? "review";
   const isDiff = kind === "diff";
   const walkthrough = isDiff && req.walkthrough === true;
-  checkTools(req.target, { kind, walkthrough });
-  const repo = path.resolve(req.repo ?? defaultRepo);
-  const intent = req.intent?.trim() || undefined;
+  const fromRun = req.fromRun;
+  const from = fromRun
+    ? await loadRun(fromRun).catch((err: unknown) => {
+        throw new TargetError(`cannot start from run ${fromRun}: ${err instanceof Error ? err.message : String(err)}`);
+      })
+    : undefined;
+  const fromSpec = from ? specOf(from.target) : undefined;
+  checkTools(fromSpec ? (fromSpec.kind === "pr" ? `#${fromSpec.pr}` : "") : req.target, { kind, walkthrough });
+  const repo = from ? from.repo.root : path.resolve(req.repo ?? defaultRepo);
+  const intent = req.intent?.trim() || from?.intent.stated || undefined;
 
   const userConfig = await loadConfig();
   const settings: ReviewSettings = req.settingsFile ? await loadReviewSettings(path.resolve(req.settingsFile)) : {};
@@ -176,7 +200,10 @@ export async function prepareRun(
   };
   const maxCostUsd = isDiff ? undefined : (req.maxCostUsd ?? userConfig.maxCostUsd);
 
-  const resolved = await resolveTarget(repo, req.target, req.base ? { base: req.base } : {});
+  const resolved =
+    from && fromSpec
+      ? await pinnedTarget(repo, fromSpec, from.base, from.head, { isTaken })
+      : await resolveTarget(repo, req.target, { ...(req.base ? { base: req.base } : {}), isTaken });
   const { target, changes, tag } = resolved;
   const pr = resolved.pullRequest;
   const verb = isDiff ? "Diff of" : "Reviewing";
@@ -205,7 +232,8 @@ export async function prepareRun(
 
   const createdAt = new Date().toISOString();
   const runRepo = { root: repo, ...(target.slug ? { slug: target.slug } : {}) };
-  const reviewTarget = await toReviewTarget(repo, resolved);
+  const reviewTarget = from ? from.target : await toReviewTarget(repo, resolved);
+  const untrackedSkipped = from ? from.untrackedSkipped : resolved.skippedUntracked;
   const dir = await createRunDir(tag);
   const patch = await text("git", [
     "-C",
@@ -237,7 +265,7 @@ export async function prepareRun(
     head: target.head,
     ...(intent ? { statedIntent: intent } : {}),
     patch,
-    untrackedSkipped: resolved.skippedUntracked,
+    untrackedSkipped,
     coreSource: source,
     ...(priorRunId ? { priorRunId } : {}),
     ...(models ? { models } : {}),
@@ -260,7 +288,7 @@ export async function prepareRun(
     patch,
     ...(priorRunId ? { priorRunId } : {}),
     ...(previous ? { previous } : {}),
-    untrackedSkipped: resolved.skippedUntracked,
+    untrackedSkipped,
     coreSource: source,
     ...(models ? { models } : {}),
     pending,
@@ -442,6 +470,24 @@ async function coreSource(): Promise<string> {
     cachedCoreSource = "diffloupe";
   }
   return cachedCoreSource;
+}
+
+const isTaken = (tag: string) => existsSync(runDir(tag));
+
+/** The target spec an earlier run was started with. */
+function specOf(t: ReviewTarget): TargetSpec {
+  switch (t.kind) {
+    case "pr":
+      return { kind: "pr", pr: t.number };
+    case "branch":
+      return { kind: "branch", branch: t.spec };
+    case "commit":
+      return { kind: "commit", rev: t.spec };
+    case "range":
+      return parseTargetSpec(`range:${t.spec}`);
+    default:
+      return { kind: t.kind };
+  }
 }
 
 export async function toReviewTarget(repo: string, resolved: ResolvedTarget): Promise<ReviewTarget> {

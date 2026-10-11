@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { text } from "./core/lib/proc.ts";
 import { executeRun, prepareRun } from "./run-driver.ts";
-import { listRuns } from "./run-store.ts";
+import { deleteRun, listRuns } from "./run-store.ts";
 
 describe("diff runs", () => {
   let tmp = "";
@@ -82,6 +82,20 @@ describe("diff runs", () => {
     expect(await git("worktree", "list")).toBe(worktreesBefore);
     const headers = await listRuns();
     expect(headers.map((h) => h.kind)).toEqual(["diff"]);
+  });
+
+  it("a run started from an earlier one keeps its snapshot after the earlier run is deleted", async () => {
+    await writeFile(path.join(repo, "src", "main.ts"), 'import { twice } from "./lib/math";\nconsole.log(twice(3));\n');
+    const first = await prepareRun({ kind: "diff", repo, target: "worktree" }, repo, () => {});
+    const second = await prepareRun({ kind: "diff", fromRun: first.id }, "/nonexistent", () => {});
+    expect(second.id).not.toBe(first.id);
+    expect(second.repo).toBe(repo);
+    expect(second.target.base).toBe(first.target.base);
+    expect(second.target.head).toBe(first.target.head);
+    expect(second.reviewTarget.kind).toBe("worktree");
+
+    await deleteRun(first.id);
+    expect((await git("rev-parse", `refs/diffloupe/${second.id}`)).trim()).toBe(first.target.head);
   });
 
   it("asks for opencode only when the walkthrough is requested", async () => {

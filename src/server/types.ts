@@ -30,6 +30,11 @@ export const StartRunRequestSchema = type({
   "kind?": RunKindSchema,
   /** Diff runs only: add the walkthrough guide. */
   "walkthrough?": "boolean",
+  /**
+   * Run the same base and head as this earlier run, instead of resolving
+   * `target` again. A working-tree run keeps the snapshot it was given.
+   */
+  "fromRun?": "string",
 });
 export type StartRunRequest = typeof StartRunRequestSchema.infer;
 

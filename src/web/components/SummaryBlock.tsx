@@ -2,7 +2,7 @@ import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import type { Verdict } from "../../review/core/verdict.ts";
 import { runMarkdown } from "../../review/export.ts";
-import type { ReviewRun, RunFinding } from "../../types/review-run.ts";
+import { runKind, type ReviewRun, type RunFinding } from "../../types/review-run.ts";
 import { byFile, type FileFindings, summarizeFindings } from "../lib/finding-summary.ts";
 import { formatCost, formatDuration, plural } from "../lib/format.ts";
 import { useRunNav } from "../lib/run-nav.ts";
@@ -114,10 +114,24 @@ export function SummaryBlock({ run }: { run: ReviewRun }) {
   const intentLists = INTENT_LISTS.filter(([key]) => (intent[key]?.length ?? 0) > 0);
   const unreviewed = UNREVIEWED.filter(([key]) => (run.unreviewed[key]?.length ?? 0) > 0);
   const oneLine = intent.mismatches?.[0];
+  const isDiff = runKind(run) === "diff";
+  const groupCount = run.groups.filter((g) => g.files.length > 0).length;
 
   return (
-    <section id={SUMMARY_ID} tabIndex={-1} className={styles.summary} aria-label="Review summary">
-      {reportedCount === 0 ? (
+    <section
+      id={SUMMARY_ID}
+      tabIndex={-1}
+      className={styles.summary}
+      aria-label={isDiff ? "Diff summary" : "Review summary"}
+    >
+      {isDiff ? (
+        <p>
+          {plural(run.files.length, "changed file")} in {plural(groupCount, "group")}
+          {run.status === "complete" && run.stops.length === 0 && !overview.focus && (
+            <span className={styles.note}> · no walkthrough (add one with <code>diffloupe diff --walkthrough</code>)</span>
+          )}
+        </p>
+      ) : reportedCount === 0 ? (
         <p>No new issues found in the changed files.</p>
       ) : (
         <div className={styles.verdicts}>
@@ -269,7 +283,11 @@ export function SummaryBlock({ run }: { run: ReviewRun }) {
 
       <footer className={styles.footer}>
         {overview.changeType && <span>{overview.changeType}</span>}
-        <span>{meta.costUsd > 0 || run.status === "running" ? formatCost(meta.costUsd) : "cost not reported"}</span>
+        {meta.costUsd > 0 || (run.status === "running" && !isDiff) ? (
+          <span>{formatCost(meta.costUsd)}</span>
+        ) : (
+          !isDiff && <span>cost not reported</span>
+        )}
         {meta.wallMs > 0 && <span>{formatDuration(meta.wallMs)}</span>}
         {meta.model && <span>{meta.effort ? `${meta.model} (${meta.effort})` : meta.model}</span>}
         <span>{run.status}</span>

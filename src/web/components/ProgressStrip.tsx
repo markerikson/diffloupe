@@ -21,7 +21,7 @@ export function ProgressStrip({ progress }: { progress: RunProgress | undefined 
   const pct = p && p.slicesTotal > 0 ? Math.round((finished / p.slicesTotal) * 100) : null;
   return (
     <div className={styles.strip} role="status" aria-live="polite">
-      <span className={styles.stage}>{p?.stage ? STAGE_LABEL[p.stage] : "Starting review"}…</span>
+      <span className={styles.stage}>{p?.stage ? STAGE_LABEL[p.stage] : "Starting"}…</span>
       {p && p.slicesTotal > 0 && (
         <span className={styles.slices}>
           <span className={styles.bar}>
