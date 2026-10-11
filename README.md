@@ -4,6 +4,8 @@ Understand your diffs before you merge them.
 
 DiffLoupe runs a multi-agent AI code review over a local change or a GitHub pull request. You read the result in a local web UI: the changed files are grouped by what they do, the findings sit next to the lines they are about, and a walkthrough tells you where to start reading.
 
+It is also a plain diff viewer. `diffloupe diff` shows the same grouped diff in about a second, with no agents and no credentials, and can add a walkthrough from a single model call.
+
 ![The run page: merge and prod risk, findings by file, intent check, and where to start](docs/images/run-summary.png)
 
 ![A finding and a walkthrough stop shown under the lines they refer to](docs/images/run-finding.png)
@@ -41,6 +43,8 @@ Each review is saved as a run that you can list and reopen. Reviewing the same t
 | [`gh`](https://cli.github.com) | Only for pull requests. Run `gh auth login` first. |
 | A model provider credential | See [Credentials](#credentials). |
 
+`diffloupe diff` needs only Bun, `git`, and `gh` for pull requests. With `--walkthrough` it also needs OpenCode and a credential for the walkthrough model, but not tilth.
+
 Run `diffloupe doctor` to check all of this, along with which models a review will use and where each credential comes from.
 
 **Cost.** With the built-in defaults (Claude Opus 5.5 for the reviewers and the coordinator, Claude Sonnet 5.5 for the walkthrough and group naming), real runs so far cost about $0.10 for a one-file commit, about $1 for a small PR, and $4–5 for a large one. If your OpenCode config sets a default model, DiffLoupe uses it for every stage instead, which changes the cost. Use `--max-cost` or `maxCostUsd` to set a limit. The run page and `diffloupe runs` show what each run cost. Models whose provider reports no price show "cost not reported", and `--max-cost` cannot be enforced for them.
@@ -76,12 +80,18 @@ diffloupe review branch:my-feature --intent "Add rate limiting to API endpoints"
 # Run in the terminal only and print the review as markdown
 diffloupe review --headless --markdown
 
+# View uncommitted changes grouped by code links, with no model calls
+diffloupe diff --open
+
+# View a PR with a walkthrough guide (one model call)
+diffloupe diff '#123' --walkthrough --open
+
 # Reopen saved runs
 diffloupe open --last --open
 diffloupe runs
 ```
 
-`review` starts a local server, prints the run URL, and streams progress to the terminal. The page can be opened right away. Ctrl+C stops the server, and cancels the review if it is still running. If a `diffloupe serve` is already running, `review` and `open` use it instead of starting another server.
+`review` and `diff` start a local server, print the run URL, and stream progress to the terminal. The page can be opened right away. Ctrl+C stops the server, and cancels the run if it is still going. If a `diffloupe serve` is already running, `review`, `diff` and `open` use it instead of starting another server.
 
 ## Commands
 
@@ -117,6 +127,23 @@ diffloupe runs
 
 Untracked files over 1 MB are skipped and listed in the run.
 
+### `diffloupe diff [target]`
+
+Shows a target's diff in the web UI, grouped the same way as a review, with no review agents. It takes the same targets as `review`. Grouping reads files from git objects, so no worktree is created and your checkout is not touched. Group titles come from the files' directories and names instead of a model call. Docs and generated files go in the trailing "Other changes" section.
+
+| Option | Description |
+|--------|-------------|
+| `-C, --repo <path>` | Repository (default: current directory) |
+| `--base <ref>` | For `staged`/`worktree`: diff against `merge-base(<ref>, HEAD)` instead of HEAD |
+| `--walkthrough` | Add the walkthrough guide: one call to the walkthrough model, which works from the diff alone and gets no tools for reading the repo |
+| `-i, --intent <text>`, `--intent-file <path>` | Stated intent, used by the walkthrough |
+| `--model walkthrough=<id>`, `--effort <level>` | Walkthrough model and effort |
+| `--config <file>` | Per-repo settings, for the walkthrough model |
+| `--host`, `--port`, `--open` | As for `review` |
+| `--headless` | Print the groups and their files to stdout, no server |
+
+A diff run page has a **Review these changes** button. It starts a full review of the same base and head commits. For `worktree` and `staged` targets that is the snapshot you were looking at, not what is on disk now.
+
 ### `diffloupe open [runId]`
 
 Prints the URL of a saved run, starting a server if none is running. `--last` opens the most recent run; with no run id it opens the run list. `--open` opens the browser.
@@ -129,11 +156,11 @@ Runs the server until you stop it. `-C` sets the repository that runs use by def
 
 | Command | Description |
 |---------|-------------|
-| `diffloupe runs [--json]` | List saved runs, newest first |
+| `diffloupe runs [--kind review\|diff] [--json]` | List saved runs, newest first |
 | `diffloupe runs show <id> [--json]` | Show a run: groups with their files and findings, walkthrough stops, totals |
 | `diffloupe runs show <id> --markdown [--over-cap]` | Print the findings as markdown, the same text as Copy all in the UI |
 | `diffloupe runs rm <id>` | Delete a run, its artifacts and its scratch files |
-| `diffloupe runs prune [--older-than 30d] [--keep 20] [--yes]` | Delete runs older than the cutoff, except the newest `--keep`, plus scratch files no run owns. Lists what it would delete unless `--yes` is given |
+| `diffloupe runs prune [--older-than 30d] [--keep 20] [--kind review\|diff] [--yes]` | Delete runs older than the cutoff, except the newest `--keep`, plus scratch files no run owns. Lists what it would delete unless `--yes` is given |
 
 Runs are stored under `$XDG_DATA_HOME/diffloupe/runs/<id>/` (`~/.local/share/diffloupe/runs/` by default). Each holds `run.json`, the reviewed `diff.patch`, the progress log, and the raw review output.
 
