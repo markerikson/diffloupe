@@ -27,6 +27,7 @@ import {
   findPriorRunId,
   loadRun,
   loadState,
+  remoteCopyDir,
   runDir,
   writeRun,
 } from "./run-store.ts";
@@ -34,8 +35,11 @@ import { describeSource, MODEL_STAGES } from "./models.ts";
 import { loadReviewSettings, settingsToConfig, type ReviewSettings } from "./settings.ts";
 import { resolveRunSetup, runModels, setupConfig } from "./setup.ts";
 import {
+  needsRemoteCopy,
+  openRemoteCopy,
   parseTargetSpec,
   pinnedTarget,
+  resolveRemotePullRequest,
   resolveTarget,
   TargetError,
   type ResolvedTarget,
@@ -174,7 +178,22 @@ export async function prepareRun(
     : undefined;
   const fromSpec = from ? specOf(from.target) : undefined;
   checkTools(fromSpec ? (fromSpec.kind === "pr" ? `#${fromSpec.pr}` : "") : req.target, { kind, walkthrough });
-  const repo = from ? from.repo.root : path.resolve(req.repo ?? defaultRepo);
+  if (from?.repo.remote && !isDiff) {
+    throw new TargetError(
+      `reviewing ${from.repo.slug ?? "this repository"} needs a local clone; ` +
+        `run diffloupe review from a clone of it`,
+    );
+  }
+  const localRepo = path.resolve(req.repo ?? defaultRepo);
+  const spec = from ? undefined : parseTargetSpec(req.target);
+  // A pull request in a repository with no clone here is diffed from a remote copy.
+  const remotePr =
+    isDiff && spec?.kind === "pr" && spec.repo && (await needsRemoteCopy(localRepo, spec))
+      ? { ...spec, repo: spec.repo }
+      : undefined;
+  if (remotePr) await openRemoteCopy(remoteCopyDir(remotePr.repo), remotePr.repo);
+  const repo = from ? from.repo.root : remotePr ? remoteCopyDir(remotePr.repo) : localRepo;
+  const remote = remotePr !== undefined || from?.repo.remote === true;
   const intent = req.intent?.trim() || from?.intent.stated || undefined;
 
   const userConfig = await loadConfig();
@@ -203,7 +222,9 @@ export async function prepareRun(
   const resolved =
     from && fromSpec
       ? await pinnedTarget(repo, fromSpec, from.base, from.head, { isTaken })
-      : await resolveTarget(repo, req.target, { ...(req.base ? { base: req.base } : {}), isTaken });
+      : remotePr
+        ? await resolveRemotePullRequest(repo, remotePr, { isTaken })
+        : await resolveTarget(repo, req.target, { ...(req.base ? { base: req.base } : {}), isTaken });
   const { target, changes, tag } = resolved;
   const pr = resolved.pullRequest;
   const verb = isDiff ? "Diff of" : "Reviewing";
@@ -231,7 +252,7 @@ export async function prepareRun(
   }
 
   const createdAt = new Date().toISOString();
-  const runRepo = { root: repo, ...(target.slug ? { slug: target.slug } : {}) };
+  const runRepo = { root: repo, ...(target.slug ? { slug: target.slug } : {}), ...(remote ? { remote } : {}) };
   const reviewTarget = from ? from.target : await toReviewTarget(repo, resolved);
   const untrackedSkipped = from ? from.untrackedSkipped : resolved.skippedUntracked;
   const dir = await createRunDir(tag);

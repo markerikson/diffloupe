@@ -272,7 +272,7 @@ export function Header({ run, tree, visible, collapseActions }: HeaderProps) {
           <span>{plural(run.files.length, "file")}</span>
           <DiffStats additions={totals.additions} deletions={totals.deletions} />
           <span className={styles.right}>
-            {isDiff && <ReviewButton run={run} />}
+            {isDiff && !run.repo.remote && <ReviewButton run={run} />}
             <span title={run.repo.root}>{run.repo.slug ?? run.repo.root}</span>
             <span>{formatRelative(run.createdAt)}</span>
             {(!isDiff || cost > 0) && <span title="Model cost">{formatCost(cost)}</span>}

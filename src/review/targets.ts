@@ -5,7 +5,7 @@
  * working-tree changes are snapshotted into a synthetic commit on top of HEAD,
  * built through a temporary index so the user's real index is never written.
  */
-import { copyFile, rm, stat } from "node:fs/promises";
+import { copyFile, mkdir, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
@@ -144,7 +144,12 @@ export async function resolveTarget(
   const mergeBase = async (a: string, b: string) => (await git(["merge-base", a, b])).trim();
 
   const top = await run("git", ["-C", repo, "rev-parse", "--show-toplevel"], { allowFail: true });
-  if (top.code !== 0) throw new TargetError(`${repo} is not inside a git repository`);
+  if (top.code !== 0) {
+    throw new TargetError(
+      `${repo} is not inside a git repository` +
+        (spec.kind === "pr" && spec.repo ? ". diffloupe diff can show this pull request without a clone." : ""),
+    );
+  }
 
   const slug = await repoSlug(repo);
   let base: string;
@@ -157,7 +162,8 @@ export async function resolveTarget(
     case "pr": {
       if (spec.repo && !slug.startsWith("local/") && spec.repo.toLowerCase() !== slug.toLowerCase()) {
         throw new TargetError(
-          `pull request is in ${spec.repo} but ${repo} is a clone of ${slug}. Run from a clone of ${spec.repo} or pass -C.`,
+          `pull request is in ${spec.repo} but ${repo} is a clone of ${slug}. Run from a clone of ${spec.repo} or pass -C. ` +
+            `diffloupe diff can show it without a clone.`,
         );
       }
       pullRequest = await fetchPullRequest(repo, spec.pr, spec.repo ?? (slug.startsWith("local/") ? undefined : slug));
@@ -244,6 +250,109 @@ export async function pinnedTarget(
   return { spec, target, tag, changes: await countChanges(repo, base, head), skippedUntracked: [] };
 }
 
+const SLUG_PART = /^(?!\.{1,2}$)[\w.-]+$/;
+
+/** `owner/repo` when both parts are plain names, so they can name a directory. */
+export function validSlug(slug: string): boolean {
+  const parts = slug.split("/");
+  return parts.length === 2 && parts.every((p) => SLUG_PART.test(p));
+}
+
+/**
+ * True when a pull request names a repository that `repo` is not a clone of.
+ * Such a pull request can be diffed through a remote copy instead.
+ */
+export async function needsRemoteCopy(repo: string, spec: TargetSpec): Promise<boolean> {
+  if (spec.kind !== "pr" || !spec.repo) return false;
+  const top = await run("git", ["-C", repo, "rev-parse", "--show-toplevel"], { allowFail: true });
+  if (top.code !== 0) return true;
+  const slug = await repoSlug(repo);
+  return !slug.startsWith("local/") && slug.toLowerCase() !== spec.repo.toLowerCase();
+}
+
+/**
+ * Creates the bare repository at `dir` that holds DiffLoupe's copy of a GitHub
+ * repository, if it is not there yet. It is a partial clone with no history:
+ * each run fetches only its two commits, their trees, and blobs on demand.
+ * git authenticates through gh, so private repositories work the same.
+ */
+export async function openRemoteCopy(dir: string, slug: string, url = `https://github.com/${slug}.git`): Promise<void> {
+  if (!validSlug(slug)) throw new TargetError(`not a GitHub repository: ${slug}`);
+  const git = (...args: string[]) => text("git", ["-C", dir, ...args]);
+  const exists = await stat(path.join(dir, "HEAD")).catch(() => null);
+  if (exists) return;
+  await mkdir(dir, { recursive: true });
+  await git("init", "-q", "--bare");
+  await git("remote", "add", "origin", url);
+  await git("config", "core.repositoryformatversion", "1");
+  await git("config", "extensions.partialClone", "origin");
+  await git("config", "remote.origin.promisor", "true");
+  await git("config", "remote.origin.partialclonefilter", "blob:none");
+  await git("config", "gc.auto", "0");
+  // An empty helper first clears any configured helpers for this repository.
+  await git("config", "credential.helper", "");
+  await git("config", "--add", "credential.helper", "!gh auth git-credential");
+}
+
+/**
+ * Resolves a pull request in the remote copy at `dir`: reads it with gh, finds
+ * the merge base through the compare API, and fetches both commits without
+ * history or blobs. Both are pinned under `refs/diffloupe/` until the run is
+ * deleted.
+ */
+export async function resolveRemotePullRequest(
+  dir: string,
+  spec: Extract<TargetSpec, { kind: "pr" }> & { repo: string },
+  opts: Pick<ResolveOptions, "now" | "isTaken"> = {},
+): Promise<ResolvedTarget> {
+  const pullRequest = await fetchPullRequest(dir, spec.pr, spec.repo);
+  const head = pullRequest.headRefOid;
+  const compare = await run(
+    "gh",
+    ["api", `repos/${spec.repo}/compare/${pullRequest.baseRefOid}...${head}`, "--jq", ".merge_base_commit.sha"],
+    { cwd: dir, allowFail: true },
+  );
+  const base = compare.code === 0 && compare.stdout.trim() ? compare.stdout.trim() : pullRequest.baseRefOid;
+  await fetchShallow(dir, [base, head], [`refs/pull/${spec.pr}/head`]);
+  const repoName = spec.repo.split("/").pop() ?? spec.repo;
+  const tag = freeTag(makeTag(repoName, spec, head, opts.now), opts.isTaken);
+  await text("git", ["-C", dir, "update-ref", `refs/diffloupe/${tag}`, head]);
+  await text("git", ["-C", dir, "update-ref", `refs/diffloupe/${tag}-base`, base]);
+  return {
+    spec,
+    target: { base, head, slug: spec.repo, pr: String(spec.pr) },
+    tag,
+    changes: await countChanges(dir, base, head),
+    skippedUntracked: [],
+    pullRequest,
+  };
+}
+
+async function fetchShallow(dir: string, shas: string[], fallbackRefs: string[]): Promise<void> {
+  const missing = async () => {
+    const present = await Promise.all(shas.map((sha) => hasCommit(dir, sha)));
+    return shas.filter((_, i) => !present[i]);
+  };
+  const fetch = (wants: string[]) =>
+    run("git", ["-C", dir, "fetch", "-q", "--depth=1", "--filter=blob:none", "--no-tags", "origin", ...wants], {
+      allowFail: true,
+    });
+  let wanted = await missing();
+  if (wanted.length === 0) return;
+  const first = await fetch(wanted);
+  wanted = await missing();
+  for (const ref of fallbackRefs) {
+    if (wanted.length === 0) return;
+    await fetch([ref]);
+    wanted = await missing();
+  }
+  if (wanted.length) {
+    throw new TargetError(
+      `could not fetch ${wanted.map((s) => s.slice(0, 10)).join(", ")} from GitHub: ${first.stderr.trim() || "not found"}`,
+    );
+  }
+}
+
 async function fetchPullRequest(repo: string, pr: number, ghRepo: string | undefined): Promise<PullRequestInfo> {
   const fields =
     "number,title,body,author,url,state,isDraft,baseRefName,headRefName,baseRefOid,headRefOid";
@@ -256,7 +365,12 @@ async function fetchPullRequest(repo: string, pr: number, ghRepo: string | undef
 }
 
 async function hasCommit(repo: string, sha: string): Promise<boolean> {
-  const r = await run("git", ["-C", repo, "cat-file", "-e", `${sha}^{commit}`], { allowFail: true });
+  // In a partial clone a missing commit would otherwise be fetched with its
+  // whole history just to answer the question.
+  const r = await run("git", ["-C", repo, "cat-file", "-e", `${sha}^{commit}`], {
+    allowFail: true,
+    env: { ...process.env, GIT_NO_LAZY_FETCH: "1" },
+  });
   return r.code === 0;
 }
 

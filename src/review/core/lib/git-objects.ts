@@ -6,10 +6,11 @@ import { spawn } from "node:child_process";
 import { posix } from "node:path";
 import type { ProjectFiles } from "./module-resolver.ts";
 
-function gitBuffer(repo: string, args: string[], input?: string): Promise<Buffer> {
+function gitBuffer(repo: string, args: string[], input?: string, env?: NodeJS.ProcessEnv): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const child = spawn("git", ["-C", repo, ...args], {
       stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+      ...(env ? { env: { ...process.env, ...env } } : {}),
     });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
@@ -27,17 +28,61 @@ function gitBuffer(repo: string, args: string[], input?: string): Promise<Buffer
   });
 }
 
-/** Every blob path in the tree at `sha`, repo-relative with forward slashes. */
-export async function treeFiles(repo: string, sha: string): Promise<string[]> {
+/** Path → blob id for every blob in the tree at `sha`, repo-relative with forward slashes. */
+async function treeBlobs(repo: string, sha: string): Promise<Map<string, string>> {
   const out = (await gitBuffer(repo, ["ls-tree", "-r", "-z", sha])).toString("utf8");
-  const paths: string[] = [];
+  const blobs = new Map<string, string>();
   for (const entry of out.split("\0")) {
     const tab = entry.indexOf("\t");
     if (tab < 0) continue;
-    const [, type] = entry.slice(0, tab).split(" ");
-    if (type === "blob") paths.push(entry.slice(tab + 1));
+    const [, type, oid] = entry.slice(0, tab).split(" ");
+    if (type === "blob" && oid) blobs.set(entry.slice(tab + 1), oid);
   }
-  return paths;
+  return blobs;
+}
+
+/** Every blob path in the tree at `sha`, repo-relative with forward slashes. */
+export async function treeFiles(repo: string, sha: string): Promise<string[]> {
+  return [...(await treeBlobs(repo, sha)).keys()];
+}
+
+/**
+ * In a partial clone, fetches the blobs in `oids` that are not local yet with
+ * one request. Without this, `cat-file --batch` fetches each missing blob in
+ * its own round trip. A repo that is not a partial clone is left alone.
+ */
+export async function prefetchBlobs(repo: string, oids: string[]): Promise<void> {
+  if (oids.length === 0) return;
+  const remote = (
+    await gitBuffer(repo, ["config", "--get", "extensions.partialClone"]).catch(() => Buffer.alloc(0))
+  )
+    .toString("utf8")
+    .trim();
+  if (!remote) return;
+  const check = await gitBuffer(repo, ["cat-file", "--batch-check"], `${oids.join("\n")}\n`, {
+    GIT_NO_LAZY_FETCH: "1",
+  });
+  const missing = check
+    .toString("utf8")
+    .split("\n")
+    .flatMap((l) => (l.endsWith(" missing") ? [l.slice(0, l.indexOf(" "))] : []));
+  if (missing.length === 0) return;
+  await gitBuffer(
+    repo,
+    [
+      "-c",
+      "fetch.negotiationAlgorithm=noop",
+      "fetch",
+      "-q",
+      "--no-tags",
+      "--no-write-fetch-head",
+      "--recurse-submodules=no",
+      "--filter=blob:none",
+      "--stdin",
+      remote,
+    ],
+    `${missing.join("\n")}\n`,
+  );
 }
 
 /**
@@ -73,10 +118,14 @@ const CONFIG_FILE = /^(?:(?:tsconfig|jsconfig).*\.json|package\.json)$/;
  * resolution reads. `read` of anything else returns undefined.
  */
 export async function projectFilesAtCommit(repo: string, sha: string, preload: string[]): Promise<ProjectFiles> {
-  const paths = await treeFiles(repo, sha);
-  const set = new Set(paths);
-  const configs = paths.filter((p) => CONFIG_FILE.test(posix.basename(p)));
+  const blobs = await treeBlobs(repo, sha);
+  const set = new Set(blobs.keys());
+  const configs = [...set].filter((p) => CONFIG_FILE.test(posix.basename(p)));
   const toRead = [...new Set([...preload.filter((p) => set.has(p)), ...configs])];
+  await prefetchBlobs(
+    repo,
+    toRead.map((p) => blobs.get(p) ?? "").filter(Boolean),
+  );
   const contents = await readFilesAt(repo, sha, toRead);
   return { paths: set, read: (p) => contents.get(p) };
 }

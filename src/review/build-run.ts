@@ -58,7 +58,7 @@ interface CoreRecord {
 export interface BuildReviewRunInput {
   id: string;
   createdAt: string;
-  repo: { root: string; slug?: string };
+  repo: ReviewRun["repo"];
   target: ReviewTarget;
   base: string;
   head: string;

@@ -153,7 +153,8 @@ export const RunSliceSchema = type({
 });
 export type RunSlice = typeof RunSliceSchema.infer;
 
-export const RunRepoSchema = type({ root: "string", "slug?": "string" });
+/** `remote`: `root` is DiffLoupe's partial copy of the GitHub repository, not the user's clone. */
+export const RunRepoSchema = type({ root: "string", "slug?": "string", "remote?": "boolean" });
 
 export const RunKindSchema = type("'review' | 'diff'");
 export type RunKind = typeof RunKindSchema.infer;

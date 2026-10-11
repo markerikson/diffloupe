@@ -31,6 +31,12 @@ export function artifactsDir(): string {
   return path.join(dataDir(), "artifacts");
 }
 
+/** DiffLoupe's partial copy of a GitHub repository, for pull requests with no local clone. */
+export function remoteCopyDir(slug: string): string {
+  const [owner = "", name = ""] = slug.toLowerCase().split("/");
+  return path.join(dataDir(), "repos", owner, `${name}.git`);
+}
+
 export function runDir(id: string): string {
   if (!id || id.includes("/") || id.includes("\\") || id.startsWith(".")) throw new Error(`invalid run id: ${id}`);
   return path.join(runsDir(), id);
@@ -232,12 +238,14 @@ export async function deleteRun(id: string): Promise<string[]> {
   }
 
   if (repoRoot) {
-    const ref = `refs/diffloupe/${id}`;
-    try {
-      await text("git", ["-C", repoRoot, "update-ref", "-d", ref]);
-      removed.push(ref);
-    } catch {
-      // No such ref: the target was a real commit range or a pull request.
+    // `-base` pins the base commit of a pull request in a remote copy.
+    for (const ref of [`refs/diffloupe/${id}`, `refs/diffloupe/${id}-base`]) {
+      try {
+        await text("git", ["-C", repoRoot, "update-ref", "-d", ref]);
+        removed.push(ref);
+      } catch {
+        // No such ref: the target was a real commit range or a pull request in a clone.
+      }
     }
   }
 
