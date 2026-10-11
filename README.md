@@ -86,6 +86,9 @@ diffloupe diff --open
 # View a PR with a walkthrough guide (one model call)
 diffloupe diff '#123' --walkthrough --open
 
+# View a PR from any directory, without a clone
+diffloupe diff owner/repo#123 --open
+
 # Reopen saved runs
 diffloupe open --last --open
 diffloupe runs
@@ -142,6 +145,8 @@ Shows a target's diff in the web UI, grouped the same way as a review, with no r
 | `--host`, `--port`, `--open` | As for `review` |
 | `--headless` | Print the groups and their files to stdout, no server |
 
+`owner/repo#<n>` and PR URLs also work outside a clone of that repository. DiffLoupe then keeps its own copy of the repository under `~/.local/share/diffloupe/repos/` with no history and no file contents: each run fetches only the PR head and its merge base, and file contents are fetched as the diff and grouping need them. git authenticates through `gh`, so private repositories work too. Such runs cannot be turned into reviews, since a review needs a clone.
+
 A diff run page has a **Review these changes** button. It starts a full review of the same base and head commits. For `worktree` and `staged` targets that is the snapshot you were looking at, not what is on disk now.
 
 ### `diffloupe open [runId]`
@@ -162,7 +167,7 @@ Runs the server until you stop it. `-C` sets the repository that runs use by def
 | `diffloupe runs rm <id>` | Delete a run, its artifacts and its scratch files |
 | `diffloupe runs prune [--older-than 30d] [--keep 20] [--kind review\|diff] [--yes]` | Delete runs older than the cutoff, except the newest `--keep`, plus scratch files no run owns. Lists what it would delete unless `--yes` is given |
 
-Runs are stored under `$XDG_DATA_HOME/diffloupe/runs/<id>/` (`~/.local/share/diffloupe/runs/` by default). Each holds `run.json`, the reviewed `diff.patch`, the progress log, and the raw review output.
+Runs are stored under `$XDG_DATA_HOME/diffloupe/runs/<id>/` (`~/.local/share/diffloupe/runs/` by default). Each holds `run.json`, the reviewed `diff.patch`, the progress log, and the raw review output. Deleting a run removes the refs that pin its commits; the repository copies under `repos/` are not deleted, and their objects stay until you remove the directory.
 
 ### `diffloupe doctor`
 
