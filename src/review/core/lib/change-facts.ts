@@ -7,14 +7,14 @@
  * Files tree-sitter cannot parse still get their used identifiers, which is
  * enough to link a YAML or JSON file to nothing, and that is correct.
  */
-import path from "node:path";
 import type { FileFacts } from "./grouping.ts";
 import { diffLines, parseDiffHunks } from "./hunks.ts";
 import { detectLanguage } from "./languages.ts";
-import { projectFilesFromGit, resolveOutlineImports, type OutlineImports } from "./module-resolver.ts";
+import { resolveOutlineImports, type OutlineImports, type ProjectFiles } from "./module-resolver.ts";
 
 export async function gatherChangeFacts(o: {
-  repo: string;
+  /** The head version of the repo: its file list, and a reader for the changed files and config files. */
+  source: ProjectFiles;
   /** `git diff --unified=0` output for the files to group. */
   diffU0: string;
   files: string[];
@@ -37,7 +37,8 @@ export async function gatherChangeFacts(o: {
     let defined: string[] = [];
     if (detectLanguage(file)) {
       try {
-        const outline = await extractor.parseFile(path.join(o.repo, file), file, o.repo);
+        const text = o.source.read(file);
+        const outline = text === undefined ? null : await extractor.parseSource(text, file, o.source.paths);
         if (outline) {
           const added = hunks.get(file) ?? [];
           imports.imports = outline.imports;
@@ -54,7 +55,7 @@ export async function gatherChangeFacts(o: {
   }
   resolveOutlineImports(
     parsed.map((p) => p.imports),
-    projectFilesFromGit(o.repo),
+    o.source,
   );
   return parsed.map(({ file, imports, defined }) => ({
     file,

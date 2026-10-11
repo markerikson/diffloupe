@@ -14,10 +14,13 @@
  */
 
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, join, posix } from "node:path";
 import { detectLanguage, type LanguageId } from "./languages.ts";
 
 export { detectLanguage, type LanguageId };
+
+/** A repo root on disk, or the set of repo-relative file paths at some commit. */
+export type SourceFiles = string | ReadonlySet<string>;
 import { Language, Parser, Query } from "web-tree-sitter";
 
 // ============================================================================
@@ -212,11 +215,14 @@ export class OutlineExtractor {
     return this.parseSource(source, relPath, repoRoot, language);
   }
 
-  /** Parse in-memory source. Used directly by tests with fixtures. */
+  /**
+   * Parse in-memory source. `files` resolves relative imports: a repo root on
+   * disk, or the repo's file list when the source came from git objects.
+   */
   async parseSource(
     source: string,
     relPath: string,
-    repoRoot: string,
+    files: SourceFiles,
     language?: LanguageId,
   ): Promise<FileOutline | null> {
     const id = language ?? detectLanguage(relPath);
@@ -234,7 +240,7 @@ export class OutlineExtractor {
     try {
       const root = tree.rootNode;
       const symbols = collectSymbols(root, source, definitions, id);
-      const { resolved, external } = collectImports(root, source, imports, relPath, repoRoot, id);
+      const { resolved, external } = collectImports(root, source, imports, relPath, files, id);
 
       return {
         path: relPath,
@@ -467,13 +473,13 @@ function collectImports(
   _source: string,
   query: Query,
   relPath: string,
-  repoRoot: string,
+  files: SourceFiles,
   language: LanguageId,
 ): { resolved: string[]; external: string[] } {
   const matches = query.matches(root as never);
   const resolved = new Set<string>();
   const external = new Set<string>();
-  const fromDir = dirname(relPath);
+  const fromDir = posix.dirname(relPath.replace(/\\/g, "/"));
 
   for (const match of matches) {
     for (const capture of match.captures) {
@@ -483,8 +489,8 @@ function collectImports(
 
       const target =
         language === "cpp"
-          ? resolveInclude(spec, fromDir, repoRoot)
-          : resolveTsImport(spec, fromDir, repoRoot);
+          ? resolveInclude(spec, fromDir, files)
+          : resolveTsImport(spec, fromDir, files);
 
       if (target) resolved.add(target);
       else external.add(spec);
@@ -492,15 +498,6 @@ function collectImports(
   }
 
   return { resolved: [...resolved].sort(), external: [...external].sort() };
-}
-
-function normalizeRel(abs: string, repoRoot: string): string | null {
-  // Slicing by the root's length cannot detect a path outside the root: a
-  // sibling directory just yields a nonsense suffix rather than one starting
-  // with "..". relative() reports the escape, which is the whole point here.
-  const rel = relative(resolve(repoRoot), resolve(abs));
-  if (!rel || rel.startsWith("..") || isAbsolute(rel)) return null;
-  return rel.replace(/\\/g, "/");
 }
 
 function isFile(p: string): boolean {
@@ -511,22 +508,34 @@ function isFile(p: string): boolean {
   }
 }
 
-function resolveTsImport(spec: string, fromDir: string, repoRoot: string): string | null {
+/**
+ * The repo-relative path `rel` when it names a file inside the repo, else null.
+ * A path that climbs out of the root is rejected rather than reported as a
+ * nonsense suffix.
+ */
+function fileAt(files: SourceFiles, rel: string): string | null {
+  const norm = posix.normalize(rel.replace(/\\/g, "/"));
+  if (norm === ".." || norm.startsWith("../") || posix.isAbsolute(norm)) return null;
+  if (typeof files === "string") return isFile(join(files, norm)) ? norm : null;
+  return files.has(norm) ? norm : null;
+}
+
+function resolveTsImport(spec: string, fromDir: string, files: SourceFiles): string | null {
   if (!spec.startsWith(".")) return null;
-  const base = resolve(repoRoot, fromDir, spec);
+  const base = posix.join(fromDir, spec);
   for (const suffix of TS_RESOLVE_SUFFIXES) {
-    const candidate = `${base}${suffix}`;
     // The empty suffix is the specifier as written, which is how every import in
     // this directory is written (`./lib/proc.ts`). It has to be checked as a
     // file rather than merely existing: `./lib` names a directory, and treating
     // that as the resolution would attribute the edge to the folder.
-    const hit = suffix === "" ? isFile(candidate) : existsSync(candidate);
-    if (hit) return normalizeRel(candidate, repoRoot);
+    const hit = fileAt(files, `${base}${suffix}`);
+    if (hit) return hit;
   }
   return null;
 }
 
-function resolveInclude(spec: string, fromDir: string, repoRoot: string): string | null {
+function resolveInclude(spec: string, fromDir: string, files: SourceFiles): string | null {
+  if (spec.startsWith("/")) return null;
   // Includes are written against the compiler's -I roots, not just the including
   // file's directory: with `src/native` on the path, `src/native/driver/Driver.h`
   // says `#include "shared/Utils.h"`. Trying only the file's own directory and
@@ -536,13 +545,11 @@ function resolveInclude(spec: string, fromDir: string, repoRoot: string): string
   // the files compiled with it.
   let dir = fromDir;
   for (;;) {
-    const candidate = resolve(repoRoot, dir, spec);
-    if (isFile(candidate)) return normalizeRel(candidate, repoRoot);
-    const up = dirname(dir);
+    const hit = fileAt(files, posix.join(dir, spec));
+    if (hit) return hit;
+    const up = posix.dirname(dir);
     if (up === dir || dir === "." || dir === "") break;
     dir = up;
   }
-  const fromRoot = resolve(repoRoot, spec);
-  if (isFile(fromRoot)) return normalizeRel(fromRoot, repoRoot);
-  return null;
+  return fileAt(files, spec);
 }

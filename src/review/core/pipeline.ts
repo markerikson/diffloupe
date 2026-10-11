@@ -8,16 +8,17 @@
  */
 import path from "node:path";
 import { registryCheck, renderRegistryReport } from "./registry-check.ts";
-import { buildDiffSeededMap, GENERIC_IDENTS } from "./build-map.ts";
-import { gatherChangeFacts } from "./lib/change-facts.ts";
+import { buildDiffSeededMap } from "./build-map.ts";
+import { groupChanges } from "./change-groups.ts";
+import { projectFilesFromGit } from "./lib/module-resolver.ts";
 import { crossGroupLinkLines, groupLinkLines, selectWalkFiles, sketchFiles, sketchLine } from "./lib/walk-input.ts";
-import { applyGroupNaming, crossLinksFor, groupFiles, linkFiles, type GroupNaming } from "./lib/grouping.ts";
+import { applyGroupNaming, crossLinksFor, type GroupNaming } from "./lib/grouping.ts";
 import { countLines, ensureDir, exists, removeIfPresent, writeJson, writeText } from "./lib/io.ts";
 import { openSubject } from "./lib/subject.ts";
 import { targetKey, type Target } from "./lib/target.ts";
 import { fingerprint } from "./lib/marker.ts";
-import { compactDeletedFiles, diffSizes } from "./lib/hunks.ts";
-import { SUBJECT, ARTIFACTS, RUNNER, MODEL, EFFORT, MODEL_WALK, MODEL_MERGE, EFFORT_AUX, WALK_BUDGET, PART_BUDGET, GROUPING, SLICE_BUDGET, MERGE_BUDGET, POOL, MAX_SLICES, CHARS_PER_TOKEN, MAX_SLICE_TOKENS, WALK_DIFF_TOKENS, OUT, applyConfig, setRunState, resetRunState, releaseSubject, type ReviewConfig } from "./config.ts";
+import { compactDeletedFiles } from "./lib/hunks.ts";
+import { SUBJECT, ARTIFACTS, RUNNER, MODEL, EFFORT, MODEL_WALK, MODEL_MERGE, EFFORT_AUX, WALK_BUDGET, PART_BUDGET, GROUPING, SLICE_BUDGET, MERGE_BUDGET, POOL, MAX_SLICES, MAX_SLICE_TOKENS, WALK_DIFF_TOKENS, OUT, applyConfig, setRunState, resetRunState, releaseSubject, type ReviewConfig } from "./config.ts";
 import { classifyFile, type Finding } from "./findings.ts";
 import { gitText, diffOutline, gatherIntent, gatherPriorComments, renderPriorComments, type PriorComment } from "./context.ts";
 import { agent, CancelledError, killAgents } from "./runner.ts";
@@ -237,21 +238,16 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
   const partTag = `${tagBase}-part`;
   const partOut = `${OUT}/${partTag}.json`;
   await removeIfPresent(partOut);
-  const wholeDiff = compactDeletedFiles(await gitText(["diff", `${base}..${head}`, "--", ...sliceFiles]), base);
-  const diffstat = await gitText(["diff", "--stat", `${base}..${head}`]);
-  const outline = await diffOutline(base, head, sliceFiles);
-  // One parse of the diff already in hand, rather than a `git diff` per file:
-  // it is exact, it is one subprocess instead of one per changed file, and
-  // tokens are the currency everything downstream is budgeted in.
-  const fileBytes = diffSizes(wholeDiff);
-  const fileTokens = new Map([...fileBytes].map(([f, b]) => [f, Math.ceil(b / CHARS_PER_TOKEN)]));
   // Links are computed whichever way units are formed: they also tell each
   // reviewer which of its files are tied to files another reviewer has.
-  const diffU0 = await gitText(["diff", "--unified=0", `${base}..${head}`, "--", ...sliceFiles]);
-  const facts = await gatherChangeFacts({ repo: SUBJECT, diffU0, files: sliceFiles, fileTokens });
-  const links = linkFiles(facts, GENERIC_IDENTS);
-  const computed =
-    GROUPING === "code" ? groupFiles(facts, links, { budget: MAX_SLICE_TOKENS, maxGroups: MAX_SLICES }) : undefined;
+  const { wholeDiff, diffstat, diffU0, fileTokens, facts, links, grouping } = await groupChanges({
+    base,
+    head,
+    files: sliceFiles,
+    source: () => projectFilesFromGit(SUBJECT),
+  });
+  const outline = await diffOutline(base, head, sliceFiles);
+  const computed = GROUPING === "code" ? grouping : undefined;
   const pp = computed
     ? groupNamingPrompt({ groups: computed.groups, links, outline, intent, registry: regMd, outFile: partOut })
     : partitionPrompt({ diffstat, outline, intent, codeFiles: sliceFiles, registry: regMd, outFile: partOut });
