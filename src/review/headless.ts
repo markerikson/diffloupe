@@ -5,7 +5,7 @@
  */
 import { defaultDriver, RunManager } from "../server/run-manager.ts";
 import { formatEvent } from "./format-event.ts";
-import { formatRunSummary } from "./format-run.ts";
+import { formatDiffSummary, formatRunSummary } from "./format-run.ts";
 import type { ReviewCommandOptions } from "./options.ts";
 import { readRunMarkdown, requestFromOptions } from "./run-driver.ts";
 import { dataDir, runDir } from "./run-store.ts";
@@ -46,6 +46,10 @@ export async function runHeadlessReview(opts: ReviewCommandOptions): Promise<num
     return 1;
   }
   log(`Run saved: ${dir} (diffloupe runs show ${started.id})\n`);
+  if (opts.kind === "diff") {
+    process.stdout.write(`${formatDiffSummary(outcome.run)}\n`);
+    return 0;
+  }
   if (!outcome.reviewed) return 0;
   const markdown = opts.markdown ? await readRunMarkdown(dir) : undefined;
   process.stdout.write(markdown ?? `${formatRunSummary(outcome.run)}\n`);

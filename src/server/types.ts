@@ -4,7 +4,7 @@
  * from the review core; `schema-drift.ts` checks the copies stay in sync.
  */
 import { type } from "arktype";
-import { RunGroupSchema } from "../types/review-run.ts";
+import { RunGroupSchema, RunKindSchema } from "../types/review-run.ts";
 
 /**
  * Body of `POST /api/runs`. Also what the CLI hands the run manager directly.
@@ -27,6 +27,9 @@ export const StartRunRequestSchema = type({
   "effort?": "string",
   "maxCostUsd?": "number > 0",
   "settingsFile?": "string",
+  "kind?": RunKindSchema,
+  /** Diff runs only: add the walkthrough guide. */
+  "walkthrough?": "boolean",
 });
 export type StartRunRequest = typeof StartRunRequestSchema.infer;
 
@@ -71,7 +74,8 @@ export type GroupsEvent = typeof GroupsEventSchema.infer;
  * Events the run manager adds around the core's own. On `done`, `findings`
  * counts every finding in run.json, carried-over ones included; `carriedOver`
  * is absent in older event logs; `noChanges` means the target held no
- * reviewable code and nothing was sent to a model.
+ * reviewable code and nothing was sent to a model. Diff runs set `kind` and
+ * `files` (the changed file count).
  */
 export const RunEventSchema = CoreEventSchema.or(GroupsEventSchema).or({
   type: "'done'",
@@ -81,6 +85,8 @@ export const RunEventSchema = CoreEventSchema.or(GroupsEventSchema).or({
   costUsd: "number",
   wallMs: "number",
   "noChanges?": "boolean",
+  "kind?": RunKindSchema,
+  "files?": "number",
 })
   .or({ type: "'cancelled'" })
   .or({ type: "'error'", message: "string" });

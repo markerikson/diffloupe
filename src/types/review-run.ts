@@ -155,6 +155,14 @@ export type RunSlice = typeof RunSliceSchema.infer;
 
 export const RunRepoSchema = type({ root: "string", "slug?": "string" });
 
+export const RunKindSchema = type("'review' | 'diff'");
+export type RunKind = typeof RunKindSchema.infer;
+
+/** A run's kind; runs written before diff runs existed have none and are reviews. */
+export function runKind(run: { meta: { kind?: RunKind | undefined } }): RunKind {
+  return run.meta.kind ?? "review";
+}
+
 /**
  * - `groups`: parents come before their children; display order is array order.
  * - `overCapFindings`: findings the review stands behind but cut by the posting cap.
@@ -198,12 +206,17 @@ export const ReviewRunSchema = type({
   meta: {
     "model?": "string",
     "effort?": "string",
-    /** The model each stage ran, as `provider/model[#variant]`, and where the choice came from. */
+    /**
+     * The model each stage ran, as `provider/model[#variant]`, and where the
+     * choice came from. A diff run lists only the walkthrough, when it ran one.
+     */
     "models?": {
-      review: { model: "string", "source?": "string" },
-      coordinator: { model: "string", "source?": "string" },
-      walkthrough: { model: "string", "source?": "string" },
+      "review?": { model: "string", "source?": "string" },
+      "coordinator?": { model: "string", "source?": "string" },
+      "walkthrough?": { model: "string", "source?": "string" },
     },
+    /** `diff`: grouped diff with no review agents. Missing means `review`. */
+    "kind?": RunKindSchema,
     wallMs: "number",
     costUsd: "number",
     slices: RunSliceSchema.array(),
@@ -244,6 +257,7 @@ export const RunHeaderSchema = type({
   createdAt: "string",
   target: ReviewTargetSchema,
   repo: RunRepoSchema,
+  "kind?": RunKindSchema,
   findingCounts: {
     blocker: "number",
     "should-fix": "number",

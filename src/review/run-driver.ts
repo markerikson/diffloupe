@@ -8,11 +8,12 @@ import path from "node:path";
 import { copyFile, readFile, writeFile } from "node:fs/promises";
 import { loadConfig } from "../services/config.ts";
 import type { RunEvent, StartRunRequest } from "../server/types.ts";
-import type { ReviewRun, ReviewTarget } from "../types/review-run.ts";
+import type { ReviewRun, ReviewTarget, RunKind } from "../types/review-run.ts";
 import type { ReviewConfig } from "./core/config.ts";
 import { text } from "./core/lib/proc.ts";
 import type { Target } from "./core/lib/target.ts";
-import { runReview, type ReviewEvent, type RunReviewResult } from "./core/pipeline.ts";
+import { runReview, type ReviewEvent } from "./core/pipeline.ts";
+import { runDiff, type RunDiffResult } from "./diff-run.ts";
 import { describeAnchors } from "./anchors.ts";
 import type { ReviewCommandOptions, ReviewModelStage } from "./options.ts";
 import type { BuildPendingRunInput } from "./build-run.ts";
@@ -65,6 +66,8 @@ export async function requestFromOptions(opts: ReviewCommandOptions): Promise<St
   if (!intent && opts.intentFile) intent = (await readFile(opts.intentFile, "utf8")).trim();
   const models = parseModelPairs(opts.model ?? []);
   return {
+    ...(opts.kind === "diff" ? { kind: "diff" as const } : {}),
+    ...(opts.kind === "diff" && opts.walkthrough ? { walkthrough: true } : {}),
     repo: path.resolve(opts.repo ?? process.cwd()),
     ...(opts.target ? { target: opts.target } : {}),
     ...(opts.base ? { base: opts.base } : {}),
@@ -89,11 +92,19 @@ function modelConfig(models: Partial<Record<ReviewModelStage, string>>): Partial
   return out;
 }
 
-/** Throws a TargetError naming every required tool missing from PATH. */
-export function checkTools(targetSpec: string | undefined): void {
+/**
+ * Throws a TargetError naming every required tool missing from PATH. A diff
+ * run needs only git (and gh for a pull request), plus OpenCode for its
+ * walkthrough.
+ */
+export function checkTools(
+  targetSpec: string | undefined,
+  run: { kind?: RunKind; walkthrough?: boolean } = {},
+): void {
   const spec = parseTargetSpec(targetSpec);
-  const needed = ["git", "opencode", "tilth", ...(spec.kind === "pr" ? ["gh"] : [])];
-  const missing = needed.filter((t) => !Bun.which(t));
+  const agents = run.kind === "diff" ? (run.walkthrough ? ["opencode"] : []) : ["opencode", "tilth"];
+  const needed = ["git", ...agents, ...(spec.kind === "pr" ? ["gh"] : [])];
+  const missing = needed.filter((t) => !Bun.which(t, { PATH: process.env.PATH ?? "" }));
   if (missing.length) {
     throw new TargetError(
       ["Missing required tools on PATH:", ...missing.map((t) => `  ${t}: ${INSTALL_HINTS[t] ?? ""}`)].join("\n"),
@@ -103,6 +114,9 @@ export function checkTools(targetSpec: string | undefined): void {
 
 export interface PreparedRun {
   id: string;
+  kind: RunKind;
+  /** Diff runs only: run the walkthrough. */
+  walkthrough: boolean;
   dir: string;
   createdAt: string;
   repo: string;
@@ -132,42 +146,54 @@ export async function prepareRun(
   log: (message: string) => void,
   deps: { resolveSetup?: typeof resolveRunSetup } = {},
 ): Promise<PreparedRun> {
-  checkTools(req.target);
+  const kind: RunKind = req.kind ?? "review";
+  const isDiff = kind === "diff";
+  const walkthrough = isDiff && req.walkthrough === true;
+  checkTools(req.target, { kind, walkthrough });
   const repo = path.resolve(req.repo ?? defaultRepo);
   const intent = req.intent?.trim() || undefined;
 
   const userConfig = await loadConfig();
   const settings: ReviewSettings = req.settingsFile ? await loadReviewSettings(path.resolve(req.settingsFile)) : {};
-  const setup = await (deps.resolveSetup ?? resolveRunSetup)({
-    cli: { ...(req.models ? { models: req.models } : {}), ...(req.effort ? { effort: req.effort } : {}) },
-    settings,
-    userConfig,
-  });
-  const problems = [...setup.credentials.errors, ...(setup.catalog?.errors ?? [])];
+  // A diff run resolves models and credentials only for its walkthrough, and
+  // without one needs neither.
+  const stages: readonly ReviewModelStage[] = isDiff ? (walkthrough ? ["walkthrough"] : []) : MODEL_STAGES;
+  const setup = stages.length
+    ? await (deps.resolveSetup ?? resolveRunSetup)({
+        cli: { ...(req.models ? { models: req.models } : {}), ...(req.effort ? { effort: req.effort } : {}) },
+        settings,
+        userConfig,
+        stages,
+      })
+    : undefined;
+  const problems = setup ? [...setup.credentials.errors, ...(setup.catalog?.errors ?? [])] : [];
   if (problems.length) throw new TargetError(problems.join("\n"));
   const config: Partial<ReviewConfig> = {
     artifacts: artifactsDir(),
     out: path.join(dataDir(), "scratch"),
     ...settingsToConfig(settings),
-    ...setupConfig(setup),
+    ...(setup ? setupConfig(setup) : {}),
   };
-  const maxCostUsd = req.maxCostUsd ?? userConfig.maxCostUsd;
+  const maxCostUsd = isDiff ? undefined : (req.maxCostUsd ?? userConfig.maxCostUsd);
 
   const resolved = await resolveTarget(repo, req.target, req.base ? { base: req.base } : {});
   const { target, changes, tag } = resolved;
   const pr = resolved.pullRequest;
-  log(pr ? `Reviewing ${target.slug}#${pr.number}: ${pr.title}` : `Reviewing ${target.slug} (${resolved.spec.kind})`);
+  const verb = isDiff ? "Diff of" : "Reviewing";
+  log(pr ? `${verb} ${target.slug}#${pr.number}: ${pr.title}` : `${verb} ${target.slug} (${resolved.spec.kind})`);
   log(`  ${target.base.slice(0, 10)}..${target.head.slice(0, 10)}`);
   log(`  ${changes.files} file(s) changed, +${changes.insertions} -${changes.deletions}`);
   log(`  run ${tag}`);
-  for (const stage of MODEL_STAGES) {
-    const m = setup.models[stage];
-    log(`  ${stage}: ${m.model} (${describeSource(m.source)})`);
+  if (setup) {
+    for (const stage of stages) {
+      const m = setup.models[stage];
+      log(`  ${stage}: ${m.model} (${describeSource(m.source)})`);
+    }
+    for (const warning of setup.credentials.warnings) log(`  warning: ${warning}`);
   }
-  for (const warning of setup.credentials.warnings) log(`  warning: ${warning}`);
   if (maxCostUsd !== undefined) {
     log(
-      setup.catalog?.zeroCost.includes("review")
+      setup?.catalog?.zeroCost.includes("review")
         ? "  cost limit not enforced: models report no cost"
         : `  cost limit $${maxCostUsd.toFixed(2)}`,
     );
@@ -193,13 +219,13 @@ export async function prepareRun(
     target.head,
   ]);
   await writeFile(path.join(dir, "diff.patch"), patch);
-  const priorRunId = await findPriorRunId(runRepo, reviewTarget, createdAt);
+  const priorRunId = isDiff ? undefined : await findPriorRunId(runRepo, reviewTarget, createdAt);
   const previous = priorRunId ? await loadPrevious(repo, priorRunId, target.head) : undefined;
   if (previous?.run.findings.length) {
     log(`  ${previous.run.findings.length} finding(s) from prior run ${previous.run.id}`);
   }
   const source = await coreSource();
-  const models = runModels(setup);
+  const models = setup ? runModels(setup, stages) : undefined;
 
   const { buildPendingRun } = await import("./build-run.ts");
   const pending = buildPendingRun({
@@ -214,12 +240,15 @@ export async function prepareRun(
     untrackedSkipped: resolved.skippedUntracked,
     coreSource: source,
     ...(priorRunId ? { priorRunId } : {}),
-    models,
+    ...(models ? { models } : {}),
+    ...(isDiff ? { kind } : {}),
   });
   await writeRun(pending);
 
   return {
     id: tag,
+    kind,
+    walkthrough,
     dir,
     createdAt,
     repo,
@@ -233,7 +262,7 @@ export async function prepareRun(
     ...(previous ? { previous } : {}),
     untrackedSkipped: resolved.skippedUntracked,
     coreSource: source,
-    models,
+    ...(models ? { models } : {}),
     pending,
   };
 }
@@ -247,7 +276,7 @@ export interface ExecuteRunOptions {
 
 export interface ExecutedRun {
   run: ReviewRun;
-  /** False when the target held no reviewable code and no model was called. */
+  /** False when the target held no reviewable code and no model was called. Always true for diff runs. */
   reviewed: boolean;
 }
 
@@ -276,20 +305,32 @@ export async function executeRun(prep: PreparedRun, opts: ExecuteRunOptions): Pr
       }),
     );
   };
-  let result: RunReviewResult;
+  let result: RunDiffResult & { markdownPath?: string };
   try {
-    result = await runReview({
-      repo: prep.repo,
-      target: prep.target,
-      tag: id,
-      config: prep.config,
-      local: true,
-      signal: opts.signal,
-      ...(prep.maxCostUsd !== undefined ? { maxCostUsd: prep.maxCostUsd } : {}),
-      ...(prep.intent ? { intent: prep.intent } : {}),
-      ...(prep.previous ? { prior: priorComments(prep.previous.run) } : {}),
-      onProgress,
-    });
+    result =
+      prep.kind === "diff"
+        ? await runDiff({
+            repo: prep.repo,
+            target: prep.target,
+            tag: id,
+            config: prep.config,
+            walkthrough: prep.walkthrough,
+            signal: opts.signal,
+            ...(prep.intent ? { intent: prep.intent } : {}),
+            onProgress,
+          })
+        : await runReview({
+            repo: prep.repo,
+            target: prep.target,
+            tag: id,
+            config: prep.config,
+            local: true,
+            signal: opts.signal,
+            ...(prep.maxCostUsd !== undefined ? { maxCostUsd: prep.maxCostUsd } : {}),
+            ...(prep.intent ? { intent: prep.intent } : {}),
+            ...(prep.previous ? { prior: priorComments(prep.previous.run) } : {}),
+            onProgress,
+          });
   } catch (err) {
     const cancelled = opts.signal.aborted;
     await pendingWrite;
@@ -301,10 +342,14 @@ export async function executeRun(prep: PreparedRun, opts: ExecuteRunOptions): Pr
     throw err;
   }
 
-  const artifacts = prep.config.artifacts ?? artifactsDir();
-  await copyIfPresent(path.join(artifacts, "runs", `${id}.json`), path.join(dir, "raw", "record.json"));
-  await copyIfPresent(result.markdownPath, path.join(dir, "raw", "review.md"));
-  await copyIfPresent(path.join(artifacts, "reviews", `${id}.payloads.json`), path.join(dir, "raw", "payloads.json"));
+  if (result.markdownPath) {
+    const artifacts = prep.config.artifacts ?? artifactsDir();
+    await copyIfPresent(path.join(artifacts, "runs", `${id}.json`), path.join(dir, "raw", "record.json"));
+    await copyIfPresent(result.markdownPath, path.join(dir, "raw", "review.md"));
+    await copyIfPresent(path.join(artifacts, "reviews", `${id}.payloads.json`), path.join(dir, "raw", "payloads.json"));
+  } else if (result.record) {
+    await writeFile(path.join(dir, "raw", "record.json"), `${JSON.stringify(result.record, null, 2)}\n`);
+  }
   await writeFile(path.join(dir, "raw", "units.json"), `${JSON.stringify(result.units, null, 2)}\n`);
   await writeFile(path.join(dir, "raw", "byClass.json"), `${JSON.stringify(result.byClass, null, 2)}\n`);
 
@@ -323,8 +368,8 @@ export async function executeRun(prep: PreparedRun, opts: ExecuteRunOptions): Pr
     throw new Error(message, { cause: err });
   }
   await writeRun(run);
-  opts.log(`  anchors: ${describeAnchors(run)}`);
-  return { run, reviewed: result.record !== null };
+  if (prep.kind === "review") opts.log(`  anchors: ${describeAnchors(run)}`);
+  return { run, reviewed: prep.kind === "diff" || result.record !== null };
 }
 
 function pendingInput(prep: PreparedRun): BuildPendingRunInput {
@@ -341,6 +386,7 @@ function pendingInput(prep: PreparedRun): BuildPendingRunInput {
     coreSource: prep.coreSource,
     ...(prep.priorRunId ? { priorRunId: prep.priorRunId } : {}),
     ...(prep.models ? { models: prep.models } : {}),
+    ...(prep.kind === "diff" ? { kind: prep.kind } : {}),
   };
 }
 

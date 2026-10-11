@@ -452,7 +452,8 @@ export function walkthroughPrompt(o: {
   diffstat: string;
   diff: string;
   intent: { title: string; body: string; commits: string };
-  findingIndex: string;
+  /** Undefined for a diff run, where no review happened and the agent has no file tools. */
+  findingIndex?: string;
   unitSummary: string;
   crossLinks: string[];
   docsFiles: string[];
@@ -461,7 +462,11 @@ export function walkthroughPrompt(o: {
   registry: string;
   outFile: string;
 }) {
-  return `You are writing the reviewer's guide for a pull request in ${repoName}: what the change actually does, and the order a human should read it in. You are NOT looking for bugs — specialist reviewers have already done that, and their findings are listed below to tell you where the risk turned out to be.
+  const reviewed = o.findingIndex !== undefined;
+  const opening = reviewed
+    ? `You are writing the reviewer's guide for a pull request in ${repoName}: what the change actually does, and the order a human should read it in. You are NOT looking for bugs — specialist reviewers have already done that, and their findings are listed below to tell you where the risk turned out to be.`
+    : `You are writing the reader's guide for a change in ${repoName}: what the change actually does, and the order a human should read it in. You are NOT looking for bugs. You have no tools for reading the repository: everything you can know about the change is in this prompt, so do not try to open files.`;
+  return `${opening}
 
 ## Stated description (what the author says it does)
 Title: ${o.intent.title}
@@ -474,15 +479,12 @@ ${o.intent.commits.slice(0, 3000) || "(none)"}
 ## Files changed
 ${o.diffstat}
 
-## How the review was split up
+## ${reviewed ? "How the review was split up" : "How the files are grouped"}
 Files were grouped by how the code links them: a name used in one file and added in another, an import, a test beside its source. A group's links are the order its files are read in.
 
 ${o.unitSummary}
 ${o.crossLinks.length ? `\n### Links between groups\nThese cross from one group to another. A stop that follows one of them can name locations in both groups.\n${o.crossLinks.map((l) => `- ${l}`).join("\n")}\n` : ""}
-## What the reviewers found
-${o.findingIndex || "(nothing)"}
-
-${o.docsFiles.length ? `## Documentation-only files (already excluded from review; cover them with one \`support\` group)\n${groupByDir(o.docsFiles)}\n` : ""}${o.registry ? `\n${o.registry}\n` : ""}
+${reviewed ? `## What the reviewers found\n${o.findingIndex || "(nothing)"}\n\n` : ""}${o.docsFiles.length ? `## Documentation-only files (${reviewed ? "already excluded from review; " : ""}cover them with one \`support\` group)\n${groupByDir(o.docsFiles)}\n` : ""}${o.registry ? `\n${o.registry}\n` : ""}
 ## Diff
 \`\`\`diff
 ${o.diff}

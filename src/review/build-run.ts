@@ -15,6 +15,7 @@ import type {
   RunFileStatus,
   RunFinding,
   RunGroup,
+  RunKind,
   RunSlice,
 } from "../types/review-run.ts";
 import { anchor } from "./anchors.ts";
@@ -69,6 +70,8 @@ export interface BuildReviewRunInput {
   priorRunId?: string;
   /** The model each stage was resolved to before the run started. */
   models?: NonNullable<ReviewRun["meta"]["models"]>;
+  /** Omitted for reviews. */
+  kind?: RunKind;
   /**
    * The earlier run of this target whose findings were handed to the review as
    * prior comments. `lineMap` holds `git diff -U0 <its head> <this head>` hunks,
@@ -420,7 +423,7 @@ export function buildReviewRun(input: BuildReviewRunInput): ReviewRun {
   const strays = take(files.map((f) => f.path));
   if (strays.length) log(`  ${strays.length} file(s) in no review unit: ${strays.join(", ")}`);
   if (docs.length || skipped.length || strays.length) {
-    groups.push(parent("other", "Not reviewed in depth"));
+    groups.push(parent("other", input.kind === "diff" ? "Other changes" : "Not reviewed in depth"));
     if (strays.length) groups.push(leaf("remaining", "Remaining changes", strays, { parentId: "other" }));
     if (docs.length) groups.push(leaf("docs", "Docs", docs, { parentId: "other", icon: "doc" }));
     if (skipped.length)
@@ -513,6 +516,7 @@ export function buildReviewRun(input: BuildReviewRunInput): ReviewRun {
       ...(record?.model ? { model: record.model } : {}),
       ...(record?.effort ? { effort: record.effort } : {}),
       ...(input.models ? { models: input.models } : {}),
+      ...(input.kind === "diff" ? { kind: "diff" as const } : {}),
       wallMs: record?.wallMs ?? input.result.wallMs,
       costUsd: record?.totalCostUsd ?? input.result.costUsd,
       slices,
@@ -544,6 +548,7 @@ export type BuildPendingRunInput = Pick<
   | "priorRunId"
   | "coreSource"
   | "models"
+  | "kind"
 >;
 
 /**
@@ -600,6 +605,7 @@ export function buildPendingRun(input: BuildPendingRunInput): ReviewRun {
     unreviewed: { overCap: [], failed: [] },
     meta: {
       ...(input.models ? { models: input.models } : {}),
+      ...(input.kind === "diff" ? { kind: "diff" as const } : {}),
       wallMs: 0,
       costUsd: 0,
       slices: [],

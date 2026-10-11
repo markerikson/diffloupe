@@ -9,6 +9,7 @@
  */
 import { run } from "./core/lib/proc.ts";
 import { MODEL_STAGES, STAGE_SETTING, type ResolvedModels } from "./models.ts";
+import type { ReviewModelStage } from "./options.ts";
 
 export interface CatalogModel {
   id: string;
@@ -43,9 +44,13 @@ export async function readModelCatalog(timeoutMs = 10_000): Promise<CatalogModel
   }
 }
 
-export function checkModels(models: ResolvedModels, catalog: CatalogModel[]): CatalogCheck {
+export function checkModels(
+  models: ResolvedModels,
+  catalog: CatalogModel[],
+  stages: readonly ReviewModelStage[] = MODEL_STAGES,
+): CatalogCheck {
   const out: CatalogCheck = { errors: [], zeroCost: [] };
-  for (const stage of MODEL_STAGES) {
+  for (const stage of stages) {
     const m = models[stage];
     const fromProvider = catalog.filter((c) => c.providerID === m.provider);
     if (!fromProvider.length) continue;

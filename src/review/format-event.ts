@@ -27,6 +27,10 @@ export function formatEvent(e: RunEvent): string | null {
       return `  ${n} ${e.status === "ok" ? "done" : "FAILED"}${cost}${wall}${found} — ${e.title}`;
     }
     case "done": {
+      if (e.kind === "diff") {
+        const cost = e.costUsd ? ` · $${e.costUsd.toFixed(2)}` : "";
+        return `${e.files ?? 0} file(s) changed${cost} · ${(e.wallMs / 1000).toFixed(1)}s`;
+      }
       if (e.noChanges) return "No code changes to review.";
       const carried = e.carriedOver ?? 0;
       const found = carried
@@ -35,8 +39,8 @@ export function formatEvent(e: RunEvent): string | null {
       return `${found} · $${e.costUsd.toFixed(2)} · ${Math.round(e.wallMs / 1000)}s`;
     }
     case "cancelled":
-      return "Review cancelled.";
+      return "Run cancelled.";
     case "error":
-      return `Review failed: ${e.message}`;
+      return `Run failed: ${e.message}`;
   }
 }

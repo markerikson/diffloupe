@@ -38,6 +38,8 @@ export interface RunSetupOptions {
   exportCredentials?: () => Promise<SavedCredential[] | undefined>;
   /** Replaces asking OpenCode for its model catalog; return undefined to skip the check. */
   readCatalog?: () => Promise<CatalogModel[] | undefined>;
+  /** The stages that will run; credentials and the catalog are checked only for these. Default: all. */
+  stages?: readonly ReviewModelStage[];
 }
 
 export async function resolveRunSetup(opts: RunSetupOptions): Promise<RunSetup> {
@@ -53,7 +55,7 @@ export async function resolveRunSetup(opts: RunSetupOptions): Promise<RunSetup> 
   };
   const models = resolveModels(inputs);
   const credentialInputs = {
-    providers: providersInUse(models),
+    providers: providersInUse(models, opts.stages),
     env,
     ...(opts.userConfig.apiKeys ? { apiKeys: opts.userConfig.apiKeys } : {}),
     ...(openCodeUser.providers ? { userProviders: openCodeUser.providers } : {}),
@@ -68,7 +70,7 @@ export async function resolveRunSetup(opts: RunSetupOptions): Promise<RunSetup> 
     models,
     openCodeUser,
     credentials,
-    ...(catalogModels ? { catalog: checkModels(models, catalogModels) } : {}),
+    ...(catalogModels ? { catalog: checkModels(models, catalogModels, opts.stages) } : {}),
   };
 }
 
@@ -87,9 +89,12 @@ export function setupConfig(setup: RunSetup): Partial<ReviewConfig> {
   };
 }
 
-export function runModels(setup: RunSetup): NonNullable<ReviewRun["meta"]["models"]> {
-  const out = {} as NonNullable<ReviewRun["meta"]["models"]>;
-  for (const stage of MODEL_STAGES) {
+export function runModels(
+  setup: RunSetup,
+  stages: readonly ReviewModelStage[] = MODEL_STAGES,
+): NonNullable<ReviewRun["meta"]["models"]> {
+  const out: NonNullable<ReviewRun["meta"]["models"]> = {};
+  for (const stage of stages) {
     out[stage] = { model: setup.models[stage].model, source: setup.models[stage].source };
   }
   return out;

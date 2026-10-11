@@ -1404,8 +1404,16 @@ describe("openCodeConfig", () => {
 
   it("registers tilth outside Code Mode, so its tools are called by the names the guidance uses", async () => {
     const settings = openCodeSettings("system", "guidance");
-    expect(settings.mcp.servers.tilth.command).toContain("tilth");
-    expect(settings.mcp.servers.tilth.codemode).toBe(false);
+    expect(settings.mcp.servers.tilth?.command).toContain("tilth");
+    expect(settings.mcp.servers.tilth?.codemode).toBe(false);
+  });
+
+  it("gives a no-tools agent no MCP servers and no read tools", async () => {
+    const settings = openCodeSettings("system", "", "none");
+    expect(Object.keys(settings.mcp.servers)).toEqual([]);
+    const allowed = settings.agents.reviewer.permissions.filter((p) => p.effect === "allow").map((p) => p.action);
+    expect(allowed).not.toContain("read");
+    expect(allowed).toContain("edit");
   });
 
   it("denies every tool it does not name, with the deny first so later allows win", async () => {

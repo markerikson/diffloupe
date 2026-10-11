@@ -169,6 +169,7 @@ export class RunManager {
             costUsd: run.meta.costUsd,
             wallMs: run.meta.wallMs,
             ...(reviewed ? {} : { noChanges: true }),
+            ...(run.meta.kind === "diff" ? { kind: "diff" as const, files: run.files.length } : {}),
           });
           return { status: "complete", run, reviewed };
         },

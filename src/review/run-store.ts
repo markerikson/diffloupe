@@ -116,6 +116,7 @@ function invalidHeader(err: InvalidRunError): RunHeader {
     repo: field(RunRepoSchema, raw.repo, { root: "" }),
     findingCounts: { blocker: 0, "should-fix": 0, "nice-to-have": 0, question: 0 },
     costUsd: typeof meta.costUsd === "number" ? meta.costUsd : 0,
+    ...(meta.kind === "diff" ? { kind: "diff" as const } : {}),
     invalid: err.summary,
   };
 }
@@ -143,6 +144,7 @@ export async function listRuns(): Promise<RunHeader[]> {
         repo: run.repo,
         findingCounts: countBySeverity(run),
         costUsd: run.meta?.costUsd ?? 0,
+        ...(run.meta?.kind ? { kind: run.meta.kind } : {}),
       });
     } catch (err) {
       // Otherwise a directory without a finished run.json: interrupted before the end.
@@ -169,8 +171,9 @@ export async function findPriorRunId(
 ): Promise<string | undefined> {
   const key = targetKey(repo, target);
   const runs = await listRuns();
-  return runs.find((r) => r.status === "complete" && r.createdAt < before && targetKey(r.repo, r.target) === key)
-    ?.id;
+  return runs.find(
+    (r) => r.status === "complete" && r.kind !== "diff" && r.createdAt < before && targetKey(r.repo, r.target) === key,
+  )?.id;
 }
 
 export function scratchDir(): string {

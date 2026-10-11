@@ -1,5 +1,13 @@
 import { describeAnchors } from "./anchors.ts";
-import type { DiffAnchor, FindingSeverity, ReviewRun, ReviewTarget, RunFinding, RunHeader } from "../types/review-run.ts";
+import {
+  runKind,
+  type DiffAnchor,
+  type FindingSeverity,
+  type ReviewRun,
+  type ReviewTarget,
+  type RunFinding,
+  type RunHeader,
+} from "../types/review-run.ts";
 
 export function formatTarget(target: ReviewTarget): string {
   if (target.kind === "pr") return `PR #${target.number} ${target.title}`;
@@ -32,8 +40,10 @@ export function formatRunList(runs: RunHeader[]): string {
     .map((r) =>
       [
         r.id,
-        `  ${r.status.padEnd(8)} ${r.createdAt}  ${formatTarget(r.target)}`,
-        `  ${r.repo.slug ?? r.repo.root}  ${counts(r.findingCounts)}  $${r.costUsd.toFixed(2)}`,
+        `  ${(r.kind ?? "review").padEnd(6)} ${r.status.padEnd(8)} ${r.createdAt}  ${formatTarget(r.target)}`,
+        r.kind === "diff"
+          ? `  ${r.repo.slug ?? r.repo.root}${r.costUsd ? `  $${r.costUsd.toFixed(2)}` : ""}`
+          : `  ${r.repo.slug ?? r.repo.root}  ${counts(r.findingCounts)}  $${r.costUsd.toFixed(2)}`,
       ].join("\n"),
     )
     .join("\n\n");
@@ -68,27 +78,8 @@ export function formatRun(run: ReviewRun): string {
   if (run.overview.focus) out.push(`focus: ${run.overview.focus}`);
   if (run.intent.alignment) out.push(`intent: ${run.intent.alignment}`);
 
-  const byId = new Map(run.findings.map((f) => [f.id, f]));
   const filesByPath = new Map(run.files.map((f) => [f.path, f]));
-  for (const g of run.groups) {
-    const leaf = !run.groups.some((c) => c.parentId === g.id);
-    if (!leaf || (!g.parentId && g.files.length === 0)) {
-      const note = leaf && g.stopIds.length ? `  (stops ${g.stopIds.join(", ")}; files sit in other groups)` : "";
-      out.push("", `${g.critical ? "! " : ""}${g.title}${note}`);
-      continue;
-    }
-    const indent = g.parentId ? "  " : "";
-    out.push(`${g.parentId ? "" : "\n"}${indent}${g.critical ? "! " : ""}${g.title}`);
-    for (const p of g.files) {
-      const f = filesByPath.get(p);
-      const stat = f ? ` ${f.status} +${f.additions} -${f.deletions}${f.isBinary ? " binary" : ""}` : "";
-      out.push(`${indent}  ${p}${stat}`);
-      for (const id of g.findingIds) {
-        const finding = byId.get(id);
-        if (finding?.file === p) out.push(findingLine(finding));
-      }
-    }
-  }
+  out.push(...groupLines(run));
 
   const outside = run.findings.filter((f) => !filesByPath.has(f.file));
   if (outside.length) {
@@ -111,11 +102,62 @@ export function formatRun(run: ReviewRun): string {
   if (run.unreviewed.failed.length) out.push("", `Failed slices: ${run.unreviewed.failed.join(", ")}`);
   if (run.unreviewed.budget?.length)
     out.push("", `Not reviewed (cost limit): ${run.unreviewed.budget.join(", ")}`);
+  if (runKind(run) === "diff") {
+    out.push("", `${run.files.length} files${cost(run)}, ${(run.meta.wallMs / 1000).toFixed(1)}s`);
+    return out.join("\n");
+  }
   out.push(
     "",
     `${run.findings.length} findings, ${run.files.length} files, $${run.meta.costUsd.toFixed(2)}, ${Math.round(run.meta.wallMs / 1000)}s`,
     `anchors: ${describeAnchors(run)}`,
   );
+  return out.join("\n");
+}
+
+function cost(run: ReviewRun): string {
+  return run.meta.costUsd ? `, $${run.meta.costUsd.toFixed(2)}` : "";
+}
+
+/** Each group with its files, line counts and the findings on each file. */
+function groupLines(run: ReviewRun): string[] {
+  const out: string[] = [];
+  const byId = new Map(run.findings.map((f) => [f.id, f]));
+  const filesByPath = new Map(run.files.map((f) => [f.path, f]));
+  for (const g of run.groups) {
+    const leaf = !run.groups.some((c) => c.parentId === g.id);
+    if (!leaf || (!g.parentId && g.files.length === 0)) {
+      const note = leaf && g.stopIds.length ? `  (stops ${g.stopIds.join(", ")}; files sit in other groups)` : "";
+      out.push("", `${g.critical ? "! " : ""}${g.title}${note}`);
+      continue;
+    }
+    const indent = g.parentId ? "  " : "";
+    out.push(`${g.parentId ? "" : "\n"}${indent}${g.critical ? "! " : ""}${g.title}`);
+    for (const p of g.files) {
+      const f = filesByPath.get(p);
+      const stat = f ? ` ${f.status} +${f.additions} -${f.deletions}${f.isBinary ? " binary" : ""}` : "";
+      out.push(`${indent}  ${p}${stat}`);
+      for (const id of g.findingIds) {
+        const finding = byId.get(id);
+        if (finding?.file === p) out.push(findingLine(finding));
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * What `diff --headless` prints when it finishes: the target, what the change
+ * does when a walkthrough ran, then every group with its files.
+ */
+export function formatDiffSummary(run: ReviewRun): string {
+  const out: string[] = [];
+  out.push(`${formatTarget(run.target)}  ${run.base.slice(0, 10)}..${run.head.slice(0, 10)}`);
+  if (run.intent.inferred) out.push("", `What it does: ${lead(run.intent.inferred, 400)}`);
+  out.push(...groupLines(run));
+  if (run.untrackedSkipped.length) out.push("", `Untracked files skipped: ${run.untrackedSkipped.join(", ")}`);
+  const adds = run.files.reduce((n, f) => n + f.additions, 0);
+  const dels = run.files.reduce((n, f) => n + f.deletions, 0);
+  out.push("", `${run.files.length} files, +${adds} -${dels}${cost(run)}`);
   return out.join("\n");
 }
 

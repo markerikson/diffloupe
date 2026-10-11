@@ -182,6 +182,33 @@ export function createReviewCommand(): Command {
     .action(runReviewCommand);
 }
 
+export function createDiffCommand(): Command {
+  return new Command("diff")
+    .description(
+      "Open a diff grouped by how the code connects, with no review agents (requires git; gh for PRs). " +
+        "--walkthrough adds a guide from one model call.",
+    )
+    .argument(
+      "[target]",
+      "worktree (default), staged, HEAD, commit:<sha>, range:<a>..<b>, branch:<name>, #<pr>, pr:<n>, or a PR URL",
+    )
+    .option("-C, --repo <path>", "Repository to diff (default: current directory)")
+    .option("--base <ref>", "For staged/worktree: diff against merge-base(<ref>, HEAD) instead of HEAD")
+    .option("--walkthrough", "Add the walkthrough guide (one model call; needs opencode and a credential)", false)
+    .option("-i, --intent <text>", "With --walkthrough: describe the intent of the changes")
+    .option("--intent-file <path>", "With --walkthrough: read the intent from a file")
+    .option("--model <walkthrough=id>", "With --walkthrough: the walkthrough model", collect, [])
+    .option("--effort <level>", "With --walkthrough: reasoning effort (model variant)")
+    .option("--config <file>", "Per-repo review settings JSON (models, effort, extraExcludes)")
+    .option("--host <host>", `Address for the server to listen on (default: ${DEFAULT_HOST})`)
+    .option("--port <port>", `Port for the server (default: ${DEFAULT_PORT}, or the next free one)`, parsePort)
+    .option("--open", "Open the run in a browser", false)
+    .option("--headless", "Print the grouped file list to stdout without a server", false)
+    .action((target: string | undefined, options: Omit<ReviewCommandOptions, "target" | "kind">) =>
+      runReviewCommand(target, { ...options, kind: "diff" }),
+    );
+}
+
 export function createOpenCommand(): Command {
   return new Command("open")
     .description("Print (or open) the URL of a saved run, starting a server if none is running")

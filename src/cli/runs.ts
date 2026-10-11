@@ -1,10 +1,10 @@
 import { rm } from "node:fs/promises";
-import { Command } from "commander";
+import { Command, InvalidArgumentError } from "commander";
 import pc from "picocolors";
 import { runMarkdown } from "../review/export.js";
 import { formatRun, formatRunList } from "../review/format-run.js";
 import { deleteRun, listRuns, loadRun, orphanScratch, pruneCandidates } from "../review/run-store.js";
-import type { ReviewRun } from "../types/review-run.js";
+import type { ReviewRun, RunHeader, RunKind } from "../types/review-run.js";
 
 async function loadOrExit(id: string): Promise<ReviewRun> {
   try {
@@ -17,10 +17,11 @@ async function loadOrExit(id: string): Promise<ReviewRun> {
 
 export function createRunsCommand(): Command {
   const runs = new Command("runs")
-    .description("List saved review runs")
+    .description("List saved runs")
     .option("--json", "Print run headers as JSON", false)
-    .action(async (options: { json: boolean }) => {
-      const headers = await listRuns();
+    .option("--kind <kind>", "Only review or diff runs", parseKind)
+    .action(async (options: { json: boolean; kind?: RunKind }) => {
+      const headers = ofKind(await listRuns(), options.kind);
       console.log(options.json ? JSON.stringify(headers, null, 2) : formatRunList(headers));
     });
 
@@ -58,15 +59,16 @@ export function createRunsCommand(): Command {
     .description("Delete old runs and orphaned scratch files. Lists what would go unless --yes is given")
     .option("--older-than <age>", "Only runs older than this, e.g. 30d, 12h, 2w", "30d")
     .option("--keep <n>", "Always keep this many of the newest runs", "20")
+    .option("--kind <kind>", "Only review or diff runs (--keep then counts runs of that kind)", parseKind)
     .option("--yes", "Delete instead of listing", false)
-    .action(async (options: { olderThan: string; keep: string; yes: boolean }) => {
+    .action(async (options: { olderThan: string; keep: string; yes: boolean; kind?: RunKind }) => {
       const olderThanMs = parseAge(options.olderThan);
       const keep = Number(options.keep);
       if (olderThanMs === null || !Number.isInteger(keep) || keep < 0) {
         console.error(pc.red("--older-than takes a number with d, h, or w; --keep takes a whole number"));
         process.exit(1);
       }
-      const candidates = pruneCandidates(await listRuns(), { olderThanMs, keep });
+      const candidates = pruneCandidates(ofKind(await listRuns(), options.kind), { olderThanMs, keep });
       const orphans = await orphanScratch();
       if (candidates.length === 0 && orphans.length === 0) {
         console.log("Nothing to prune");
@@ -87,6 +89,15 @@ export function createRunsCommand(): Command {
     });
 
   return runs;
+}
+
+function parseKind(value: string): RunKind {
+  if (value !== "review" && value !== "diff") throw new InvalidArgumentError("must be review or diff");
+  return value;
+}
+
+function ofKind(headers: RunHeader[], kind: RunKind | undefined): RunHeader[] {
+  return kind ? headers.filter((h) => (h.kind ?? "review") === kind) : headers;
 }
 
 const AGE_UNITS: Record<string, number> = { h: 3_600_000, d: 86_400_000, w: 7 * 86_400_000 };

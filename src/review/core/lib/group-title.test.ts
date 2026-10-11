@@ -18,6 +18,13 @@ describe("groupTitle", () => {
     expect(groupTitle(files)).toBe("src/web");
   });
 
+  it("names the subdirectories under the common directory past three names", () => {
+    const files = ["src/cli/a.ts", "src/cli/b.ts", "src/review/c.ts", "src/server/d.ts", "src/types/e.ts"];
+    expect(groupTitle(files)).toBe("src: cli, review, server, types");
+    expect(groupTitle([...files, "src/web/f.ts"])).toBe("src");
+    expect(groupTitle(["src/a.ts", "src/b.ts", "src/c.ts", "src/lib/d.ts"])).toBe("src: a, b, c, lib");
+  });
+
   it("handles top-level files", () => {
     expect(groupTitle(["index.ts"])).toBe("index");
     expect(groupTitle(["a.ts", "b.ts", "c.ts", "d.ts"])).toBe("Top-level files");

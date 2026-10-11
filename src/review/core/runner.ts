@@ -235,9 +235,13 @@ export function summarizeOpenCodeTools(stdout: string, cwd = ""): ToolSummary {
   return { calls, failed, read: [...read], searched: [...searched] };
 }
 
-export let openCodeHome: Promise<string> | undefined;
-export let openCodeHomeKey: string | undefined;
-let openCodeProviders: string | undefined;
+/**
+ * - `repo`: read, search and shell tools plus tilth, for agents that explore the checkout.
+ * - `none`: only the write that delivers the answer; the prompt holds everything the agent sees.
+ */
+export type AgentTools = "repo" | "none";
+
+const openCodeHomes = new Map<AgentTools, { home: Promise<string>; key: string; providers: string }>();
 
 /**
  * Write the configuration directory the OpenCode runner reads, once per run.
@@ -255,35 +259,33 @@ let openCodeProviders: string | undefined;
  * symptom — a reviewer following a prompt nobody sent it — would be very hard
  * to read back from the output.
  */
-export function openCodeConfig(system: string, guidance: string): Promise<string> {
+export function openCodeConfig(system: string, guidance: string, tools: AgentTools = "repo"): Promise<string> {
   const key = `${system}\u0000${guidance}`;
-  if (openCodeHome && openCodeHomeKey !== key) {
+  const memo = openCodeHomes.get(tools);
+  if (memo && memo.key !== key) {
     throw new Error("openCodeConfig called with a different prompt after the config was written");
   }
   // A long-lived server runs many reviews, and the user's providers can change
   // between them. Runs do not overlap, so rewriting here races nothing.
   const providers = JSON.stringify(PROVIDERS);
-  if (openCodeHome && openCodeProviders !== providers) openCodeHome = undefined;
-  openCodeProviders = providers;
-  openCodeHomeKey = key;
-  openCodeHome ??= (async () => {
-    const home = path.join(OUT, "oc", "shared");
+  if (memo && memo.providers === providers) return memo.home;
+  const home = (async () => {
+    const home = path.join(OUT, "oc", tools === "repo" ? "shared" : "no-tools");
     const configDir = path.join(home, "config");
-    await writeJson(path.join(configDir, "opencode.json"), openCodeSettings(system, guidance));
+    await writeJson(path.join(configDir, "opencode.json"), openCodeSettings(system, guidance, tools));
     await writeText(
       path.join(configDir, "plugin", "governor.ts"),
       await readText(path.join(DIR, "opencode", "governor.ts")),
     );
     return home;
   })();
-  return openCodeHome;
+  openCodeHomes.set(tools, { home, key, providers });
+  return home;
 }
 
 /** Exposed so tests can start from a clean memo. */
 export function resetOpenCodeConfig() {
-  openCodeHome = undefined;
-  openCodeHomeKey = undefined;
-  openCodeProviders = undefined;
+  openCodeHomes.clear();
 }
 
 /** `provider/model` for a model name that may or may not carry its provider. */
@@ -291,7 +293,8 @@ export function qualifiedModel(model: string): string {
   return model.includes("/") ? model : `${PROVIDER}/${model}`;
 }
 
-export function openCodeSettings(system: string, guidance: string) {
+export function openCodeSettings(system: string, guidance: string, tools: AgentTools = "repo") {
+  const allowed = tools === "repo" ? ["read", "glob", "grep", "shell", "tilth_*"] : [];
   return {
     $schema: "https://opencode.ai/config.json",
     // A formatter would rewrite the findings file after the agent wrote it.
@@ -306,7 +309,7 @@ export function openCodeSettings(system: string, guidance: string) {
     // model defined there resolves here too.
     ...(Object.keys(PROVIDERS).length ? { providers: PROVIDERS } : {}),
     mcp: {
-      servers: {
+      servers: tools === "none" ? {} : {
         // Without this the reviewer has no structural reader, and it shows:
         // given only shell tools it sampled eighty lines out of the file the PR
         // changed and missed every defect in the rest of it.
@@ -332,13 +335,13 @@ export function openCodeSettings(system: string, guidance: string) {
         // includes the built-in tool guidance, which is why ours is appended
         // here: without it the reviewer gets no instruction on what tools exist
         // and falls back to shelling out for everything.
-        system: `${system}\n\n${guidance}`,
+        system: guidance ? `${system}\n\n${guidance}` : system,
         // Ordered, last match wins. Denying everything first turns off every
         // tool this list does not name, including ones a later OpenCode adds:
         // subagents, questions, skills, web access and Code Mode.
         permissions: [
           { action: "*", resource: "*", effect: "deny" },
-          ...["read", "glob", "grep", "shell", "tilth_*"].map((action) => ({
+          ...allowed.map((action) => ({
             action,
             resource: "*",
             effect: "allow",
@@ -377,10 +380,11 @@ export function openCodeSettings(system: string, guidance: string) {
  */
 export async function openCodeInvocation(
   system: string,
-  opts: { budget: number; model: string; effort: string; tag: string; outFile: string },
+  opts: { budget: number; model: string; effort: string; tag: string; outFile: string; tools?: AgentTools },
 ): Promise<Invocation> {
-  const guidance = await readText(path.join(DIR, "opencode", "tools.md"));
-  const home = await openCodeConfig(system, guidance);
+  const tools = opts.tools ?? "repo";
+  const guidance = tools === "repo" ? await readText(path.join(DIR, "opencode", "tools.md")) : "";
+  const home = await openCodeConfig(system, guidance, tools);
   const configDir = path.join(home, "config");
   const usageFile = path.join(ARTIFACTS, "logs", `${opts.tag}.usage.json`);
   await ensureDir(path.dirname(usageFile));
@@ -437,7 +441,7 @@ export async function openCodeInvocation(
       REVIEW_GOVERNOR_USAGE_FILE: usageFile,
       // MCP servers connect in the background, and without the wait the first
       // turns are taken with no tilth tools on offer.
-      REVIEW_GOVERNOR_WAIT_FOR_TOOLS: "tilth_",
+      REVIEW_GOVERNOR_WAIT_FOR_TOOLS: tools === "repo" ? "tilth_" : "",
       // tilth builds that report the same version expose different tools, and
       // guidance pointing at a missing one is advice the model cannot follow.
       REVIEW_GOVERNOR_EXPECT_TOOLS: [...new Set(guidance.match(/\btilth_tilth_\w+/g) ?? [])].join(","),
@@ -465,7 +469,7 @@ export function readOpenCodeUsage(file: string): ReturnType<typeof sumOpenCodeSt
 
 export async function agent(
   prompt: string,
-  opts: { budget: number; outFile: string; tag: string; model?: string; effort?: string },
+  opts: { budget: number; outFile: string; tag: string; model?: string; effort?: string; tools?: AgentTools },
 ) {
   if (SIGNAL?.aborted) throw new CancelledError();
   const system = (await readText(path.join(DIR, "system.md"))).replaceAll("{{repo}}", repoName);

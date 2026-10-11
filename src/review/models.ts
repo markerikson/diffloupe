@@ -160,9 +160,12 @@ export function resolveModels(inputs: ModelInputs): ResolvedModels {
 }
 
 /** The distinct providers the stages use, with the stages using each. */
-export function providersInUse(models: ResolvedModels): Map<string, ReviewModelStage[]> {
+export function providersInUse(
+  models: ResolvedModels,
+  stages: readonly ReviewModelStage[] = MODEL_STAGES,
+): Map<string, ReviewModelStage[]> {
   const out = new Map<string, ReviewModelStage[]>();
-  for (const stage of MODEL_STAGES) {
+  for (const stage of stages) {
     const p = models[stage].provider;
     out.set(p, [...(out.get(p) ?? []), stage]);
   }

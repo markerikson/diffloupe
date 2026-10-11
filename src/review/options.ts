@@ -3,6 +3,10 @@
  * without pulling the review core into the root typecheck.
  */
 export interface ReviewCommandOptions {
+  /** `diff` for `diffloupe diff`: grouping only, no review agents. */
+  kind?: "review" | "diff";
+  /** Diff runs: add the walkthrough guide. */
+  walkthrough?: boolean;
   /** Target spec; see parseTargetSpec in targets.ts. Defaults to the working tree. */
   target?: string;
   /** Repository to review, from -C. Defaults to the current directory. */
