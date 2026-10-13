@@ -5,6 +5,7 @@ import { runMarkdown } from "../../review/export.ts";
 import { runKind, type ReviewRun, type RunFinding } from "../../types/review-run.ts";
 import { byFile, type FileFindings, summarizeFindings } from "../lib/finding-summary.ts";
 import { formatCost, formatDuration, plural } from "../lib/format.ts";
+import { intentSource } from "../lib/intent-source.ts";
 import { useRunNav } from "../lib/run-nav.ts";
 import { overCapToggled, selectShowOverCap } from "../store/focus.ts";
 import { useAppDispatch, useAppSelector } from "../store/hooks.ts";
@@ -16,17 +17,22 @@ import styles from "./SummaryBlock.module.css";
 export const SUMMARY_ID = "summary";
 
 const ALIGNMENT_LABEL = {
-  aligned: "Matches the description",
-  partial: "Partly matches the description",
-  misaligned: "Does not match the description",
+  aligned: (source: string) => `Matches ${source}`,
+  partial: (source: string) => `Partly matches ${source}`,
+  misaligned: (source: string) => `Does not match ${source}`,
 } as const;
 
 const INTENT_LISTS = [
-  ["matches", "Description holds up on"],
-  ["mismatches", "Description does not hold up on"],
-  ["unstated", "In the diff but not in the description"],
-  ["missing", "Described but not accomplished"],
+  ["matches", () => "Holds up on"],
+  ["mismatches", () => "Does not hold up on"],
+  ["unstated", (source: string) => `In the diff but not in ${source}`],
+  ["missing", () => "Stated but not accomplished"],
 ] as const;
+
+function capitalize(phrase: string): string {
+  const s = phrase.replace(/^the /, "");
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
 
 const UNREVIEWED = [
   ["overCap", "More code files than the reviewers could read; these were left out."],
@@ -111,9 +117,12 @@ export function SummaryBlock({ run }: { run: ReviewRun }) {
   const mainCount = summary.main.reduce((n, g) => n + g.findings.length, 0);
   const otherCount = summary.other.reduce((n, g) => n + g.findings.length, 0);
   const overCap = run.overCapFindings;
-  const intentLists = INTENT_LISTS.filter(([key]) => (intent[key]?.length ?? 0) > 0);
+  // With nothing stated to compare against, only the inferred intent means anything.
+  const source = intentSource(run);
+  const alignment = source ? intent.alignment : undefined;
+  const intentLists = source ? INTENT_LISTS.filter(([key]) => (intent[key]?.length ?? 0) > 0) : [];
   const unreviewed = UNREVIEWED.filter(([key]) => (run.unreviewed[key]?.length ?? 0) > 0);
-  const oneLine = intent.mismatches?.[0];
+  const oneLine = source ? intent.mismatches?.[0] : undefined;
   const isDiff = runKind(run) === "diff";
   const groupCount = run.groups.filter((g) => g.files.length > 0).length;
 
@@ -191,26 +200,26 @@ export function SummaryBlock({ run }: { run: ReviewRun }) {
         </details>
       )}
 
-      {(intent.alignment || intent.inferred || intent.stated || intentLists.length > 0) && (
+      {(alignment || intent.inferred || intent.stated || intentLists.length > 0) && (
         <div className={styles.section}>
-          {(intent.alignment || oneLine) && (
+          {source && (alignment || oneLine) && (
             <Labelled label="Intent:">
-              {intent.alignment && (
-                <span className={styles.alignment} data-alignment={intent.alignment}>
-                  {ALIGNMENT_LABEL[intent.alignment]}
+              {alignment && (
+                <span className={styles.alignment} data-alignment={alignment}>
+                  {ALIGNMENT_LABEL[alignment](source)}
                 </span>
               )}
               {oneLine && <> — {oneLine}</>}
             </Labelled>
           )}
           {intent.inferred && <Labelled label="What it does:">{intent.inferred}</Labelled>}
-          {(intent.stated || intentLists.length > 0) && (
+          {source && (intent.stated || intentLists.length > 0) && (
             <details className={styles.details}>
-              <summary>Description compared with the code</summary>
+              <summary>{capitalize(source)} compared with the code</summary>
               {intent.stated && <Labelled label="Stated:">{intent.stated}</Labelled>}
               {intentLists.map(([key, title]) => (
                 <div key={key}>
-                  <h4 className={styles.subheading}>{title}</h4>
+                  <h4 className={styles.subheading}>{title(source)}</h4>
                   <ul className={styles.list}>
                     {(intent[key] ?? []).map((item) => (
                       <li key={item}>{item}</li>
