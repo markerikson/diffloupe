@@ -2,21 +2,15 @@ import { useVirtualizer } from "@pierre/diffs/react";
 import { Link } from "@tanstack/react-router";
 import { memo, useEffect, useState } from "react";
 import { findingMarkdown } from "../../review/export.ts";
-import type { FindingSeverity, RunFinding } from "../../types/review-run.ts";
+import type { RunFinding } from "../../types/review-run.ts";
 import { anchorNote } from "../lib/annotations.ts";
+import { SEVERITY_LABEL } from "../lib/format.ts";
 import { useRunNav } from "../lib/run-nav.ts";
 import { selectFocusedFinding } from "../store/focus.ts";
 import { useAppSelector } from "../store/hooks.ts";
 import { CopyButton } from "./CopyButton.tsx";
 import { Markdown } from "./Markdown.tsx";
 import styles from "./FindingCard.module.css";
-
-export const SEVERITY_LABEL: Record<FindingSeverity, string> = {
-  blocker: "Blocker",
-  "should-fix": "Should fix",
-  "nice-to-have": "Nice to have",
-  question: "Question",
-};
 
 interface FindingCardProps {
   finding: RunFinding;

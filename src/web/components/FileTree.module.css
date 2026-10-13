@@ -57,3 +57,92 @@
   color: var(--fg-mute);
   font-style: italic;
 }
+
+.notes {
+  margin: 0 0 0.2rem;
+  padding: 0 0 0 0.35rem;
+  list-style: none;
+  border-left: 1px solid var(--border);
+}
+
+.note {
+  --dot: var(--fg-mute);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  height: 22px;
+  padding: 0 0.25rem 0 0.3rem;
+  border-radius: 4px;
+  color: var(--fg-fade);
+  font-size: 12px;
+  text-align: left;
+}
+
+.note:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+.note[aria-current="true"] {
+  background: var(--bg-active);
+  color: var(--fg);
+}
+
+.note[data-severity="blocker"] {
+  --dot: var(--error);
+}
+
+.note[data-severity="should-fix"] {
+  --dot: var(--warning);
+}
+
+.note[data-severity="question"] {
+  --dot: var(--info);
+}
+
+.note[data-over-cap="true"] .noteTitle {
+  font-style: italic;
+}
+
+.note[data-importance="context"] .noteTitle {
+  color: var(--fg-mute);
+}
+
+.dot {
+  flex: none;
+  width: 0.55rem;
+  height: 0.55rem;
+  margin: 0 0.1rem;
+  border-radius: 50%;
+  background: var(--dot);
+}
+
+.signpost {
+  flex: none;
+  font-size: 0.85rem;
+  color: var(--teal);
+}
+
+.note[data-importance="critical"] .signpost {
+  color: var(--critical);
+}
+
+.noteTitle {
+  flex: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.line {
+  flex: none;
+  color: var(--fg-mute);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.line[data-side="deletions"] {
+  color: var(--error);
+}

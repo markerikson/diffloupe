@@ -112,6 +112,7 @@ export const UnitSection = memo(function UnitSection({
         files={files}
         allCollapsed={allCollapsed}
         activePath={activePath}
+        annotations={annotations}
         onToggleFiles={onToggleFiles}
         onSelectFile={onSelectFile}
       />

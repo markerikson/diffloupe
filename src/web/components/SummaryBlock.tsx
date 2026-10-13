@@ -4,13 +4,12 @@ import type { Verdict } from "../../review/core/verdict.ts";
 import { runMarkdown } from "../../review/export.ts";
 import { runKind, type ReviewRun, type RunFinding } from "../../types/review-run.ts";
 import { byFile, type FileFindings, summarizeFindings } from "../lib/finding-summary.ts";
-import { formatCost, formatDuration, plural } from "../lib/format.ts";
+import { SEVERITY_LABEL, formatCost, formatDuration, plural } from "../lib/format.ts";
 import { intentSource } from "../lib/intent-source.ts";
 import { useRunNav } from "../lib/run-nav.ts";
 import { overCapToggled, selectShowOverCap } from "../store/focus.ts";
 import { useAppDispatch, useAppSelector } from "../store/hooks.ts";
 import { CopyButton } from "./CopyButton.tsx";
-import { SEVERITY_LABEL } from "./FindingCard.tsx";
 import { Markdown } from "./Markdown.tsx";
 import styles from "./SummaryBlock.module.css";
 

@@ -1,10 +1,10 @@
 import { useEffect, useRef } from "react";
 import type { RunFinding } from "../../types/review-run.ts";
 import { keepInView } from "../lib/navigate.ts";
+import { SEVERITY_LABEL } from "../lib/format.ts";
 import { useRunNav } from "../lib/run-nav.ts";
 import { selectFocusedFinding } from "../store/focus.ts";
 import { useAppSelector } from "../store/hooks.ts";
-import { SEVERITY_LABEL } from "./FindingCard.tsx";
 import styles from "./FindingNavList.module.css";
 
 interface FileRun {

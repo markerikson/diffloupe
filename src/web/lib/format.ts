@@ -1,4 +1,11 @@
-import type { ReviewTarget } from "../../types/review-run.ts";
+import type { FindingSeverity, ReviewTarget } from "../../types/review-run.ts";
+
+export const SEVERITY_LABEL: Record<FindingSeverity, string> = {
+  blocker: "Blocker",
+  "should-fix": "Should fix",
+  "nice-to-have": "Nice to have",
+  question: "Question",
+};
 
 export function formatTarget(target: ReviewTarget): string {
   switch (target.kind) {

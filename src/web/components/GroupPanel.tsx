@@ -1,6 +1,7 @@
 import PhCaretDown from "~icons/ph/caret-down";
 import PhCaretRight from "~icons/ph/caret-right";
 import type { RunFile, RunGroup } from "../../types/review-run.ts";
+import type { RunAnnotation } from "../lib/annotations.ts";
 import type { GroupStats } from "../lib/group-tree.ts";
 import { plural } from "../lib/format.ts";
 import { scrollToGroup } from "../lib/navigate.ts";
@@ -17,6 +18,7 @@ interface GroupPanelProps {
   files: readonly RunFile[];
   allCollapsed: boolean;
   activePath: string | undefined;
+  annotations: ReadonlyMap<string, RunAnnotation[]>;
   onToggleFiles: () => void;
   onSelectFile: (path: string) => void;
 }
@@ -28,6 +30,7 @@ export function GroupPanel({
   files,
   allCollapsed,
   activePath,
+  annotations,
   onToggleFiles,
   onSelectFile,
 }: GroupPanelProps) {
@@ -58,7 +61,7 @@ export function GroupPanel({
         </div>
       </div>
       {group.summary && <Markdown source={group.summary} className={styles.summary} />}
-      <FileTree files={files} activePath={activePath} onSelect={onSelectFile} />
+      <FileTree files={files} activePath={activePath} annotations={annotations} onSelect={onSelectFile} />
     </aside>
   );
 }
