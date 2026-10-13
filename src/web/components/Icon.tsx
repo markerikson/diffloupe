@@ -34,11 +34,15 @@ export function GroupIcon({ icon, className }: GroupIconProps) {
   );
 }
 
+/**
+ * Marks a group that needs close review: it holds a blocker or should-fix
+ * finding, or a walkthrough stop the model marked critical.
+ */
 export function CriticalMark({ reason }: { reason?: string | undefined }) {
-  const label = reason ? `Critical: ${reason}` : "Critical";
+  const label = reason ? `Needs close review: ${reason}` : "Needs close review";
   return (
-    <span className={styles.critical} title={label}>
-      <PhCircleWavyWarningDuotone aria-label={label} />
+    <span className={styles.critical} title={label} role="img" aria-label={label}>
+      <PhCircleWavyWarningDuotone aria-hidden />
     </span>
   );
 }
