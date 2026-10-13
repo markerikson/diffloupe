@@ -75,9 +75,11 @@ describe("diff runs", () => {
 
     const code = run.groups.find((g) => g.files.includes("src/main.ts"));
     expect(code?.files.sort()).toEqual(["src/lib/math.ts", "src/main.ts"]);
-    expect(code?.title).toBe("src: lib/math, main");
-    expect(run.groups.find((g) => g.id === "docs")?.files).toEqual(["README.md"]);
-    expect(run.groups.find((g) => g.id === "other")?.title).toBe("Other changes");
+    expect(code?.title).toBe("src/main, math");
+    const docs = run.groups.find((g) => g.id === "docs");
+    expect(docs).toMatchObject({ title: "Docs", files: ["README.md"] });
+    expect(docs?.parentId).toBeUndefined();
+    expect(run.groups.find((g) => g.id === "other")).toBeUndefined();
 
     expect(await git("worktree", "list")).toBe(worktreesBefore);
     const headers = await listRuns();

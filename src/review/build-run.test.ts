@@ -207,9 +207,9 @@ describe("buildReviewRun details", () => {
     const run = loadFixture("worktree").build();
     expect(run.groups.map((g) => [g.id, g.parentId ?? null])).toEqual([
       ["u-app", null],
-      ["other", null],
-      ["docs", "other"],
+      ["docs", null],
     ]);
+    expect(run.groups[1]).toMatchObject({ title: "Not reviewed in depth", icon: "doc" });
     expect(run.target).toEqual({ kind: "worktree", branch: "main" });
     expect(run.untrackedSkipped).toEqual(["big.bin"]);
   });

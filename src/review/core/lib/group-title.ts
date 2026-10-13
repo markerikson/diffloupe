@@ -1,54 +1,112 @@
 /**
- * Deterministic titles for computed groups, used when no model names them:
- * the longest common directory of the group's files, followed by the file
- * names when there are at most three of them once tests are folded into the
- * file they test, else by the subdirectories (and files) directly under it
- * when there are two to four of those.
+ * Deterministic titles for computed groups, used when no model names them.
+ * A title names the group's files rather than its directories, since sibling
+ * groups often share a directory: one file reads `cli/doctor`, two read
+ * `models, model-catalog`, and more read `runner +6`, led by the file with
+ * the most changed lines. Tests fold into the file they test, and generic
+ * names such as `index` or `types` keep their parent directory.
  */
 import { posix } from "node:path";
 
-const MAX_NAMED = 3;
-const MAX_PARTS = 4;
+/** Roughly what the sidebar shows before it truncates. */
+const MAX_LENGTH = 24;
 
-function commonDir(files: string[]): string {
-  const dirs = files.map((f) => posix.dirname(f).split("/").filter((s) => s !== "."));
-  const first = dirs[0] ?? [];
-  let n = 0;
-  while (n < first.length && dirs.every((d) => d[n] === first[n])) n++;
-  return first.slice(0, n).join("/");
+const CODE_EXT =
+  /\.(?:c|cc|cpp|cs|css|cts|cjs|go|h|hpp|java|js|jsx|kt|less|mjs|mts|php|py|rb|rs|sass|scss|svelte|swift|ts|tsx|vue)$/i;
+
+const GENERIC = new Set([
+  "__init__",
+  "common",
+  "constants",
+  "helpers",
+  "index",
+  "init",
+  "lib",
+  "main",
+  "mod",
+  "shared",
+  "types",
+  "util",
+  "utils",
+]);
+
+interface Entry {
+  path: string;
+  label: string;
+  weight: number;
 }
 
-/** `runner.test.ts` and `runner.ts` both give `runner`; `types.d.ts` gives `types`. */
-function stem(rel: string): string {
-  const dir = posix.dirname(rel);
-  let name = posix.basename(rel);
-  const dot = name.lastIndexOf(".");
-  if (dot > 0) name = name.slice(0, dot);
-  name = name.replace(/[._-](test|spec)$/, "").replace(/\.d$/, "");
-  return dir === "." ? name : `${dir}/${name}`;
+function parentDir(path: string): string | undefined {
+  const dir = posix.dirname(path);
+  return dir === "." ? undefined : posix.basename(dir);
 }
 
-export function groupTitle(files: string[]): string {
-  if (files.length === 0) return "Files";
-  const dir = commonDir(files);
-  const rest = files.map((f) => (dir ? f.slice(dir.length + 1) : f));
-  const names = [...new Set(rest.map(stem))];
-  let list = names.length <= MAX_NAMED ? names : undefined;
-  if (!list && rest.some((r) => r.includes("/"))) {
-    const parts = [...new Set(rest.map((r) => (r.includes("/") ? r.slice(0, r.indexOf("/")) : stem(r))))];
-    if (parts.length > 1 && parts.length <= MAX_PARTS) list = parts;
+/** `runner.test.ts` and `runner.ts` both give `runner`; `package.json` stays `package.json`. */
+function label(path: string): string {
+  const base = posix.basename(path);
+  if (!CODE_EXT.test(base)) return base;
+  const name = base.replace(CODE_EXT, "").replace(/\.d$/, "");
+  const dir = parentDir(path);
+  return GENERIC.has(name.toLowerCase()) && dir ? `${dir}/${name}` : name;
+}
+
+function subjectOf(path: string): string {
+  return path.replace(/[._-](?:test|spec)(\.[^./]+)$/, "$1");
+}
+
+function entries(files: string[], weight: (file: string) => number): Entry[] {
+  const bySubject = new Map<string, Entry>();
+  for (const f of files) {
+    const path = subjectOf(f);
+    const entry = bySubject.get(path) ?? { path, label: label(path), weight: 0 };
+    entry.weight += weight(f);
+    bySubject.set(path, entry);
   }
-  if (!list) return dir || "Top-level files";
-  return dir ? `${dir}: ${list.join(", ")}` : list.join(", ");
+  return [...bySubject.values()].sort((a, b) => b.weight - a.weight);
 }
 
-/** One title per group, with " (2)", " (3)" added to repeats. */
-export function groupTitles(groups: { files: string[] }[]): string[] {
+/** `doctor` → `cli/doctor`, unless the label already has a directory or gets too long. */
+function qualify(entry: Entry): string {
+  const dir = parentDir(entry.path);
+  if (!dir || entry.label.includes("/")) return entry.label;
+  const out = `${dir}/${entry.label}`;
+  return out.length <= MAX_LENGTH ? out : entry.label;
+}
+
+function titleFrom(list: Entry[], qualified: boolean): string {
+  const [first, second] = list;
+  if (!first) return "Files";
+  const lead = qualified ? qualify(first) : first.label;
+  if (list.length === 1) return qualify(first);
+  if (list.length === 2 && second) {
+    const pair = `${lead}, ${second.label}`;
+    if (pair.length <= MAX_LENGTH) return pair;
+  }
+  return `${lead} +${list.length - 1}`;
+}
+
+export function groupTitle(files: string[], weight: (file: string) => number = () => 0): string {
+  return titleFrom(entries(files, weight), false);
+}
+
+/**
+ * One title per group. Groups that would share a title get the leading file's
+ * directory, then " (2)", " (3)" for any still repeated.
+ */
+export function groupTitles(groups: { files: string[] }[], weight: (file: string) => number = () => 0): string[] {
+  const lists = groups.map((g) => entries(g.files, weight));
+  const titles = lists.map((l) => titleFrom(l, false));
+  const count = (ts: string[]) => {
+    const n = new Map<string, number>();
+    for (const t of ts) n.set(t, (n.get(t) ?? 0) + 1);
+    return n;
+  };
+  const first = count(titles);
+  const qualified = titles.map((t, i) => ((first.get(t) ?? 0) > 1 ? titleFrom(lists[i] ?? [], true) : t));
   const seen = new Map<string, number>();
-  return groups.map((g) => {
-    const title = groupTitle(g.files);
-    const n = (seen.get(title) ?? 0) + 1;
-    seen.set(title, n);
-    return n === 1 ? title : `${title} (${n})`;
+  return qualified.map((t) => {
+    const n = (seen.get(t) ?? 0) + 1;
+    seen.set(t, n);
+    return n === 1 ? t : `${t} (${n})`;
   });
 }

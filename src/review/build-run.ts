@@ -20,6 +20,7 @@ import type {
 } from "../types/review-run.ts";
 import { anchor } from "./anchors.ts";
 import { classifyFile, type Finding } from "./core/findings.ts";
+import { groupTitles } from "./core/lib/group-title.ts";
 import { fingerprint } from "./core/lib/marker.ts";
 import { classifySurface } from "./core/surface.ts";
 import type { RunReviewResult } from "./core/pipeline.ts";
@@ -373,6 +374,14 @@ export function buildReviewRun(input: BuildReviewRunInput): ReviewRun {
   };
   const unitLeaves = splitByChapter(unitOrder.map(leafFor).filter((l) => l.files.length), stops);
   const chapterOf = new Map(unitLeaves.flatMap((l) => (l.chapter === undefined ? [] : [[l.id, l.chapter] as const])));
+  // Diff runs title units from their files, so a unit split over chapters is
+  // retitled per part instead of every part repeating the whole unit's title.
+  const changedLines = (p: string) => {
+    const f = fileByPath.get(p);
+    return f ? f.additions + f.deletions : 0;
+  };
+  const leafTitles = input.kind === "diff" ? groupTitles(unitLeaves, changedLines) : [];
+  const titleOf = new Map(unitLeaves.map((l, i) => [l.id, leafTitles[i] ?? l.unit.title]));
 
   const groups: RunGroup[] = [];
   const leaf = (id: string, title: string, paths: string[], extra: Partial<RunGroup> = {}): RunGroup => ({
@@ -386,7 +395,7 @@ export function buildReviewRun(input: BuildReviewRunInput): ReviewRun {
   });
   const parent = (id: string, title: string, extra: Partial<RunGroup> = {}): RunGroup => leaf(id, title, [], extra);
   const unitGroup = (l: (typeof unitLeaves)[number], parentId?: string) =>
-    leaf(l.id, l.unit.title, l.files, {
+    leaf(l.id, titleOf.get(l.id) ?? l.unit.title, l.files, {
       ...(parentId ? { parentId } : {}),
       ...(l.unit.rationale ? { summary: l.unit.rationale } : {}),
     });
@@ -422,17 +431,19 @@ export function buildReviewRun(input: BuildReviewRunInput): ReviewRun {
   const skipped = take(files.filter((f) => f.classification === "skip").map((f) => f.path));
   const strays = take(files.map((f) => f.path));
   if (strays.length) log(`  ${strays.length} file(s) in no review unit: ${strays.join(", ")}`);
-  if (docs.length || skipped.length || strays.length) {
-    groups.push(parent("other", input.kind === "diff" ? "Other changes" : "Not reviewed in depth"));
-    if (strays.length) groups.push(leaf("remaining", "Remaining changes", strays, { parentId: "other" }));
-    if (docs.length) groups.push(leaf("docs", "Docs", docs, { parentId: "other", icon: "doc" }));
-    if (skipped.length)
-      groups.push(
-        leaf("skipped", "Generated and skipped", skipped, {
-          parentId: "other",
-          icon: "gear",
-        }),
-      );
+  const trailing = [
+    ...(strays.length ? [leaf("remaining", "Remaining changes", strays)] : []),
+    ...(docs.length ? [leaf("docs", "Docs", docs, { icon: "doc" })] : []),
+    ...(skipped.length ? [leaf("skipped", "Generated and skipped", skipped, { icon: "gear" })] : []),
+  ];
+  const otherTitle = input.kind === "diff" ? "Other changes" : "Not reviewed in depth";
+  const [only] = trailing;
+  if (trailing.length === 1 && only) {
+    // A wrapper around one group would repeat its stats on a second row.
+    groups.push(input.kind === "diff" ? only : { ...only, title: otherTitle });
+  } else if (trailing.length) {
+    groups.push(parent("other", otherTitle));
+    for (const g of trailing) groups.push({ ...g, parentId: "other" });
   }
 
   // ---- wire files, findings and stops onto groups

@@ -98,7 +98,7 @@ async function diffMain(options: RunDiffOptions): Promise<RunDiffResult> {
     files: byClass.code,
     source: (preload) => projectFilesAtCommit(options.repo, head, preload),
   });
-  const titles = groupTitles(grouping.groups);
+  const titles = groupTitles(grouping.groups, (f) => fileTokens.get(f) ?? 0);
   const units: ReviewUnit[] = grouping.groups.map((g, i) => ({
     id: g.id,
     title: titles[i] ?? g.id,
