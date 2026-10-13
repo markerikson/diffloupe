@@ -153,12 +153,16 @@ async function runReviewCommand(target: string | undefined, options: Omit<Review
   process.exit(await reviewInProcess(opts));
 }
 
+const TARGET_HELP =
+  "worktree (default), staged, a commit (<sha>, HEAD~2, commit:<rev>), a range (<a>..<b>, <a>...<b>), " +
+  "branch:<name>, #<pr>, pr:<n>, or a PR URL";
+
 export function createReviewCommand(): Command {
   return new Command("review")
     .description("Review changes with the multi-agent reviewer (requires opencode, tilth, git; gh for PRs)")
     .argument(
       "[target]",
-      "worktree (default), staged, HEAD, commit:<sha>, range:<a>..<b>, branch:<name>, #<pr>, pr:<n>, or a PR URL",
+      TARGET_HELP,
     )
     .option("-C, --repo <path>", "Repository to review (default: current directory)")
     .option("--base <ref>", "For staged/worktree: diff against merge-base(<ref>, HEAD) instead of HEAD")
@@ -190,7 +194,7 @@ export function createDiffCommand(): Command {
     )
     .argument(
       "[target]",
-      "worktree (default), staged, HEAD, commit:<sha>, range:<a>..<b>, branch:<name>, #<pr>, pr:<n>, or a PR URL",
+      TARGET_HELP,
     )
     .option("-C, --repo <path>", "Repository to diff (default: current directory)")
     .option("--base <ref>", "For staged/worktree: diff against merge-base(<ref>, HEAD) instead of HEAD")

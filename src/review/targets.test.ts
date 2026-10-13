@@ -46,9 +46,37 @@ describe("parseTargetSpec", () => {
     });
   });
 
+  it("parses bare ranges like git", () => {
+    expect(parseTargetSpec("9b1e201..b20dfcf")).toEqual({
+      kind: "range",
+      from: "9b1e201",
+      to: "b20dfcf",
+      mergeBase: false,
+    });
+    expect(parseTargetSpec("main...feature/x")).toEqual({
+      kind: "range",
+      from: "main",
+      to: "feature/x",
+      mergeBase: true,
+    });
+    expect(parseTargetSpec("HEAD~3..")).toEqual({ kind: "range", from: "HEAD~3", to: "HEAD", mergeBase: false });
+    expect(parseTargetSpec("...topic")).toEqual({ kind: "range", from: "HEAD", to: "topic", mergeBase: true });
+    expect(parseTargetSpec("range:v1.0..")).toEqual({ kind: "range", from: "v1.0", to: "HEAD", mergeBase: false });
+  });
+
+  it("parses bare revisions as single commits", () => {
+    for (const rev of ["9b1e201", "b20dfcf0123456789abcdef0123456789abcdef0", "HEAD^1", "HEAD~3", "main^", "v1.2.3", "123"]) {
+      expect(parseTargetSpec(rev)).toEqual({ kind: "commit", rev });
+    }
+  });
+
   it("rejects unknown specs", () => {
-    expect(() => parseTargetSpec("123")).toThrow(/unrecognized target/);
     expect(() => parseTargetSpec("range:main")).toThrow(/unrecognized target/);
+    expect(() => parseTargetSpec("..")).toThrow(/unrecognized target/);
+    expect(() => parseTargetSpec("a..b..c")).toThrow(/unrecognized target/);
+    expect(() => parseTargetSpec("comit:abc")).toThrow(/unrecognized target/);
+    expect(() => parseTargetSpec("--output=x")).toThrow(/unrecognized target/);
+    expect(() => parseTargetSpec("two words")).toThrow(/unrecognized target/);
     expect(() => parseTargetSpec("https://github.com/a/b/issues/3")).toThrow(/pull request URL/);
   });
 });
@@ -115,6 +143,24 @@ describe("resolveTarget", () => {
   it("resolves a range", async () => {
     const r = await resolveTarget(repo, "range:HEAD~1..HEAD");
     expect(r.target.base).toBe((await git("rev-parse", "HEAD~1")).trim());
+  });
+
+  it("resolves bare revisions and ranges", async () => {
+    const head = (await git("rev-parse", "HEAD")).trim();
+    const parent = (await git("rev-parse", "HEAD^")).trim();
+    const range = await resolveTarget(repo, `${parent.slice(0, 7)}..${head.slice(0, 7)}`);
+    expect(range.target).toMatchObject({ base: parent, head });
+    const open = await resolveTarget(repo, "HEAD~1..");
+    expect(open.target).toMatchObject({ base: parent, head });
+    const commit = await resolveTarget(repo, "main~0");
+    expect(commit.target).toMatchObject({ base: parent, head });
+    expect(commit.spec).toEqual({ kind: "commit", rev: "main~0" });
+  });
+
+  it("names a revision git cannot resolve", async () => {
+    await expect(resolveTarget(repo, "nosuchref")).rejects.toThrow(/unknown revision "nosuchref"/);
+    await expect(resolveTarget(repo, "main..nosuchref")).rejects.toThrow(/unknown revision "nosuchref"/);
+    await expect(resolveTarget(repo, "4242")).rejects.toThrow(/use #4242/);
   });
 
   it("snapshots the working tree without touching the real index", async () => {

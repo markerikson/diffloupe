@@ -97,19 +97,36 @@ export function parseTargetSpec(spec: string | undefined): TargetSpec {
   if (prefix === "branch" && rest) return { kind: "branch", branch: rest };
   if (prefix === "commit" && rest) return { kind: "commit", rev: rest };
   if (prefix === "range") {
-    const three = rest.split("...");
-    if (three.length === 2 && three[0] && three[1]) {
-      return { kind: "range", from: three[0], to: three[1], mergeBase: true };
-    }
-    const two = rest.split("..");
-    if (two.length === 2 && two[0] && two[1]) {
-      return { kind: "range", from: two[0], to: two[1], mergeBase: false };
+    const range = parseRange(rest);
+    if (range) return range;
+  }
+
+  // Bare git revisions: `a..b`, `a...b`, or anything naming one commit
+  // (`9b1e201`, `HEAD~3`, `main^`, a tag). git checks them during resolution.
+  if (!prefix && !s.startsWith("-") && !/\s/.test(s)) {
+    if (s.includes("..")) {
+      const range = parseRange(s);
+      if (range) return range;
+    } else {
+      return { kind: "commit", rev: s };
     }
   }
   throw new TargetError(
-    `unrecognized target "${s}". Use worktree, staged, HEAD, commit:<sha>, range:<a>..<b>, ` +
-      `branch:<name>, #<pr>, pr:<n>, owner/repo#<n>, or a pull request URL.`,
+    `unrecognized target "${s}". Use worktree, staged, a commit (<sha>, HEAD~2, commit:<rev>), ` +
+      `a range (<a>..<b>, <a>...<b>, range:<a>..<b>), branch:<name>, #<pr>, pr:<n>, owner/repo#<n>, ` +
+      `or a pull request URL.`,
   );
+}
+
+/** `a..b` compares the two commits; `a...b` compares b with merge-base(a, b). An empty side means HEAD. */
+function parseRange(s: string): TargetSpec | undefined {
+  const mergeBase = s.includes("...");
+  const sides = s.split(mergeBase ? "..." : "..");
+  if (sides.length !== 2) return undefined;
+  const [from = "", to = ""] = sides;
+  if (!from && !to) return undefined;
+  if (from.includes("..") || to.includes("..")) return undefined;
+  return { kind: "range", from: from || "HEAD", to: to || "HEAD", mergeBase };
 }
 
 export function makeTag(
@@ -138,7 +155,10 @@ export async function resolveTarget(
     const res = await run("git", ["-C", repo, "rev-parse", "--verify", "--quiet", `${r}^{commit}`], {
       allowFail: true,
     });
-    if (res.code !== 0) throw new TargetError(`unknown revision: ${r}`);
+    if (res.code !== 0) {
+      const hint = /^\d+$/.test(r) ? ` (for pull request ${r}, use #${r})` : "";
+      throw new TargetError(`unknown revision "${r}": not a commit in ${repo}${hint}`);
+    }
     return res.stdout.trim();
   };
   const mergeBase = async (a: string, b: string) => (await git(["merge-base", a, b])).trim();
