@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { loadFixture } from "./__fixtures__/load.ts";
+import { text } from "./core/lib/proc.ts";
 import {
   appendEvent,
   artifactsDir,
@@ -116,6 +117,30 @@ describe("run store", () => {
     expect(removed).toContain(path.join(scratchDir(), "scratchy-1-merge.json"));
     expect(removed).toContain(ocData);
     expect(existsSync(path.join(maps, "pr-1-abc.md"))).toBe(true);
+  });
+
+  test("deleting a run reports only the refs that existed", async () => {
+    const repo = path.join(tmp, "repo");
+    await mkdir(repo, { recursive: true });
+    const git = (...args: string[]) => text("git", ["-C", repo, ...args]);
+    await git("init", "-q");
+    await git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "c");
+    const base = loadFixture("worktree").build();
+    await Promise.all(
+      ["pinned-1", "plain-1"].map(async (id) => {
+        await createRunDir(id);
+        await writeRun({ ...base, id, repo: { ...base.repo, root: repo } });
+      }),
+    );
+    await git("update-ref", "refs/diffloupe/pinned-1", "HEAD");
+
+    const pinned = await deleteRun("pinned-1");
+    expect(pinned).toContain("refs/diffloupe/pinned-1");
+    expect(pinned).not.toContain("refs/diffloupe/pinned-1-base");
+    expect(await git("for-each-ref", "refs/diffloupe/")).toBe("");
+
+    const plain = await deleteRun("plain-1");
+    expect(plain.filter((p) => p.startsWith("refs/"))).toEqual([]);
   });
 
   test("orphaned scratch: files with no run directory, OpenCode dirs with no running run", async () => {

@@ -5,7 +5,7 @@
 import os from "node:os";
 import path from "node:path";
 import { appendFile, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { text } from "./core/lib/proc.ts";
+import { run as runProcess, text } from "./core/lib/proc.ts";
 import { type } from "arktype";
 import {
   ReviewRunSchema,
@@ -207,6 +207,22 @@ function runFileDirs(): string[] {
 }
 
 /**
+ * Deletes `ref` if it exists. `update-ref -d` also succeeds on a missing ref,
+ * so check first. A missing ref means the target was a real commit range or a
+ * pull request in a clone.
+ */
+async function removeRef(repoRoot: string, ref: string): Promise<boolean> {
+  try {
+    const found = await runProcess("git", ["-C", repoRoot, "show-ref", "--verify", "--quiet", ref], { allowFail: true });
+    if (found.code !== 0) return false;
+    await text("git", ["-C", repoRoot, "update-ref", "-d", ref]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Deletes a run: its directory, every artifact and scratch file named by its
  * tag, and the ref that pins a synthetic commit. Returns what was removed.
  */
@@ -240,12 +256,7 @@ export async function deleteRun(id: string): Promise<string[]> {
   if (repoRoot) {
     // `-base` pins the base commit of a pull request in a remote copy.
     for (const ref of [`refs/diffloupe/${id}`, `refs/diffloupe/${id}-base`]) {
-      try {
-        await text("git", ["-C", repoRoot, "update-ref", "-d", ref]);
-        removed.push(ref);
-      } catch {
-        // No such ref: the target was a real commit range or a pull request in a clone.
-      }
+      if (await removeRef(repoRoot, ref)) removed.push(ref);
     }
   }
 
