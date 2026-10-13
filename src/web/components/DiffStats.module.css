@@ -13,3 +13,9 @@
 .del {
   color: var(--error);
 }
+
+.binary {
+  color: var(--fg-fade);
+  font-size: 12px;
+  white-space: nowrap;
+}

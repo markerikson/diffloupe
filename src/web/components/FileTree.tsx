@@ -42,7 +42,7 @@ export function FileTree({ files, activePath, onSelect }: FileTreeProps) {
           ) : row.file ? (
             <button type="button" className={styles.file} onClick={() => onSelect(row.file!.path)} title={row.file.path}>
               <span className={styles.name}>{row.name}</span>
-              <DiffStats additions={row.file.additions} deletions={row.file.deletions} />
+              <DiffStats additions={row.file.additions} deletions={row.file.deletions} binary={row.file.isBinary} />
               <FileStatus status={row.file.status} />
             </button>
           ) : (

@@ -5,6 +5,8 @@ export interface GroupStats {
   files: number;
   additions: number;
   deletions: number;
+  /** How many of `files` are binary. */
+  binary: number;
   /** The group or any of its units is marked critical. */
   critical: boolean;
   /** Why it is critical, e.g. "1 blocker, 2 should-fix findings". */
@@ -69,23 +71,27 @@ export function buildGroupTree(
 
   const stats = new Map<string, GroupStats>();
   const own = (g: RunGroup): GroupStats => {
-    const s: GroupStats = { files: 0, additions: 0, deletions: 0, critical: g.critical };
+    const s: GroupStats = { files: 0, additions: 0, deletions: 0, binary: 0, critical: g.critical };
     for (const p of g.files) {
       const f = fileByPath.get(p);
       s.files += 1;
       s.additions += f?.additions ?? 0;
       s.deletions += f?.deletions ?? 0;
+      if (f?.isBinary) s.binary += 1;
     }
     return s;
   };
   for (const { chapter, units } of chapters) {
-    const total: GroupStats = chapter ? own(chapter) : { files: 0, additions: 0, deletions: 0, critical: false };
+    const total: GroupStats = chapter
+      ? own(chapter)
+      : { files: 0, additions: 0, deletions: 0, binary: 0, critical: false };
     for (const u of units) {
       const s = own(u);
       stats.set(u.id, s);
       total.files += s.files;
       total.additions += s.additions;
       total.deletions += s.deletions;
+      total.binary += s.binary;
       total.critical ||= s.critical;
     }
     if (chapter) stats.set(chapter.id, total);

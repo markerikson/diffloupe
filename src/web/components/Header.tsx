@@ -186,7 +186,9 @@ function GroupTabs({ tree, visible }: { tree: GroupTree; visible: ReadonlySet<st
             <GroupIcon icon={g.icon} />
             <span className={styles.tabLabel}>{g.title}</span>
             {stats?.critical && <CriticalMark reason={stats.criticalReason} />}
-            {stats && stats.files > 0 && <DiffStats additions={stats.additions} deletions={stats.deletions} />}
+            {stats && stats.files > 0 && (
+              <DiffStats additions={stats.additions} deletions={stats.deletions} binary={stats.binary === stats.files} />
+            )}
           </button>
         );
       })}

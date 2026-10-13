@@ -53,7 +53,7 @@ export function GroupPanel({
           {stats.critical && <CriticalMark reason={stats.criticalReason} />}
         </div>
         <div className={styles.stats}>
-          <DiffStats additions={stats.additions} deletions={stats.deletions} />
+          <DiffStats additions={stats.additions} deletions={stats.deletions} binary={stats.binary === stats.files} />
           <span>{plural(stats.files, "file")}</span>
         </div>
       </div>

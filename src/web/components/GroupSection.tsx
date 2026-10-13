@@ -36,7 +36,7 @@ export const ChapterBand = memo(function ChapterBand({ chapter, stats, unitCount
       </button>
       {stats.files > 0 ? (
         <div className={styles.chapterStats}>
-          <DiffStats additions={stats.additions} deletions={stats.deletions} />
+          <DiffStats additions={stats.additions} deletions={stats.deletions} binary={stats.binary === stats.files} />
           <span>{plural(stats.files, "file")}</span>
           {unitCount > 0 && <span>{plural(unitCount, "unit")}</span>}
         </div>

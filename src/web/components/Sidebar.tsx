@@ -45,7 +45,11 @@ function SidebarRow({ group, stats, depth, visible, fold }: SidebarRowProps) {
         </span>
         {stats && stats.files > 0 && (
           <span className={styles.sub}>
-            <DiffStats additions={stats.additions} deletions={stats.deletions} />
+            <DiffStats
+              additions={stats.additions}
+              deletions={stats.deletions}
+              binary={stats.binary === stats.files}
+            />
             <span>・{plural(stats.files, "file")}</span>
           </span>
         )}
