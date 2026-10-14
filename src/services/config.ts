@@ -1,15 +1,10 @@
 /**
- * Configuration service for DiffLoupe
- *
- * Handles loading configuration from multiple sources with priority:
- * 1. Explicit values (e.g., CLI flags)
- * 2. Config file (~/.config/diffloupe/config.json)
- * 3. Environment variables
+ * Loads the DiffLoupe user config, `$XDG_CONFIG_HOME/diffloupe/config.json`
+ * (`~/.config/diffloupe/config.json` by default).
  */
 
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { fileExists, readTextFile } from "../runtime/index.js";
 
 /**
  * Shape of the config file
@@ -68,15 +63,15 @@ export async function loadConfig(): Promise<DiffLoupeConfig> {
     return cachedConfig;
   }
 
-  const configPath = getConfigPath();
+  const file = Bun.file(getConfigPath());
 
-  if (!(await fileExists(configPath))) {
+  if (!(await file.exists())) {
     cachedConfig = {};
     return cachedConfig;
   }
 
   try {
-    const content = await readTextFile(configPath);
+    const content = await file.text();
     cachedConfig = JSON.parse(content) as DiffLoupeConfig;
     return cachedConfig;
   } catch {

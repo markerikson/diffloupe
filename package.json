@@ -69,7 +69,6 @@
     "react": "^19",
     "react-dom": "^19",
     "react-redux": "^9.2.0",
-    "tinyexec": "^1.0.2",
     "tree-sitter-cpp": "^0.23.4",
     "tree-sitter-typescript": "^0.23.2",
     "web-tree-sitter": "^0.26.13"
