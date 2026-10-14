@@ -55,7 +55,13 @@ Run `diffloupe doctor` to check all of this, along with which models a review wi
 
 ## Install
 
-DiffLoupe is not published to npm yet; the `@acemarke/diffloupe` 0.1.0 package on npm is the January prototype, with different commands. Build from source:
+```bash
+bun add -g @acemarke/diffloupe
+```
+
+`npm i -g @acemarke/diffloupe` works too, but the `diffloupe` command runs under Bun either way, so Bun must be on your `PATH`. The package is a self-contained bundle with no runtime dependencies.
+
+To run from source instead:
 
 ```bash
 git clone https://github.com/markerikson/diffloupe.git
@@ -64,7 +70,7 @@ bun install
 bun run build
 ```
 
-`dist/` then holds a standalone Bun bundle with the web UI. Run it with `bun /path/to/diffloupe/dist/index.js`, or put a `diffloupe` alias or wrapper script on your `PATH` that runs it.
+Then run `bun /path/to/diffloupe/dist/index.js`, or put a `diffloupe` alias or wrapper script on your `PATH` that runs it.
 
 ## Quick start
 
