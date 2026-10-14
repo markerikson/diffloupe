@@ -84,13 +84,13 @@ describe("parseTargetSpec", () => {
 describe("makeTag", () => {
   const now = new Date(2026, 9, 8, 7, 5, 3);
   it("names pull requests by number", () => {
-    expect(makeTag("diffloupe", { kind: "pr", pr: 42 }, "abcdef1234", now)).toBe(
-      "diffloupe-pr42-abcdef1-20261008070503",
+    expect(makeTag("diffloupe", { kind: "pr", pr: 42 }, "abcdef1234567890", now)).toBe(
+      "diffloupe-pr42-abcdef123456-20261008070503",
     );
   });
   it("names other targets by kind", () => {
-    expect(makeTag("diffloupe", { kind: "worktree" }, "abcdef1234", now)).toBe(
-      "diffloupe-worktree-abcdef1-20261008070503",
+    expect(makeTag("diffloupe", { kind: "worktree" }, "abcdef1234567890", now)).toBe(
+      "diffloupe-worktree-abcdef123456-20261008070503",
     );
   });
 });

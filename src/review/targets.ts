@@ -143,7 +143,7 @@ export function makeTag(
     `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
   const what = spec.kind === "pr" ? `pr${spec.pr}` : spec.kind;
   const name = repoName.replace(/[^\w.-]+/g, "_");
-  return `${name}-${what}-${head.slice(0, 7)}-${stamp}`;
+  return `${name}-${what}-${head.slice(0, 12)}-${stamp}`;
 }
 
 export async function resolveTarget(
@@ -383,7 +383,7 @@ async function fetchShallow(dir: string, shas: string[], fallbackRefs: string[])
   }
   if (wanted.length) {
     throw new TargetError(
-      `could not fetch ${wanted.map((s) => s.slice(0, 10)).join(", ")} from GitHub: ${first.stderr.trim() || "not found"}`,
+      `could not fetch ${wanted.map((s) => s.slice(0, 12)).join(", ")} from GitHub: ${first.stderr.trim() || "not found"}`,
     );
   }
 }

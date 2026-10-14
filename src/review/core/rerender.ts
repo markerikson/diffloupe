@@ -84,7 +84,7 @@ async function main() {
       repoDir: repo,
     });
     console.log(
-      `${tag}: ${r.pr ? `PR #${r.pr}` : `${r.base.slice(0, 7)}..${r.head.slice(0, 7)}`}, ` +
+      `${tag}: ${r.pr ? `PR #${r.pr}` : `${r.base.slice(0, 12)}..${r.head.slice(0, 12)}`}, ` +
         `${findings.length} findings, ${ordered.length} inline`,
     );
   }

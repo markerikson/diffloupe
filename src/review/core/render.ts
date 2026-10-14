@@ -287,7 +287,7 @@ export function renderReview(o: {
   for (const f of evidenceOrder) evidenceNo.set(f, evidenceNo.size + 1);
 
   const s: string[] = [];
-  s.push(`### Review of \`${o.head.slice(0, 10)}\``);
+  s.push(`### Review of \`${o.head.slice(0, 12)}\``);
   s.push("");
   const skippedFiles = o.unreviewed?.overCap ?? [];
   const failedFiles = o.unreviewed?.failed ?? [];
@@ -379,7 +379,7 @@ export function renderReview(o: {
   // render so the two cannot drift: anything pushed here is exactly what was left
   // out above, and the numbering shared with the bullets stays meaningful.
   const d: string[] = [];
-  d.push(`# Review of \`${o.head.slice(0, 10)}\`${o.pr ? ` — PR #${o.pr}` : ""}`);
+  d.push(`# Review of \`${o.head.slice(0, 12)}\`${o.pr ? ` — PR #${o.pr}` : ""}`);
   d.push("");
   d.push("Everything the summary comment links to rather than carries.");
   d.push("");
@@ -699,7 +699,7 @@ export function renderReview(o: {
     const c = priorById.get(id);
     const b: string[] = [];
     b.push(
-      `Checked this against \`${o.head.slice(0, 10)}\` — still open. ${SEV[f.severity]?.badge ?? f.severity}`,
+      `Checked this against \`${o.head.slice(0, 12)}\` — still open. ${SEV[f.severity]?.badge ?? f.severity}`,
     );
     const lead = f.impact?.trim() || leadSentences(f.explanation, 240);
     if (lead) b.push("", lead);
@@ -729,7 +729,7 @@ export function renderReview(o: {
       author: c.author,
       url: c.url,
       body: [
-        `✅ Fixed as of \`${o.head.slice(0, 10)}\`.${note ? ` ${note}` : ""}`,
+        `✅ Fixed as of \`${o.head.slice(0, 12)}\`.${note ? ` ${note}` : ""}`,
         "",
         marker("reply", { of: r.id, addressed: 1 }),
       ].join("\n"),

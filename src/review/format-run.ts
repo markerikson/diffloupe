@@ -151,7 +151,7 @@ function groupLines(run: ReviewRun): string[] {
  */
 export function formatDiffSummary(run: ReviewRun): string {
   const out: string[] = [];
-  out.push(`${formatTarget(run.target)}  ${run.base.slice(0, 10)}..${run.head.slice(0, 10)}`);
+  out.push(`${formatTarget(run.target)}  ${run.base.slice(0, 12)}..${run.head.slice(0, 12)}`);
   if (run.intent.inferred) out.push("", `What it does: ${lead(run.intent.inferred, 400)}`);
   out.push(...groupLines(run));
   if (run.untrackedSkipped.length) out.push("", `Untracked files skipped: ${run.untrackedSkipped.join(", ")}`);
@@ -175,7 +175,7 @@ function lead(text: string, max = 200): string {
  */
 export function formatRunSummary(run: ReviewRun): string {
   const out: string[] = [];
-  out.push(`${formatTarget(run.target)}  ${run.base.slice(0, 10)}..${run.head.slice(0, 10)}`);
+  out.push(`${formatTarget(run.target)}  ${run.base.slice(0, 12)}..${run.head.slice(0, 12)}`);
   if (run.unreviewed.failed.length) out.push(`Incomplete: ${run.unreviewed.failed.length} slice(s) failed.`);
   const budgetSkipped = run.unreviewed.budget ?? [];
   if (budgetSkipped.length) out.push(`Incomplete: cost limit reached, ${budgetSkipped.length} file(s) not reviewed.`);

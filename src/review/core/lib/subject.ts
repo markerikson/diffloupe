@@ -142,7 +142,7 @@ export async function openSubject(
     if (dirty.code !== 0 || dirty.stdout.trim() !== "") {
       throw new Error(
         `CODE_REVIEW_SUBJECT_DIR ${dir} has uncommitted changes to tracked files, so it was ` +
-          `not moved to ${head.slice(0, 10)}. Commit, stash or discard them, or point it somewhere else.`,
+          `not moved to ${head.slice(0, 12)}. Commit, stash or discard them, or point it somewhere else.`,
       );
     }
     // The clone the review is running out of is never ours to move. It is the
@@ -153,14 +153,14 @@ export async function openSubject(
     if (samePath(dir, home)) {
       throw new Error(
         `CODE_REVIEW_SUBJECT_DIR ${dir} is the checkout this review is running from, ` +
-          `and it is not at ${head.slice(0, 10)}. Point it somewhere else, or set ` +
+          `and it is not at ${head.slice(0, 12)}. Point it somewhere else, or set ` +
           `CODE_REVIEW_NO_CHECKOUT=1 when the checkout is already at the head commit.`,
       );
     }
     const moved = await run("git", ["-C", dir, "checkout", "--detach", "-q", head], { allowFail: true });
     if (moved.code !== 0) {
       throw new Error(
-        `CODE_REVIEW_SUBJECT_DIR ${dir} could not be moved to ${head.slice(0, 10)}: ` +
+        `CODE_REVIEW_SUBJECT_DIR ${dir} could not be moved to ${head.slice(0, 12)}: ` +
           `${moved.stderr.trim() || "checkout failed"}`,
       );
     }

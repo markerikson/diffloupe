@@ -38,8 +38,8 @@ export interface Target {
  */
 export function targetKey(t: Pick<Target, "pr" | "base" | "head">): string {
   return t.pr
-    ? `pr-${t.pr}-${t.head.slice(0, 7)}`
-    : `range-${t.base.slice(0, 7)}-${t.head.slice(0, 7)}`;
+    ? `pr-${t.pr}-${t.head.slice(0, 12)}`
+    : `range-${t.base.slice(0, 12)}-${t.head.slice(0, 12)}`;
 }
 
 /**

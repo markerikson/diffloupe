@@ -53,5 +53,5 @@ export function plural(n: number, word: string, many = `${word}s`): string {
 }
 
 export function shortSha(ref: string): string {
-  return /^[0-9a-f]{40}$/i.test(ref) ? ref.slice(0, 7) : ref;
+  return /^[0-9a-f]{40}$/i.test(ref) ? ref.slice(0, 12) : ref;
 }

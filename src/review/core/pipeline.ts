@@ -325,7 +325,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
   const oversized = capped.filter((s) => s.tokens > MAX_SLICE_TOKENS);
 
   console.error(
-    `${pr ? `PR ${pr} ` : ""}${base.slice(0, 8)}..${head.slice(0, 8)} — ${changed.length} changed ` +
+    `${pr ? `PR ${pr} ` : ""}${base.slice(0, 12)}..${head.slice(0, 12)} — ${changed.length} changed ` +
       `(${sliceFiles.length} code, ${byClass.docs.length} docs, ${byClass.skip.length} skipped) ` +
       `-> ${units.length} units, ${capped.length} slices` +
         `${notReviewed.length ? `, ${notReviewed.length} files over cap` : ""}` +

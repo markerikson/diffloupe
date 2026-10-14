@@ -230,7 +230,7 @@ export async function prepareRun(
   const verb = isDiff ? "Diff of" : "Reviewing";
   log(pr ? `${verb} ${target.slug}#${pr.number}: ${pr.title}` : `${verb} ${target.slug} (${describeSpec(resolved.spec)})`);
   const commits = resolved.commits === undefined ? "" : ` (${resolved.commits} commit${resolved.commits === 1 ? "" : "s"})`;
-  log(`  ${target.base.slice(0, 10)}..${target.head.slice(0, 10)}${commits}`);
+  log(`  ${target.base.slice(0, 12)}..${target.head.slice(0, 12)}${commits}`);
   log(`  ${changes.files} file(s) changed, +${changes.insertions} -${changes.deletions}`);
   log(`  run ${tag}`);
   if (setup) {
@@ -486,7 +486,7 @@ let cachedCoreSource: string | undefined;
 async function coreSource(): Promise<string> {
   if (cachedCoreSource) return cachedCoreSource;
   try {
-    const sha = (await text("git", ["-C", import.meta.dir, "rev-parse", "--short", "HEAD"])).trim();
+    const sha = (await text("git", ["-C", import.meta.dir, "rev-parse", "--short=12", "HEAD"])).trim();
     cachedCoreSource = `diffloupe@${sha}`;
   } catch {
     cachedCoreSource = "diffloupe";
