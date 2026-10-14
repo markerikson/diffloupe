@@ -177,13 +177,13 @@ export async function prepareRun(
       })
     : undefined;
   const fromSpec = from ? specOf(from.target) : undefined;
-  checkTools(fromSpec ? (fromSpec.kind === "pr" ? `#${fromSpec.pr}` : "") : req.target, { kind, walkthrough });
   if (from?.repo.remote && !isDiff) {
     throw new TargetError(
       `reviewing ${from.repo.slug ?? "this repository"} needs a local clone; ` +
         `run diffloupe review from a clone of it`,
     );
   }
+  checkTools(fromSpec ? (fromSpec.kind === "pr" ? `#${fromSpec.pr}` : "") : req.target, { kind, walkthrough });
   const localRepo = path.resolve(req.repo ?? defaultRepo);
   const spec = from ? undefined : parseTargetSpec(req.target);
   // A pull request in a repository with no clone here is diffed from a remote copy.
