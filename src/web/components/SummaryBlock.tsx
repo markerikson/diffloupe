@@ -140,7 +140,13 @@ export function SummaryBlock({ run }: { run: ReviewRun }) {
           )}
         </p>
       ) : reportedCount === 0 ? (
-        <p>No new issues found in the changed files.</p>
+        <p>
+          {run.status === "running"
+            ? "Reviewing the changed files. Findings appear here when the review finishes."
+            : run.status === "complete"
+              ? "No new issues found in the changed files."
+              : `The review ${run.status === "failed" ? "failed" : "was cancelled"} before reporting any findings.`}
+        </p>
       ) : (
         <div className={styles.verdicts}>
           <VerdictLine verdict={summary.merge} />

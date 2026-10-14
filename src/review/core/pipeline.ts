@@ -13,6 +13,7 @@ import { groupChanges } from "./change-groups.ts";
 import { projectFilesFromGit } from "./lib/module-resolver.ts";
 import { crossGroupLinkLines, groupLinkLines, selectWalkFiles, sketchFiles, sketchLine } from "./lib/walk-input.ts";
 import { applyGroupNaming, crossLinksFor, type GroupNaming } from "./lib/grouping.ts";
+import { groupTitles } from "./lib/group-title.ts";
 import { countLines, ensureDir, exists, removeIfPresent, writeJson, writeText } from "./lib/io.ts";
 import { openSubject } from "./lib/subject.ts";
 import { targetKey, type Target } from "./lib/target.ts";
@@ -175,33 +176,6 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
   const reviewsSoFar = Math.max(0, ...prior.filter((c) => c.mine).map((c) => c.runs ?? 0));
 
   checkAbort();
-  emit({ type: "stage", stage: "checking_registry" });
-  const reg = await registryCheck({ repo: SUBJECT, base, head });
-  const regMd = renderRegistryReport(reg.findings);
-
-  const mapPath = path.join(ARTIFACTS, "maps", `${mapKey}.md`);
-  let mapNote = "";
-  let haveMap = await exists(mapPath);
-  emit({ type: "stage", stage: "building_map" });
-  if (!haveMap) {
-    // The map is an accelerant, not a requirement: it makes reviews cheaper at
-    // equal finding quality. If the tree-sitter grammars are missing, reviewing
-    // without it beats not reviewing at all.
-    try {
-      const built = await buildDiffSeededMap({ repo: SUBJECT, base, head });
-      await writeText(mapPath, built.markdown);
-        await writeJson(path.join(ARTIFACTS, "maps", `${mapKey}.meta.json`), built.meta);
-      haveMap = true;
-    } catch (err) {
-      console.error(`repo map unavailable, continuing without it: ${err}`);
-    }
-  }
-  if (haveMap) {
-    mapNote = `A repository orientation map for this change is at \`${mapPath}\`. Read it first (use tilth_read if available) to get your bearings before exploring — it lists the codebase layout, the symbols in each changed file, and the files that import or are imported by them.\n`;
-  }
-
-  checkAbort();
-  // ---- slices
   const changed = (await gitText(["diff", "--name-only", `${base}..${head}`])).trim().split("\n").filter(Boolean);
   const byClass = { skip: [] as string[], docs: [] as string[], code: [] as string[] };
   for (const f of changed) byClass[classifyFile(f)].push(f);
@@ -228,16 +202,10 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     return { record: null, units: [], byClass, findings: [], costUsd: 0, wallMs: Date.now() - started, markdownPath };
   }
 
+  // Grouping needs only the git range, so it runs before the registry check and
+  // the repo map, and the computed groups go to the page before any model call.
+  // The naming call below replaces them with its titles and file moves.
   emit({ type: "stage", stage: "grouping" });
-  // ---- partition: group the changed files into flows. This is the only model
-  // call on the critical path before reviewing starts, so it gets a cheap model,
-  // a small budget, and an instruction not to read the repository. Its grouping
-  // *is* the work breakdown: files that must agree with each other go to one
-  // reviewer, and prose goes to nobody. The reviewer-facing prose is written
-  // later, off the critical path, once the findings exist.
-  const partTag = `${tagBase}-part`;
-  const partOut = `${OUT}/${partTag}.json`;
-  await removeIfPresent(partOut);
   // Links are computed whichever way units are formed: they also tell each
   // reviewer which of its files are tied to files another reviewer has.
   const { wholeDiff, diffstat, diffU0, fileTokens, facts, links, grouping } = await groupChanges({
@@ -248,13 +216,61 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
   });
   const outline = await diffOutline(base, head, sliceFiles);
   const computed = GROUPING === "code" ? grouping : undefined;
+  // A single computed group needs no name beyond the pull request's own title,
+  // so the naming call is skipped.
+  const singleGroup = computed?.groups.length === 1;
+  if (computed) {
+    const titles = groupTitles(computed.groups, (f) => fileTokens.get(f) ?? 0);
+    const provisional: ReviewUnit[] = computed.groups.map((g, i) => ({
+      id: g.id,
+      title: singleGroup ? intent.title || g.id : (titles[i] ?? g.id),
+      files: g.files,
+      priority: i + 1,
+    }));
+    emit({ type: "units", units: provisional, byClass });
+  }
+
+  checkAbort();
+  emit({ type: "stage", stage: "checking_registry" });
+  const reg = await registryCheck({ repo: SUBJECT, base, head });
+  const regMd = renderRegistryReport(reg.findings);
+
+  const mapPath = path.join(ARTIFACTS, "maps", `${mapKey}.md`);
+  let mapNote = "";
+  let haveMap = await exists(mapPath);
+  emit({ type: "stage", stage: "building_map" });
+  if (!haveMap) {
+    // The map is an accelerant, not a requirement: it makes reviews cheaper at
+    // equal finding quality. If the tree-sitter grammars are missing, reviewing
+    // without it beats not reviewing at all.
+    try {
+      const built = await buildDiffSeededMap({ repo: SUBJECT, base, head });
+      await writeText(mapPath, built.markdown);
+        await writeJson(path.join(ARTIFACTS, "maps", `${mapKey}.meta.json`), built.meta);
+      haveMap = true;
+    } catch (err) {
+      console.error(`repo map unavailable, continuing without it: ${err}`);
+    }
+  }
+  if (haveMap) {
+    mapNote = `A repository orientation map for this change is at \`${mapPath}\`. Read it first (use tilth_read if available) to get your bearings before exploring — it lists the codebase layout, the symbols in each changed file, and the files that import or are imported by them.\n`;
+  }
+
+  checkAbort();
+  // ---- partition: name the groups, or with model grouping, form them. This is
+  // the only model call on the critical path before reviewing starts, so it gets
+  // a cheap model, a small budget, and an instruction not to read the
+  // repository. Its grouping *is* the work breakdown: files that must agree with
+  // each other go to one reviewer, and prose goes to nobody. The reviewer-facing
+  // prose is written later, off the critical path, once the findings exist.
+  if (!singleGroup) emit({ type: "stage", stage: "grouping" });
+  const partTag = `${tagBase}-part`;
+  const partOut = `${OUT}/${partTag}.json`;
+  await removeIfPresent(partOut);
   const pp = computed
     ? groupNamingPrompt({ groups: computed.groups, links, outline, intent, registry: regMd, outFile: partOut })
     : partitionPrompt({ diffstat, outline, intent, codeFiles: sliceFiles, registry: regMd, outFile: partOut });
   await writeText(path.join(ARTIFACTS, "prompts", `${partTag}.txt`), pp);
-  // A single computed group needs no name beyond the pull request's own title,
-  // so the call is skipped.
-  const singleGroup = computed?.groups.length === 1;
   let parted = { wallMs: 0, costUsd: 0, numTurns: 0, payload: undefined as unknown };
   if (!singleGroup) {
     parted = await agent(pp, {
