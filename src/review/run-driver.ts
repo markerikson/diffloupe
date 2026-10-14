@@ -228,8 +228,9 @@ export async function prepareRun(
   const { target, changes, tag } = resolved;
   const pr = resolved.pullRequest;
   const verb = isDiff ? "Diff of" : "Reviewing";
-  log(pr ? `${verb} ${target.slug}#${pr.number}: ${pr.title}` : `${verb} ${target.slug} (${resolved.spec.kind})`);
-  log(`  ${target.base.slice(0, 10)}..${target.head.slice(0, 10)}`);
+  log(pr ? `${verb} ${target.slug}#${pr.number}: ${pr.title}` : `${verb} ${target.slug} (${describeSpec(resolved.spec)})`);
+  const commits = resolved.commits === undefined ? "" : ` (${resolved.commits} commit${resolved.commits === 1 ? "" : "s"})`;
+  log(`  ${target.base.slice(0, 10)}..${target.head.slice(0, 10)}${commits}`);
   log(`  ${changes.files} file(s) changed, +${changes.insertions} -${changes.deletions}`);
   log(`  run ${tag}`);
   if (setup) {
@@ -508,6 +509,19 @@ function specOf(t: ReviewTarget): TargetSpec {
       return parseTargetSpec(`range:${t.spec}`);
     default:
       return { kind: t.kind };
+  }
+}
+
+function describeSpec(spec: TargetSpec): string {
+  switch (spec.kind) {
+    case "branch":
+      return `branch ${spec.branch}`;
+    case "commit":
+      return `commit ${spec.rev}`;
+    case "range":
+      return `range ${spec.from}${spec.mergeBase ? "..." : ".."}${spec.to}`;
+    default:
+      return spec.kind;
   }
 }
 

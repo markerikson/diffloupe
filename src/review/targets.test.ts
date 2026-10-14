@@ -157,6 +157,31 @@ describe("resolveTarget", () => {
     expect(commit.spec).toEqual({ kind: "commit", rev: "main~0" });
   });
 
+  it("reviews a bare branch name as the whole branch", async () => {
+    const main = (await git("rev-parse", "main")).trim();
+    await git("checkout", "-q", "-b", "feature");
+    await writeFile(path.join(repo, "a.ts"), "export const a = 3;\n");
+    await git("commit", "-q", "-am", "third");
+    await writeFile(path.join(repo, "a.ts"), "export const a = 4;\n");
+    await git("commit", "-q", "-am", "fourth");
+    const head = (await git("rev-parse", "HEAD")).trim();
+
+    const bare = await resolveTarget(repo, "feature");
+    expect(bare.spec).toEqual({ kind: "branch", branch: "feature" });
+    expect(bare.target).toMatchObject({ base: main, head });
+    expect(bare.commits).toBe(2);
+    expect(bare.tag).toMatch(/-branch-/);
+
+    const tip = await resolveTarget(repo, "commit:feature");
+    expect(tip.spec).toEqual({ kind: "commit", rev: "feature" });
+    expect(tip.target).toMatchObject({ base: (await git("rev-parse", "HEAD^")).trim(), head });
+    expect(tip.commits).toBe(1);
+
+    const defaultBranch = await resolveTarget(repo, "main");
+    expect(defaultBranch.spec).toEqual({ kind: "commit", rev: "main" });
+    expect(defaultBranch.target.head).toBe(main);
+  });
+
   it("names a revision git cannot resolve", async () => {
     await expect(resolveTarget(repo, "nosuchref")).rejects.toThrow(/unknown revision "nosuchref"/);
     await expect(resolveTarget(repo, "main..nosuchref")).rejects.toThrow(/unknown revision "nosuchref"/);

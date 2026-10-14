@@ -155,7 +155,7 @@ async function runReviewCommand(target: string | undefined, options: Omit<Review
 
 const TARGET_HELP =
   "worktree (default), staged, a commit (<sha>, HEAD~2, commit:<rev>), a range (<a>..<b>, <a>...<b>), " +
-  "branch:<name>, #<pr>, pr:<n>, or a PR URL";
+  "a branch (<name>, branch:<name>), #<pr>, pr:<n>, or a PR URL";
 
 export function createReviewCommand(): Command {
   return new Command("review")

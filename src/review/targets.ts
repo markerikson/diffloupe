@@ -48,6 +48,8 @@ export interface ResolvedTarget {
   /** Run tag: names the artifacts and the pinned ref of a synthetic commit. */
   tag: string;
   changes: ChangeCounts;
+  /** Commits in `base..head`; absent for staged and working-tree snapshots. */
+  commits?: number;
   /** Untracked files left out of a working-tree snapshot because of their size. */
   skippedUntracked: string[];
   pullRequest?: PullRequestInfo;
@@ -149,7 +151,7 @@ export async function resolveTarget(
   specText: string | undefined,
   opts: ResolveOptions = {},
 ): Promise<ResolvedTarget> {
-  const spec = parseTargetSpec(specText);
+  let spec = parseTargetSpec(specText);
   const git = (args: string[], o: RunOptions = {}) => text("git", ["-C", repo, ...args], o);
   const rev = async (r: string) => {
     const res = await run("git", ["-C", repo, "rev-parse", "--verify", "--quiet", `${r}^{commit}`], {
@@ -177,6 +179,17 @@ export async function resolveTarget(
   let pullRequest: PullRequestInfo | undefined;
   let skippedUntracked: string[] = [];
   let synthetic = false;
+  let defaultBase: string | undefined;
+
+  // A bare branch name means the whole branch. `commit:<branch>` keeps the tip
+  // commit, and so does the default branch, which has nothing of its own.
+  if (spec.kind === "commit" && isBareRev(specText) && (await isBranch(repo, spec.rev))) {
+    defaultBase = await defaultBranch(repo).catch(() => undefined);
+    if (defaultBase) {
+      const tip = await rev(spec.rev);
+      if ((await mergeBase(defaultBase, tip)) !== tip) spec = { kind: "branch", branch: spec.rev };
+    }
+  }
 
   switch (spec.kind) {
     case "pr": {
@@ -195,7 +208,7 @@ export async function resolveTarget(
     }
     case "branch": {
       head = await rev(spec.branch);
-      base = await mergeBase(await defaultBranch(repo), head);
+      base = await mergeBase(defaultBase ?? (await defaultBranch(repo)), head);
       break;
     }
     case "range": {
@@ -235,12 +248,14 @@ export async function resolveTarget(
   }
 
   const changes = await countChanges(repo, base, head);
+  const commits = synthetic ? undefined : Number((await git(["rev-list", "--count", `${base}..${head}`])).trim());
   const target: Target = { base, head, slug, ...(spec.kind === "pr" ? { pr: String(spec.pr) } : {}) };
   return {
     spec,
     target,
     tag,
     changes,
+    ...(commits !== undefined ? { commits } : {}),
     skippedUntracked,
     ...(pullRequest ? { pullRequest } : {}),
   };
@@ -401,6 +416,19 @@ async function ensureCommit(repo: string, sha: string, refs: string[]): Promise<
     if (await hasCommit(repo, sha)) return;
   }
   throw new TargetError(`commit ${sha} is not in this clone and could not be fetched from origin`);
+}
+
+function isBareRev(specText: string | undefined): boolean {
+  return !(specText ?? "").trim().startsWith("commit:");
+}
+
+async function isBranch(repo: string, name: string): Promise<boolean> {
+  const found = await Promise.all(
+    [`refs/heads/${name}`, `refs/remotes/${name}`].map((ref) =>
+      run("git", ["-C", repo, "show-ref", "--verify", "--quiet", ref], { allowFail: true }),
+    ),
+  );
+  return found.some((r) => r.code === 0);
 }
 
 async function defaultBranch(repo: string): Promise<string> {

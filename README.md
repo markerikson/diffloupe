@@ -114,10 +114,10 @@ diffloupe runs
 |--------|-------------|
 | `worktree` | Staged, unstaged and untracked changes against HEAD (default) |
 | `staged` | Staged changes against HEAD |
-| `<sha>`, `HEAD`, `HEAD~2`, `main^`, a tag, `commit:<rev>` | A single commit against its parent. A bare branch name also means its tip commit; use `branch:` for the whole branch |
+| `<sha>`, `HEAD`, `HEAD~2`, `main^`, a tag, `commit:<rev>` | A single commit against its parent. Use `commit:<branch>` for just the tip commit of a branch |
 | `<a>..<b>`, `range:<a>..<b>` | The diff between two commits. An empty side means `HEAD`, as in `HEAD~3..` |
 | `<a>...<b>`, `range:<a>...<b>` | `<b>` against `merge-base(<a>, <b>)` |
-| `branch:<name>` | A branch against its merge base with the default branch |
+| `<branch>`, `branch:<name>` | A branch against its merge base with the default branch. A bare name of the default branch means its tip commit |
 | `#<n>`, `pr:<n>`, PR URL | A GitHub pull request, reviewed in a temporary worktree at the PR head |
 
 **Options:**
