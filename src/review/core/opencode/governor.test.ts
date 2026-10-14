@@ -684,3 +684,29 @@ describe("built-in tools that duplicate a tilth tool", () => {
     expect(g.shell("git log -n 5").message).not.toContain("tool tip");
   });
 });
+
+describe("checkWriteTarget", () => {
+  const { checkWriteTarget } = helpers;
+  const cwd = "/tmp/code-review-subject-ab63e811be83-1-x";
+  const outFile = "scratch/repo-branch-ab63e811be83-20261014174949-s01.json";
+
+  it("allows the write tool to the output file, relative or absolute", () => {
+    expect(checkWriteTarget("write", { path: outFile }, outFile, cwd)).toBeNull();
+    expect(checkWriteTarget("write", { filePath: path.join(cwd, outFile) }, outFile, cwd)).toBeNull();
+  });
+
+  it("refuses a write to any other path and names the right one", () => {
+    const refusal = checkWriteTarget("write", { path: "scratch/repo-branch-ab63e81-s01.json" }, outFile, cwd);
+    expect(refusal).toContain(outFile);
+    expect(checkWriteTarget("edit", { path: "src/index.ts" }, outFile, cwd)).toContain("refused");
+  });
+
+  it("refuses patch tools outright", () => {
+    expect(checkWriteTarget("apply_patch", { patchText: "..." }, outFile, cwd)).toContain("not available");
+  });
+
+  it("leaves other tools and calls without an output file alone", () => {
+    expect(checkWriteTarget("read", { path: "src/index.ts" }, outFile, cwd)).toBeNull();
+    expect(checkWriteTarget("write", { path: "anything" }, "", cwd)).toBeNull();
+  });
+});

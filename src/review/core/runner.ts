@@ -346,9 +346,9 @@ export function openCodeSettings(system: string, guidance: string, tools: AgentT
             resource: "*",
             effect: "allow",
           })),
-          // One action gates write, edit and patch together, so the narrower
-          // "refuse edits, permit writes" split of the other runner cannot be
-          // expressed. See the guardrail note above claudeCodeInvocation.
+          // One action gates write, edit and patch together, and the config is
+          // shared by every call while the output path is per call. The
+          // governor's checkWriteTarget narrows this to the call's output file.
           { action: "edit", resource: "*", effect: "allow" },
           // Findings and artifacts both land outside the checkout under review.
           { action: "external_directory", resource: "*", effect: "allow" },

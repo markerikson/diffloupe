@@ -72,6 +72,7 @@
  */
 
 import { appendFileSync, existsSync, writeFileSync } from "node:fs";
+import path from "node:path";
 
 /** Fraction of the binding limit at which tool results carry the wrap-up notice. */
 const NUDGE_AT = 0.75;
@@ -299,6 +300,37 @@ const checkShellCommand = (cmd: string): { rule: string; tip: string; deny: bool
     }
   }
   return null;
+};
+
+/** File-writing tools whose input names one target file. */
+const PATH_WRITE_TOOLS = new Set(["write", "edit", "multiedit"]);
+/** File-writing tools whose targets are buried in a patch body. */
+const PATCH_WRITE_TOOLS = new Set(["apply_patch", "patch"]);
+
+/**
+ * Refuse any file write except to the output file.
+ *
+ * A reviewer has exactly one thing to write, and the pipeline only reads it
+ * from the one path the prompt names. Measured on one run: both slices wrote
+ * their findings to a path with the 12-character head SHA of their working
+ * directory in place of the run tag's shorter one, and the run failed with
+ * $1.52 of finished review sitting in files nothing read. Refusing the write
+ * at the moment it is made, with the correct path in the error, lets the agent
+ * retry it in the same turn.
+ */
+const checkWriteTarget = (tool: string, input: unknown, outFile: string, cwd: string): string | null => {
+  if (!outFile) return null;
+  if (PATCH_WRITE_TOOLS.has(tool)) {
+    return `The "${tool}" tool is not available in a review. Write your output with the write tool, to \`${outFile}\`.`;
+  }
+  if (!PATH_WRITE_TOOLS.has(tool)) return null;
+  const fields = (input ?? {}) as { path?: unknown; filePath?: unknown };
+  const target = typeof fields.path === "string" ? fields.path : fields.filePath;
+  if (typeof target === "string" && path.resolve(cwd, target) === path.resolve(cwd, outFile)) return null;
+  return (
+    `Writing to "${String(target)}" is refused. The only file you may write is \`${outFile}\` — ` +
+    `copy that path exactly as given, character for character. Nothing else may be written during a review.`
+  );
 };
 
 /**
@@ -628,6 +660,13 @@ async function setup(ctx: GovernorContext) {
         if (refuse) throw new Error(`Do not ${hit.tip}`);
       }
     } else {
+      // Past the limit with the file delivered, the refusal below says the
+      // review is complete, which is the more useful thing to hear.
+      const refusal = over() && delivered() ? null : checkWriteTarget(call.tool, call.input, outFile, process.cwd());
+      if (refusal) {
+        log("write-refused", { tool: call.tool, refusal });
+        throw new Error(refusal);
+      }
       // Same ladder, applied to the built-in tools that duplicate a tilth
       // tool. Kept separate from the shell path because these have no command
       // string to inspect: the tool's own name is the whole signal.
@@ -665,6 +704,6 @@ async function setup(ctx: GovernorContext) {
 }
 
 /** Exposed for the tests. Not a plugin; OpenCode loads only the default export. */
-export const helpers = { checkShellCommand, checkBuiltinTool, repairTrailingThinking };
+export const helpers = { checkShellCommand, checkBuiltinTool, checkWriteTarget, repairTrailingThinking };
 
 export default { id: "review-governor", setup };
