@@ -110,6 +110,11 @@ function NoteList({ notes, depth, file }: { notes: readonly FileNote[]; depth: n
                 <PhSignpost className={styles.signpost} aria-hidden />
               )}
               <span className={styles.noteTitle}>{note.title}</span>
+              {note.kind === "stop" && note.number > 0 && (
+                <span className={styles.stopNumber} aria-hidden>
+                  ({note.number})
+                </span>
+              )}
               <span className={styles.line} data-side={note.side}>
                 {note.line}
               </span>

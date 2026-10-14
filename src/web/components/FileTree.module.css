@@ -136,6 +136,17 @@
   white-space: nowrap;
 }
 
+.stopNumber {
+  flex: none;
+  margin-left: -0.15rem;
+  color: var(--fg-mute);
+  font-variant-numeric: tabular-nums;
+}
+
+.note[data-importance="critical"] .stopNumber {
+  color: var(--critical);
+}
+
 .line {
   flex: none;
   color: var(--fg-mute);
