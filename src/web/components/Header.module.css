@@ -157,6 +157,7 @@
   background: color-mix(in srgb, var(--error) 12%, transparent);
   color: var(--error);
   font-size: 13px;
+  white-space: pre-line;
 }
 
 .tabs {

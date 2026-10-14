@@ -22,7 +22,7 @@ import { compactDeletedFiles } from "./lib/hunks.ts";
 import { SUBJECT, ARTIFACTS, RUNNER, MODEL, EFFORT, MODEL_WALK, MODEL_MERGE, EFFORT_AUX, WALK_BUDGET, PART_BUDGET, GROUPING, SLICE_BUDGET, MERGE_BUDGET, POOL, MAX_SLICES, MAX_SLICE_TOKENS, WALK_DIFF_TOKENS, OUT, applyConfig, setRunState, resetRunState, releaseSubject, type ReviewConfig } from "./config.ts";
 import { classifyFile, type Finding } from "./findings.ts";
 import { gitText, diffOutline, gatherIntent, gatherPriorComments, renderPriorComments, type PriorComment } from "./context.ts";
-import { agent, CancelledError, killAgents } from "./runner.ts";
+import { agent, CancelledError, killAgents, type AgentFailure } from "./runner.ts";
 import { slicePrompt, mergePrompt, type ReviewUnit, coverUnits, packUnits, type Walkthrough, partitionPrompt, groupNamingPrompt, walkthroughPrompt } from "./prompts.ts";
 import { classifySurface, SURFACE_RANK, CONF, SEV } from "./surface.ts";
 import { saidFingerprints, readCheckedClaims, mergeBudgetFor, fallbackRank, coordinatorHasWork, type MergeDecisions, MAX_POSTED, applyDecisions } from "./coordinate.ts";
@@ -106,6 +106,35 @@ export interface RunReviewResult {
   costUsd: number;
   wallMs: number;
   markdownPath: string;
+}
+
+/** One line per failed slice: its short name and why it produced nothing. */
+export function sliceFailureLines(failed: Record<string, unknown>[], tagBase: string): string[] {
+  return failed.map((r) => {
+    const tag = String(r.tag ?? "");
+    const name = tag.startsWith(`${tagBase}-`) ? tag.slice(tagBase.length + 1) : tag;
+    const failure = r.failure as AgentFailure | undefined;
+    return `${name}: ${failure?.message ?? `exited with code ${String(r.exitCode)}`}`;
+  });
+}
+
+/**
+ * The error for a run where every slice failed. Lists each slice's cause, and
+ * only suggests `diffloupe doctor` when a cause points at credentials or tooling:
+ * a model that wrote to the wrong path has working credentials.
+ */
+export function describeSliceFailures(failed: Record<string, unknown>[], tagBase: string, total: number): string {
+  const kinds = new Set(failed.map((r) => (r.failure as AgentFailure | undefined)?.kind));
+  const setupProblem = kinds.has("provider") || kinds.has("spawn") || kinds.has("exit") || kinds.has(undefined);
+  const lines = [
+    `all ${total} review slices failed — no review was produced.`,
+    ...sliceFailureLines(failed, tagBase).map((l) => `  ${l}`),
+    setupProblem
+      ? `Run \`diffloupe doctor\` to check credentials and tools.`
+      : `The agents ran normally, so this is not a credentials problem.`,
+    `Agent output: ${path.join(ARTIFACTS, "raw", `${tagBase}-sNN.stdout.ndjson`)}, logs in ${path.join(ARTIFACTS, "logs")}`,
+  ];
+  return lines.join("\n");
 }
 
 /**
@@ -397,12 +426,14 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
         r = await agent(prompt, { budget: SLICE_BUDGET, outFile, tag });
         addCost(r.costUsd);
       } catch (error) {
-        console.error(`  [w${id}] ${slice.unitId} — failed to run: ${error instanceof Error ? error.message : String(error)}`);
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`  [w${id}] ${slice.unitId} — failed to run: ${message}`);
+        const failure: AgentFailure = { kind: "spawn", message: `failed to run: ${message}` };
         sliceRuns.push({
           unit: slice.unitId, part: slice.part, parts: slice.parts, tokens: slice.tokens,
           files: slice.files, tag,
           wallMs: 0, costUsd: 0, numTurns: 0,
-          exitCode: -1, findingCount: 0, ok: false,
+          exitCode: -1, findingCount: 0, ok: false, failure,
         });
         emit({ ...sliceEvent, status: "failed" });
         continue;
@@ -448,11 +479,12 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
         // governor's last-resort abort exits non-zero by construction. An exit
         // code says how the process ended, which is a different question.
         ok: r.payload !== null,
+        ...(r.failure ? { failure: r.failure } : {}),
       });
       console.error(
         `  [w${id}] ${slice.unitId}${slice.parts > 1 ? ` ${slice.part}/${slice.parts}` : ""} ` +
           `(${slice.files.length}f ${slice.tokens}t) — ${(r.wallMs / 1000).toFixed(0)}s $${r.costUsd.toFixed(2)} ` +
-          `${r.numTurns}t ${raw.length} findings`,
+          `${r.numTurns}t ${raw.length} findings${r.failure ? ` — failed: ${r.failure.message}` : ""}`,
       );
       emit({
         ...sliceEvent, status: r.payload !== null ? "ok" : "failed",
@@ -471,15 +503,13 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
   // assurance. `ok` may be absent on records reused via MERGE_ONLY, which
   // predate this field, and those fall back to the exit code.
   const okSlices = sliceRuns.filter((r) => (r.ok as boolean | undefined) ?? r.exitCode === 0);
+  const failedSlices = sliceRuns.filter((r) => !okSlices.includes(r));
   if (sliceRuns.length > 0 && okSlices.length === 0) {
-    throw new Error(
-      `all ${sliceRuns.length} review slices failed — no review was produced. ` +
-        `Run \`diffloupe doctor\` to check credentials, and see the agent output in ` +
-        `${path.join(ARTIFACTS, "raw")} and ${path.join(ARTIFACTS, "logs")}`,
-    );
+    throw new Error(describeSliceFailures(failedSlices, tagBase, sliceRuns.length));
   }
-  if (okSlices.length < sliceRuns.length) {
-    console.error(`  warning: ${sliceRuns.length - okSlices.length} of ${sliceRuns.length} slices failed`);
+  if (failedSlices.length) {
+    console.error(`  warning: ${failedSlices.length} of ${sliceRuns.length} slices failed`);
+    for (const line of sliceFailureLines(failedSlices, tagBase)) console.error(`    ${line}`);
   }
 
   // ---- pre-trim before the coordinator

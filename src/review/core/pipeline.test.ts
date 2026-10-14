@@ -9,6 +9,7 @@ import {
   condenseOwnSummary,
   coordinatorHasWork,
   coverUnits,
+  describeSliceFailures,
   envNumber,
   fallbackRank,
   fitComment,
@@ -31,6 +32,7 @@ import {
   type Finding,
   type PriorComment,
 } from "./pipeline.ts";
+import { diagnoseMissingOutput } from "./runner.ts";
 import { readMarkers } from "./lib/marker.ts";
 import { applyConfig } from "./config.ts";
 
@@ -1469,5 +1471,60 @@ describe("groupByDir", () => {
 
   it("returns nothing for no files, so an empty section stays empty", () => {
     expect(groupByDir([])).toBe("");
+  });
+});
+
+describe("slice failure reporting", () => {
+  const ndjson = (...events: unknown[]) => events.map((e) => JSON.stringify(e)).join("\n");
+  const base = { outFile: "scratch/t-s00.json", stderr: "", exitCode: 0, cwd: "/tmp/subject" };
+
+  it("spots a write to the wrong path", () => {
+    const stdout = ndjson({
+      type: "tool_use",
+      part: { type: "tool", tool: "write", state: { status: "completed", input: { path: "scratch/other-s00.json" } } },
+    });
+    const f = diagnoseMissingOutput({ ...base, stdout });
+    expect(f.kind).toBe("wrong-path");
+    expect(f.message).toContain("scratch/other-s00.json");
+  });
+
+  it("does not count a write to the output file as the wrong path", () => {
+    const stdout = ndjson({
+      type: "tool_use",
+      part: { type: "tool", tool: "write", state: { status: "completed", input: { path: "/tmp/subject/scratch/t-s00.json" } } },
+    });
+    expect(diagnoseMissingOutput({ ...base, stdout }).kind).toBe("no-output");
+  });
+
+  it("reports a provider error ahead of anything else", () => {
+    const stdout = ndjson({ type: "error", error: { type: "provider.auth", message: "invalid x-api-key", status: 401 } });
+    const f = diagnoseMissingOutput({ ...base, stdout, exitCode: 1 });
+    expect(f.kind).toBe("provider");
+    expect(f.message).toContain("invalid x-api-key");
+  });
+
+  it("reports a non-zero exit with the last stderr line", () => {
+    const f = diagnoseMissingOutput({ ...base, stdout: "", exitCode: 2, stderr: "warming up\nboom" });
+    expect(f).toEqual({ kind: "exit", message: "exited with code 2 without writing its output: boom" });
+  });
+
+  it("reports unparseable output", () => {
+    expect(diagnoseMissingOutput({ ...base, stdout: "", parseError: "Unexpected token" }).kind).toBe("invalid-json");
+  });
+
+  it("lists each slice and skips the doctor hint when the agents ran normally", () => {
+    const failed = [
+      { tag: "t-s00", exitCode: 0, failure: { kind: "wrong-path", message: "wrote its output to a instead of b" } },
+      { tag: "t-s01", exitCode: 0, failure: { kind: "no-output", message: "finished without writing its output file" } },
+    ];
+    const msg = describeSliceFailures(failed, "t", 2);
+    expect(msg).toContain("s00: wrote its output to a instead of b");
+    expect(msg).toContain("s01: finished without writing");
+    expect(msg).not.toContain("doctor");
+  });
+
+  it("suggests doctor when a slice hit a provider error", () => {
+    const failed = [{ tag: "t-s00", exitCode: 1, failure: { kind: "provider", message: "auth" } }];
+    expect(describeSliceFailures(failed, "t", 1)).toContain("diffloupe doctor");
   });
 });

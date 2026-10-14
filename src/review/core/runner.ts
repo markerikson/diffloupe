@@ -2,7 +2,7 @@ import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { chmod, mkdir, rm } from "node:fs/promises";
-import { ensureDir, readJson, readText, removeIfPresent, writeJson, writeText } from "./lib/io.ts";
+import { ensureDir, exists, readJson, readText, removeIfPresent, writeJson, writeText } from "./lib/io.ts";
 import {
   DIR,
   SUBJECT,
@@ -467,6 +467,73 @@ export function readOpenCodeUsage(file: string): ReturnType<typeof sumOpenCodeSt
   }
 }
 
+/**
+ * Why an agent delivered no output file. Each kind points somewhere different:
+ * `provider` and `spawn` at credentials and tooling, the rest at what the
+ * model did with a working setup.
+ */
+export type AgentFailure = {
+  kind: "spawn" | "provider" | "invalid-json" | "wrong-path" | "exit" | "no-output";
+  message: string;
+};
+
+const WRITE_TOOLS = new Set(["write", "edit", "multiedit"]);
+
+/** Works out from the stream and the exit status why `outFile` is missing or unreadable. */
+export function diagnoseMissingOutput(o: {
+  outFile: string;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  cwd: string;
+  /** Set when the file exists but did not parse. */
+  parseError?: string | undefined;
+}): AgentFailure {
+  if (o.parseError !== undefined) {
+    return { kind: "invalid-json", message: `wrote ${o.outFile}, but it is not valid JSON (${o.parseError})` };
+  }
+  const providerErrors: string[] = [];
+  const writes: string[] = [];
+  for (const line of o.stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("{")) continue;
+    let event: {
+      type?: string;
+      error?: { type?: string; name?: string; message?: string; data?: { message?: string } };
+      part?: { type?: string; tool?: string; state?: { status?: string; input?: { path?: unknown; filePath?: unknown } } };
+    };
+    try {
+      event = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    if (event.type === "error" && event.error) {
+      const e = event.error;
+      const label = e.type ?? e.name ?? "error";
+      const message = e.message ?? e.data?.message;
+      providerErrors.push(message ? `${label}: ${message}` : label);
+      continue;
+    }
+    const part = event.part;
+    if (event.type !== "tool_use" || part?.type !== "tool" || !WRITE_TOOLS.has(part.tool ?? "")) continue;
+    if (part.state?.status !== "completed") continue;
+    const target = part.state.input?.path ?? part.state.input?.filePath;
+    if (typeof target === "string") writes.push(target);
+  }
+  if (providerErrors.length) {
+    return { kind: "provider", message: `the model provider returned an error (${providerErrors[0]})` };
+  }
+  const elsewhere = writes.filter((p) => path.resolve(o.cwd, p) !== path.resolve(o.cwd, o.outFile));
+  if (elsewhere.length) {
+    return { kind: "wrong-path", message: `wrote its output to ${elsewhere.at(-1)} instead of ${o.outFile}` };
+  }
+  if (o.exitCode !== 0) {
+    const tail = o.stderr.trim().split("\n").at(-1)?.slice(0, 300);
+    return { kind: "exit", message: `exited with code ${o.exitCode} without writing its output${tail ? `: ${tail}` : ""}` };
+  }
+  return { kind: "no-output", message: "finished without writing its output file" };
+}
+
 export async function agent(
   prompt: string,
   opts: { budget: number; outFile: string; tag: string; model?: string; effort?: string; tools?: AgentTools },
@@ -567,10 +634,14 @@ async function runAgent(
   const meta = spec.parse(stdout);
   const tools = spec.tools?.(stdout);
   let payload: unknown = null;
+  let failure: AgentFailure | undefined;
   try {
     payload = await readJson(opts.outFile);
-  } catch {
-    /* agent wrote nothing */
+  } catch (error) {
+    const parseError = (await exists(opts.outFile))
+      ? (error instanceof Error ? error.message : String(error))
+      : undefined;
+    failure = diagnoseMissingOutput({ outFile: opts.outFile, stdout, stderr, exitCode, cwd: spec.cwd, parseError });
   }
-  return { wallMs, exitCode, ...meta, tools, payload };
+  return { wallMs, exitCode, ...meta, tools, payload, failure };
 }
