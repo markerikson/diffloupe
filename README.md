@@ -8,7 +8,7 @@ It is also a plain diff viewer. `diffloupe diff` shows the same grouped diff in 
 
 ![The run page: merge and prod risk, findings by file, intent check, and where to start](docs/images/run-summary.png)
 
-![A finding and a walkthrough stop shown under the lines they refer to](docs/images/run-finding.png)
+![A finding and a walkthrough stop shown under the lines they refer to, and listed under their files in the group's file tree](docs/images/run-finding.png)
 
 <sub>Screenshots use a synthetic test fixture, not a real repository.</sub>
 
@@ -25,12 +25,14 @@ Each review is saved as a run that you can list and reopen. Reviewing the same t
 
 - **Summary** at the top, laid out like a GitHub review comment: merge risk and production risk, finding counts, findings grouped by file with links to their lines, whether the change matches its stated intent, what to focus on, and where to start.
 - **Groups** in the sidebar and down the page. Each group has a short summary and its own file tree. Files can be collapsed one by one or from the collapse menu.
+- **File tree notes:** under each file in a group's tree, one row per finding (severity dot, title, line) and per walkthrough stop (signpost icon, title, stop number, line). Clicking a row scrolls to its line. Groups with a blocker or should-fix finding, or a critical walkthrough stop, get an orange mark; its tooltip says which.
 - **Finding cards** under the lines they refer to, coloured by severity, with explanation, evidence and a suggested fix. Focusing a finding highlights its line range.
 - **Walkthrough stops** as separate cards, with a Guide mode in the sidebar for stepping through them in order.
 - **Copy** on each finding and **Copy all** put the findings on the clipboard as markdown, ready to paste into a coding agent.
 - **Keyboard:** `j`/`k` next/previous file, `n`/`p` next/previous finding, `]`/`[` next/previous stop, `x` collapse the current file, `t` back to the summary, `?` for the list. Browser Back and Forward move between the findings you jumped to.
 - Split or unified diffs, line wrapping, light and dark themes.
 - While a review is running, the page shows its progress and fills in the file groups as soon as grouping finishes.
+- The run list at `/` shows every saved run, with a filter for reviews or diffs.
 
 ## Requirements
 
@@ -123,7 +125,7 @@ diffloupe runs
 | `--model <stage=id>` | Model for a stage: `review`, `coordinator`, `walkthrough` (repeatable) |
 | `--effort <level>` | Reasoning effort: `low`, `medium`, `high` |
 | `--config <file>` | Per-repo review settings (see below) |
-| `--max-cost <usd>` | Stop starting new review slices once spending reaches this amount. Slices already running finish, so the total can go over. |
+| `--max-cost <usd>` | Stop starting new review slices once spending reaches this amount. Slices already running finish, so the total can go over: by up to six slices at $3 each, plus the coordinator and walkthrough. |
 | `--host <host>`, `--port <port>` | Server address (default `127.0.0.1:4517`, or the next free port) |
 | `--open` | Open the run in a browser. On WSL this opens the Windows browser. |
 | `--headless` | Run without a server and print a summary to stdout |
@@ -152,11 +154,11 @@ A diff run page has a **Review these changes** button. It starts a full review o
 
 ### `diffloupe open [runId]`
 
-Prints the URL of a saved run, starting a server if none is running. `--last` opens the most recent run; with no run id it opens the run list. `--open` opens the browser.
+Prints the URL of a saved run, starting a server if none is running. `--last` opens the most recent run; with no run id it opens the run list. `--open` opens the browser. `--port` is where it looks for a running server (default 4517), and `--host` is the address a new server listens on.
 
 ### `diffloupe serve`
 
-Runs the server until you stop it. `-C` sets the repository that runs use by default.
+Runs the server until you stop it. `-C` sets the repository that runs use by default. `--host`, `--port` and `--open` work as for `review`.
 
 ### `diffloupe runs`
 
@@ -165,7 +167,7 @@ Runs the server until you stop it. `-C` sets the repository that runs use by def
 | `diffloupe runs [--kind review\|diff] [--json]` | List saved runs, newest first |
 | `diffloupe runs show <id> [--json]` | Show a run: groups with their files and findings, walkthrough stops, totals |
 | `diffloupe runs show <id> --markdown [--over-cap]` | Print the findings as markdown, the same text as Copy all in the UI |
-| `diffloupe runs rm <id>` | Delete a run, its artifacts and its scratch files |
+| `diffloupe runs rm <id>` | Delete a run, its artifacts, its scratch files and the git refs that pin its commits |
 | `diffloupe runs prune [--older-than 30d] [--keep 20] [--kind review\|diff] [--yes]` | Delete runs older than the cutoff, except the newest `--keep`, plus scratch files no run owns. Lists what it would delete unless `--yes` is given |
 
 Runs are stored under `$XDG_DATA_HOME/diffloupe/runs/<id>/` (`~/.local/share/diffloupe/runs/` by default). Each holds `run.json`, the reviewed `diff.patch`, the progress log, and the raw review output. Deleting a run removes the refs that pin its commits; the repository copies under `repos/` are not deleted, and their objects stay until you remove the directory.

@@ -43,7 +43,7 @@ export function createRunsCommand(): Command {
 
   runs
     .command("rm")
-    .description("Delete a saved run, its artifacts and its pinned ref")
+    .description("Delete a saved run, its artifacts and the git refs that pin its commits")
     .argument("<id>", "Run id")
     .action(async (id: string) => {
       const removed = await deleteRun(id);
