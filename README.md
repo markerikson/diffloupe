@@ -240,6 +240,7 @@ The `diffloupe` command does not load `.env` files, so a `.env` in the repo you 
 ## Inspirations
 
 - [pulls.review](https://pulls.review) - the page layout: grouped files, sticky group panels, per-group file trees
+- [Codiff](https://github.com/nkzw-tech/codiff): a diff viewer with walkthroughs
 - [`@pierre/diffs`](https://diffs.com) - the diff renderer
 - [Plannotator](https://github.com/backnotprop/plannotator) - local review server, browser opening and request guards
 - [LaReview](https://github.com/puemos/lareview) - flow-based grouping
