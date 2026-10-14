@@ -22,21 +22,22 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: oven-sh/setup-bun@e2c7b0c4a28081a4a3db9c62d1cd75e9cae78121 # v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: latest
 
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24.x'
           registry-url: 'https://registry.npmjs.org'
 
       - run: bun install --frozen-lockfile
 
-      - run: bun run build
+      - run: bun run test
 
+      # prepublishOnly runs the build and typecheck
       - run: npm publish --access public --provenance --tag ${{ inputs.tag }}
