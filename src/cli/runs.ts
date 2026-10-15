@@ -18,6 +18,7 @@ async function loadOrExit(id: string): Promise<ReviewRun> {
 export function createRunsCommand(): Command {
   const runs = new Command("runs")
     .description("List saved runs")
+    .enablePositionalOptions()
     .option("--json", "Print run headers as JSON", false)
     .option("--kind <kind>", "Only review or diff runs", parseKind)
     .action(async (options: { json: boolean; kind?: RunKind }) => {

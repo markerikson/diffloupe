@@ -1,5 +1,21 @@
 import { describe, expect, test } from "bun:test";
+import { createProgram } from "./index.ts";
 import { parseAge } from "./runs.ts";
+
+describe("runs show", () => {
+  test("--json after show goes to show, not to runs", async () => {
+    const program = createProgram();
+    const runs = program.commands.find((c) => c.name() === "runs")!;
+    const show = runs.commands.find((c) => c.name() === "show")!;
+    let seen: { json: boolean } | undefined;
+    show.action((_id: string, opts: { json: boolean }) => {
+      seen = opts;
+    });
+    await program.parseAsync(["runs", "show", "some-id", "--json"], { from: "user" });
+    expect(seen?.json).toBe(true);
+    expect(runs.opts().json).toBe(false);
+  });
+});
 
 describe("parseAge", () => {
   test("hours, days and weeks", () => {
