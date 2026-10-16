@@ -92,6 +92,17 @@ export function sortFindings(findings: readonly RunFinding[]): RunFinding[] {
   );
 }
 
+/** "3 findings: 1 blocker, 2 should-fix." or "No issues found." — the first thing a reader or agent needs. */
+function countLine(run: ReviewRun): string {
+  const overCap = run.overCapFindings.length ? ` ${run.overCapFindings.length} more over the posting cap.` : "";
+  if (run.findings.length === 0) return `No issues found.${overCap}`;
+  const bySeverity = SEVERITY_ORDER.map((s) => [s, run.findings.filter((f) => f.severity === s).length] as const)
+    .filter(([, n]) => n > 0)
+    .map(([s, n]) => `${n} ${s}`);
+  const n = run.findings.length;
+  return `${n} finding${n === 1 ? "" : "s"}: ${bySeverity.join(", ")}.${overCap}`;
+}
+
 export interface RunMarkdownOptions {
   includeOverCap?: boolean;
 }
@@ -101,7 +112,7 @@ export function runMarkdown(run: ReviewRun, opts: RunMarkdownOptions = {}): stri
     `# Review findings: ${formatTarget(run.target)}`,
     `Base ${code(run.base.slice(0, 12))}, head ${code(run.head.slice(0, 12))}`,
   ];
-  if (run.findings.length === 0) out.push("No findings.");
+  out.push(countLine(run));
   for (const f of sortFindings(run.findings)) out.push(findingMarkdown(f));
   if (opts.includeOverCap && run.overCapFindings.length) {
     out.push(`## Over the posting cap (${run.overCapFindings.length})`);

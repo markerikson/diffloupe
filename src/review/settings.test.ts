@@ -3,7 +3,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { SURFACES } from "./core/config.ts";
-import { loadReviewSettings, parseReviewSettings, settingsToConfig } from "./settings.ts";
+import { loadReviewSettings, parseReviewSettings, settingsInstructions, settingsToConfig } from "./settings.ts";
 
 describe("parseReviewSettings", () => {
   test("accepts a full settings object", () => {
@@ -28,6 +28,22 @@ describe("parseReviewSettings", () => {
   test("rejects wrong types and bad regexes", () => {
     expect(() => parseReviewSettings({ extraExcludes: "vendor/" }, "test")).toThrow(/invalid settings/);
     expect(() => parseReviewSettings({ surfaces: { deploy: ["("] } }, "test")).toThrow(/invalid surface pattern/);
+  });
+});
+
+describe("settingsInstructions", () => {
+  test("joins an array of lines", () => {
+    expect(settingsInstructions(parseReviewSettings({ instructions: ["a", "b"] }, "test"))).toBe("a\nb");
+  });
+
+  test("accepts a string and treats blank as none", () => {
+    expect(settingsInstructions(parseReviewSettings({ instructions: " x " }, "test"))).toBe("x");
+    expect(settingsInstructions({ instructions: "  " })).toBeUndefined();
+    expect(settingsInstructions({})).toBeUndefined();
+  });
+
+  test("rejects other types", () => {
+    expect(() => parseReviewSettings({ instructions: 3 }, "test")).toThrow(/invalid settings/);
   });
 });
 

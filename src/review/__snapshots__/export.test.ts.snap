@@ -5,6 +5,8 @@ exports[`runMarkdown snapshot 1`] = `
 
 Base \`ad555642469a\`, head \`b7e77e972a23\`
 
+6 findings: 1 blocker, 1 should-fix, 2 nice-to-have, 2 question. 2 more over the posting cap.
+
 ### [blocker] Unvalidated input reaches the server
 
 \`src/api/server.ts:51-53\`

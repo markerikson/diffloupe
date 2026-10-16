@@ -207,7 +207,13 @@ Checks Bun, git, OpenCode, tilth and `gh`; prints the model for each stage and w
   "models": { "review": "...", "coordinator": "...", "walkthrough": "..." },
   "effort": "medium",
   "surfaces": { "deploy": ["^infra/"], "tooling": ["^docs/"] },
-  "extraExcludes": ["vendor/openssl/"]
+  "extraExcludes": ["vendor/openssl/"],
+  "instructions": [
+    "## What failure looks like here",
+    "A change that breaks runs already saved on disk.",
+    "## Don't report",
+    "Styling in src/web/."
+  ]
 }
 ```
 
@@ -230,6 +236,8 @@ Every field is optional.
 **Effort** is passed to OpenCode as the model variant (`provider/model#high`), so it must be a variant the model offers. It is only added when you set it, or when the model is a built-in default. A model from your OpenCode config runs without a variant unless you set an effort. A `#variant` written in the model id always wins.
 
 `surfaces` are regex sources matched against repo-relative paths. They decide which findings count toward "prod risk": anything not matched as deploy or tooling counts as product code. `extraExcludes` are path substrings left out of the code map.
+
+`instructions` is free text given to every reviewer and the coordinator, either one string or an array of lines. Keep it short and about what the code can't tell a reviewer: what counts as breaking in this repo, invariants that are easy to break and invisible in a diff, and what not to report. Where it conflicts with the built-in review guidance, it wins.
 
 ### Credentials
 

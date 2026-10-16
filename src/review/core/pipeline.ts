@@ -76,6 +76,8 @@ export interface RunReviewOptions {
   target: Target;
   /** Extra statement of intent: the body when there is no PR, appended to the PR body otherwise. */
   intent?: string;
+  /** Repo-specific review instructions from the settings file, given to every reviewer and the coordinator. */
+  instructions?: string;
   tag: string;
   onProgress?: (event: ReviewEvent) => void;
   config?: Partial<ReviewConfig>;
@@ -412,7 +414,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
       await removeIfPresent(outFile);
       const prompt = slicePrompt({
         unit, diff, intent, registry: regMd, prior: priorMd, mapNote, outFile,
-        crossLinks: crossLinksFor(slice.files, links),
+        crossLinks: crossLinksFor(slice.files, links), instructions: options.instructions,
       });
       await writeText(path.join(ARTIFACTS, "prompts", `${tag}.txt`), prompt);
       const sliceEvent = { type: "slice", index: i, total: capped.length, title: slice.title } as const;
@@ -529,7 +531,9 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
   const mergeTag = `${tagBase}-merge`;
   const mergeOut = `${OUT}/${mergeTag}.json`;
   await removeIfPresent(mergeOut);
-  const mp = mergePrompt({ findings: toMerge, intent, files: sliceFiles, prior: priorMd, outFile: mergeOut });
+  const mp = mergePrompt({
+    findings: toMerge, intent, files: sliceFiles, prior: priorMd, outFile: mergeOut, instructions: options.instructions,
+  });
   await writeText(path.join(ARTIFACTS, "prompts", `${mergeTag}.txt`), mp);
   const mergeBudget = mergeBudgetFor(toMerge.length, MERGE_BUDGET);
 

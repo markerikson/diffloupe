@@ -6,12 +6,15 @@
  *   "models": { "review": "...", "coordinator": "...", "walkthrough": "..." },
  *   "effort": "medium",
  *   "surfaces": { "deploy": ["^infra/"], "tooling": ["^docs/"] },
- *   "extraExcludes": ["vendor/openssl/"]
+ *   "extraExcludes": ["vendor/openssl/"],
+ *   "instructions": ["## What failure looks like here", "..."]
  * }
  *
  * surfaces are regex sources matched against repo-relative paths. They replace
  * the defaults for whichever list is given. extraExcludes are path substrings
- * left out of the code map and the registry check.
+ * left out of the code map and the registry check. instructions is free text
+ * given to every reviewer and the coordinator, as one string or as an array of
+ * lines joined with newlines.
  */
 import { readFile } from "node:fs/promises";
 import { type } from "arktype";
@@ -35,6 +38,7 @@ const ReviewSettings = type({
     "tooling?": "string[]",
   },
   "extraExcludes?": "string[]",
+  "instructions?": "string | string[]",
 });
 
 export type ReviewSettings = typeof ReviewSettings.infer;
@@ -83,4 +87,11 @@ export function settingsToConfig(settings: ReviewSettings): Partial<ReviewConfig
   }
   if (settings.extraExcludes) config.extraExcludes = settings.extraExcludes;
   return config;
+}
+
+/** The review instructions as one block of text, or undefined when there are none. */
+export function settingsInstructions(settings: ReviewSettings): string | undefined {
+  const { instructions } = settings;
+  const text = (Array.isArray(instructions) ? instructions.join("\n") : (instructions ?? "")).trim();
+  return text || undefined;
 }

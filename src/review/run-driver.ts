@@ -32,7 +32,7 @@ import {
   writeRun,
 } from "./run-store.ts";
 import { describeSource, MODEL_STAGES } from "./models.ts";
-import { loadReviewSettings, settingsToConfig, type ReviewSettings } from "./settings.ts";
+import { loadReviewSettings, settingsInstructions, settingsToConfig, type ReviewSettings } from "./settings.ts";
 import { resolveRunSetup, runModels, setupConfig } from "./setup.ts";
 import {
   needsRemoteCopy,
@@ -146,6 +146,7 @@ export interface PreparedRun {
   config: Partial<ReviewConfig>;
   maxCostUsd?: number;
   intent?: string;
+  instructions?: string;
   patch: string;
   priorRunId?: string;
   previous?: { run: ReviewRun; dismissed: string[]; lineMap: Map<string, LineHunk[]> };
@@ -218,6 +219,7 @@ export async function prepareRun(
     ...(setup ? setupConfig(setup) : {}),
   };
   const maxCostUsd = isDiff ? undefined : (req.maxCostUsd ?? userConfig.maxCostUsd);
+  const instructions = isDiff ? undefined : settingsInstructions(settings);
 
   const resolved =
     from && fromSpec
@@ -307,6 +309,7 @@ export async function prepareRun(
     config,
     ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
     ...(intent ? { intent } : {}),
+    ...(instructions ? { instructions } : {}),
     patch,
     ...(priorRunId ? { priorRunId } : {}),
     ...(previous ? { previous } : {}),
@@ -378,6 +381,7 @@ export async function executeRun(prep: PreparedRun, opts: ExecuteRunOptions): Pr
             signal: opts.signal,
             ...(prep.maxCostUsd !== undefined ? { maxCostUsd: prep.maxCostUsd } : {}),
             ...(prep.intent ? { intent: prep.intent } : {}),
+            ...(prep.instructions ? { instructions: prep.instructions } : {}),
             ...(prep.previous ? { prior: priorComments(prep.previous.run) } : {}),
             onProgress,
           });

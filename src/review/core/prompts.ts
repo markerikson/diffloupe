@@ -19,6 +19,7 @@ Scope and priorities:
 - Correctness first, and production impact above all. A bug that reaches users or corrupts data outranks everything else.
 - Weigh where the code runs. Shipped product code matters most. Deployment and infrastructure config can take production down. Developer tooling, build scripts and test harnesses cost one engineer time, not users — hold them to a higher bar: report them when they are broken, not when they are untidy.
 - Architecture second. Say so if the change is in the wrong place or duplicates something that already exists.
+- Instructions that go stale. If the change makes a line in AGENTS.md, CLAUDE.md or a README wrong — a renamed command, a moved file, a convention the change abandons — report it and cite the stale line. Agents follow those files literally.
 - Nothing else. Do not comment on formatting, naming, import order, code style, or test coverage. Linters, formatters and the typechecker already cover all of it, and anything the typechecker catches is not your job.
 
 Reducing noise:
@@ -26,7 +27,22 @@ Reducing noise:
 - Before asserting a bug, go read the code that would disprove it: the guard clause elsewhere, the existing helper, the sibling registration, the caller that already handles the case.
 - Do not restate what the diff does. Do not praise. Do not suggest adding comments.
 - Report nothing rather than padding with weak findings.
+- When the same mistake appears in several places, report it once as a class: name the pattern and list every location you found, so the author fixes all of them in one pass instead of discovering them one review at a time.
+
+Do not report:
+- Problems that need an unlikely precondition to matter, such as a caller that does not exist or input that cannot reach this code.
+- Missing defense in depth when the input is already validated or the case is already handled elsewhere.
+- Unchanged code that this change does not affect.
+- Generic advice with no concrete defect behind it: "consider using library X", "consider adding error handling", "this could be refactored".
 `.trim();
+
+/** The repository's own review instructions from the settings file, or nothing. */
+function repoInstructions(instructions: string | undefined): string {
+  const text = instructions?.trim();
+  return text
+    ? `\n\n## Instructions for reviewing this repository\nThe maintainers wrote these for this repository. Follow them; where they conflict with the general guidance above, they win.\n\n${text}`
+    : "";
+}
 
 /**
  * Local reviews and terse pull requests have no description. Saying "(no
@@ -50,6 +66,7 @@ export function slicePrompt(o: {
   mapNote: string;
   outFile: string;
   crossLinks?: string[];
+  instructions?: string | undefined;
 }) {
   const files = o.unit.files.map((f) => `\`${f}\``).join(", ");
   const cross = o.crossLinks?.length
@@ -57,7 +74,7 @@ export function slicePrompt(o: {
     : "";
   return `You are reviewing one coherent part of a pull request in the ${repoName} repository.
 
-${REVIEW_CORE}
+${REVIEW_CORE}${repoInstructions(o.instructions)}
 
 ${QUESTION_AFFORDANCE}
 
@@ -90,8 +107,9 @@ export function mergePrompt(o: {
   files: string[];
   prior: string;
   outFile: string;
+  instructions?: string | undefined;
 }) {
-  return `You are the coordinator for a code review of a pull request in ${repoName}. Independent reviewers each looked at one changed file. Your job is to turn their raw findings into the review that actually gets posted.
+  return `You are the coordinator for a code review of a pull request in ${repoName}. Independent reviewers each looked at one changed file. Your job is to turn their raw findings into the review that actually gets posted.${repoInstructions(o.instructions)}
 
 ## Changed files
 ${o.files.map((f) => `- ${f}`).join("\n")}
@@ -116,9 +134,9 @@ Do all of the following:
 
 1. **Verify before keeping.** For each finding, open the cited file and line and confirm the code says what the finding claims. Drop any finding whose cited symbol, function, or line does not exist, or whose claim the surrounding code contradicts. This is the single most important thing you do — a confident wrong comment costs more than a missed bug.
 
-2. **Deduplicate.** Several reviewers may report the same underlying problem from different files. Keep the one located at the best place to fix it and name the others in its \`merge_with\`; their locations get folded into its cross-file references automatically.
+2. **Deduplicate.** Several reviewers may report the same underlying problem from different files. Keep the one located at the best place to fix it and name the others in its \`merge_with\`; their locations get folded into its cross-file references automatically. Do the same when several findings are the same mistake repeated in different places: keep one and merge the rest into it, so the author sees one class of bug with every location.
 
-3. **Drop noise.** Remove anything about formatting, naming, style, import order, or test coverage. Remove anything a typechecker or linter would catch. Remove anything about comments themselves — a stale, empty, or missing comment is never a finding. Remove findings that only restate what the diff does. Remove speculative findings that require an unlikely precondition to matter.
+3. **Drop noise.** Remove anything about formatting, naming, style, import order, or test coverage. Remove anything a typechecker or linter would catch. Remove anything about comments themselves — a stale, empty, or missing comment is never a finding. Remove findings that only restate what the diff does. Remove speculative findings that require an unlikely precondition to matter. Remove requests for defense in depth when the case is already handled, findings about unchanged code this change does not affect, and generic advice with no concrete defect behind it.
 
 4. **Reconcile with what has already been said.** If a finding makes the same claim as a comment in the "comments already on this pull request" section, keep it and set \`repeat_of\` to that comment's id — do not drop it. Corroborating a human reviewer has value on its own, and these are shown separately from the new findings, so they cost the reader nothing. Drop it only if the current code shows the comment has already been addressed.
 

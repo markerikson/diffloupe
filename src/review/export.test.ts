@@ -108,7 +108,13 @@ describe("runMarkdown", () => {
   });
 
   test("a run with no findings", () => {
-    expect(runMarkdown(loadFixture("docs-only").build())).toContain("No findings.");
+    expect(runMarkdown(loadFixture("docs-only").build()).split("\n\n")[2]?.trim()).toBe("No issues found.");
+  });
+
+  test("count line comes before the findings", () => {
+    const line = runMarkdown(largePr).split("\n\n")[2];
+    expect(line).toMatch(new RegExp(`^${largePr.findings.length} findings: `));
+    expect(line).toContain(`${largePr.overCapFindings.length} more over the posting cap.`);
   });
 
   test("snapshot", () => {
