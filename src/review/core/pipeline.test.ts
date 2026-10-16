@@ -1,5 +1,6 @@
 
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import {
   anchorCovers,
@@ -27,6 +28,7 @@ import {
   openCodeInvocation,
   openCodeSettings,
   resetOpenCodeConfig,
+  runReview,
   sumOpenCodeStream,
   summarizeOpenCodeTools,
   type Finding,
@@ -34,7 +36,7 @@ import {
 } from "./pipeline.ts";
 import { diagnoseMissingOutput } from "./runner.ts";
 import { readMarkers } from "./lib/marker.ts";
-import { applyConfig } from "./config.ts";
+import { ARTIFACTS, OUT, applyConfig } from "./config.ts";
 
 // Repo-specific surface patterns that the classifySurface assertions below rely on.
 applyConfig({ surfaces: { deploy: ["^(infra|charts)/"], tooling: ["^(docs|toolchains)/"] } });
@@ -1396,6 +1398,26 @@ describe("openCodeConfig", () => {
   it("refuses a second, different prompt rather than silently serving the first", async () => {
     await openCodeConfig("system", "guidance");
     expect(() => openCodeConfig("different system", "guidance")).toThrow(/different prompt/);
+  });
+
+  it("forgets the config when a run ends, so a server's next run can review another repository", async () => {
+    const saved = { out: OUT, artifacts: ARTIFACTS };
+    const tmp = mkdtempSync(path.join(os.tmpdir(), "diffloupe-config-reset-"));
+    try {
+      await openCodeConfig("system for repo one", "guidance");
+      await expect(
+        runReview({
+          repo: path.join(tmp, "missing-clone"),
+          target: { base: "a".repeat(40), head: "b".repeat(40), slug: "owner/repo-two" },
+          tag: "unit-config-reset",
+          config: { out: path.join(tmp, "out"), artifacts: path.join(tmp, "artifacts") },
+        }),
+      ).rejects.toThrow();
+      await openCodeConfig("system for repo two", "guidance");
+    } finally {
+      applyConfig(saved);
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("gives the reviewer tool guidance, which replacing the built-in prompt removed", async () => {

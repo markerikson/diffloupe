@@ -27,7 +27,7 @@ import type { Target } from "./core/lib/target.ts";
 import { crossGroupLinkLines, groupLinkLines, selectWalkFiles, sketchFiles, sketchLine } from "./core/lib/walk-input.ts";
 import type { ReviewEvent, RunReviewResult } from "./core/pipeline.ts";
 import { walkthroughPrompt, type ReviewUnit, type Walkthrough } from "./core/prompts.ts";
-import { agent, CancelledError, killAgents } from "./core/runner.ts";
+import { agent, CancelledError, killAgents, resetOpenCodeConfig } from "./core/runner.ts";
 
 export interface RunDiffOptions {
   /** The local clone whose object store holds `target.base` and `target.head`. */
@@ -63,6 +63,7 @@ export async function runDiff(options: RunDiffOptions): Promise<RunDiffResult> {
     signal?.removeEventListener("abort", onAbort);
     await killAgents();
     resetRunState();
+    resetOpenCodeConfig();
   }
 }
 

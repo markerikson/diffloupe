@@ -241,7 +241,7 @@ export function summarizeOpenCodeTools(stdout: string, cwd = ""): ToolSummary {
  */
 export type AgentTools = "repo" | "none";
 
-const openCodeHomes = new Map<AgentTools, { home: Promise<string>; key: string; providers: string }>();
+const openCodeHomes = new Map<AgentTools, { home: Promise<string>; key: string }>();
 
 /**
  * Write the configuration directory the OpenCode runner reads, once per run.
@@ -265,10 +265,7 @@ export function openCodeConfig(system: string, guidance: string, tools: AgentToo
   if (memo && memo.key !== key) {
     throw new Error("openCodeConfig called with a different prompt after the config was written");
   }
-  // A long-lived server runs many reviews, and the user's providers can change
-  // between them. Runs do not overlap, so rewriting here races nothing.
-  const providers = JSON.stringify(PROVIDERS);
-  if (memo && memo.providers === providers) return memo.home;
+  if (memo) return memo.home;
   const home = (async () => {
     const home = path.join(OUT, "oc", tools === "repo" ? "shared" : "no-tools");
     const configDir = path.join(home, "config");
@@ -279,11 +276,15 @@ export function openCodeConfig(system: string, guidance: string, tools: AgentToo
     );
     return home;
   })();
-  openCodeHomes.set(tools, { home, key, providers });
+  openCodeHomes.set(tools, { home, key });
   return home;
 }
 
-/** Exposed so tests can start from a clean memo. */
+/**
+ * Forget the memoised configuration. Called when a run ends, because a
+ * long-lived server's next run can have a different repository name in its
+ * prompt, a different scratch directory, or different providers.
+ */
 export function resetOpenCodeConfig() {
   openCodeHomes.clear();
 }
