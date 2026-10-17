@@ -246,6 +246,16 @@ describe("ReviewRunSchema", () => {
     for (const f of run.files) expect(run.groups.find((g) => g.id === f.groupId)?.files).toContain(f.path);
   });
 
+  test("a pre-existing finding keeps its tag and validates", () => {
+    const fx = loadFixture("small-commit");
+    const record = fx.input.result.record as { verifiedFindings: Record<string, unknown>[] };
+    const verifiedFindings = record.verifiedFindings.map((f, i) => (i === 0 ? { ...f, preexisting: true } : f));
+    const run = buildReviewRun({ ...fx.input, result: { ...fx.input.result, record: { ...record, verifiedFindings } } });
+    const out = ReviewRunSchema(run);
+    expect(out instanceof type.errors ? out.summary : "ok").toBe("ok");
+    expect(run.findings.filter((f) => f.preexisting)).toHaveLength(1);
+  });
+
   test("pending run validates", () => {
     const fixture = loadFixture("large-pr");
     const { id, createdAt, repo, target, base, head, patch, coreSource } = fixture.input;

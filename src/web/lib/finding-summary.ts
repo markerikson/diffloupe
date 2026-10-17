@@ -23,6 +23,8 @@ export interface FindingSummary {
   title: string;
   main: FileFindings[];
   other: FileFindings[];
+  /** Findings about code the change did not add or modify. Not counted in the verdicts or tallies. */
+  preexisting: FileFindings[];
   /** Findings that repeat a human's existing comment. */
   echoed: RunFinding[];
 }
@@ -46,7 +48,8 @@ export function summarizeFindings(run: Pick<ReviewRun, "files" | "findings">): F
       SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity) ||
       CONFIDENCE.indexOf(a.confidence) - CONFIDENCE.indexOf(b.confidence),
   );
-  const reported = sorted.filter((f) => f.repeatOf === undefined);
+  const reported = sorted.filter((f) => f.repeatOf === undefined && !f.preexisting);
+  const preexisting = sorted.filter((f) => f.repeatOf === undefined && f.preexisting);
   const echoed = sorted.filter((f) => f.repeatOf !== undefined);
   const counts = SEVERITY_ORDER.map((s): [FindingSeverity, number] => [
     s,
@@ -69,6 +72,7 @@ export function summarizeFindings(run: Pick<ReviewRun, "files" | "findings">): F
     title: tier ? TIER_TITLE[tier] : "Findings",
     main: byFile(main),
     other: byFile(other),
+    preexisting: byFile(preexisting),
     echoed,
   };
 }

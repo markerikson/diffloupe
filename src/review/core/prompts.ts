@@ -1,7 +1,10 @@
 import { describeLink, type CodeGroup, type Link } from "./lib/grouping.ts";
 import { repoName } from "./config.ts";
 import { type Finding } from "./findings.ts";
-import { MAX_POSTED } from "./coordinate.ts";
+import { MAX_POSTED, MAX_PREEXISTING } from "./coordinate.ts";
+import { anchorFor, type HunkMap } from "./lib/hunks.ts";
+
+const OUTSIDE_HUNKS = "cited line is outside the changed hunks";
 
 // ---------------------------------------------------------------- prompts
 
@@ -32,7 +35,7 @@ Reducing noise:
 Do not report:
 - Problems that need an unlikely precondition to matter, such as a caller that does not exist or input that cannot reach this code.
 - Missing defense in depth when the input is already validated or the case is already handled elsewhere.
-- Unchanged code that this change does not affect.
+- Unchanged code that this change does not affect, unless the problem is serious enough that the author would want to know while they are in this code. Then report it with \`preexisting: true\`; those are listed apart from the findings on the change.
 - Generic advice with no concrete defect behind it: "consider using library X", "consider adding error handling", "this could be refactored".
 `.trim();
 
@@ -108,7 +111,15 @@ export function mergePrompt(o: {
   prior: string;
   outFile: string;
   instructions?: string | undefined;
+  /** Lines the change added, so a finding cited outside them can be flagged as possibly pre-existing. */
+  changedLines?: HunkMap | undefined;
+  /** Cap on new findings; lower on a re-review that only looked at what changed. */
+  maxNew?: number | undefined;
 }) {
+  const listed = o.findings.map((f, i) => {
+    const outside = o.changedLines && anchorFor(o.changedLines, f.file, f.line, f.end_line).kind !== "anchorable";
+    return { ...f, id: i, ...(outside ? { hint: OUTSIDE_HUNKS } : {}) };
+  });
   return `You are the coordinator for a code review of a pull request in ${repoName}. Independent reviewers each looked at one changed file. Your job is to turn their raw findings into the review that actually gets posted.${repoInstructions(o.instructions)}
 
 ## Changed files
@@ -127,7 +138,7 @@ Each carries an \`id\`. You will refer to them by that id; you never retype thei
 The \`id\` is assigned here and overwrites anything a reviewer wrote, so it is always the
 position in this list.
 \`\`\`json
-${JSON.stringify(o.findings.map((f, i) => ({ ...f, id: i })), null, 2)}
+${JSON.stringify(listed, null, 2)}
 \`\`\`
 
 Do all of the following:
@@ -136,7 +147,7 @@ Do all of the following:
 
 2. **Deduplicate.** Several reviewers may report the same underlying problem from different files. Keep the one located at the best place to fix it and name the others in its \`merge_with\`; their locations get folded into its cross-file references automatically. Do the same when several findings are the same mistake repeated in different places: keep one and merge the rest into it, so the author sees one class of bug with every location.
 
-3. **Drop noise.** Remove anything about formatting, naming, style, import order, or test coverage. Remove anything a typechecker or linter would catch. Remove anything about comments themselves — a stale, empty, or missing comment is never a finding. Remove findings that only restate what the diff does. Remove speculative findings that require an unlikely precondition to matter. Remove requests for defense in depth when the case is already handled, findings about unchanged code this change does not affect, and generic advice with no concrete defect behind it.
+3. **Drop noise.** Remove anything about formatting, naming, style, import order, or test coverage. Remove anything a typechecker or linter would catch. Remove anything about comments themselves — a stale, empty, or missing comment is never a finding. Remove findings that only restate what the diff does. Remove speculative findings that require an unlikely precondition to matter. Remove requests for defense in depth when the case is already handled, and generic advice with no concrete defect behind it. A finding about unchanged code this change does not affect is dropped unless it is serious; a serious one is kept as pre-existing (step 7).
 
 4. **Reconcile with what has already been said.** If a finding makes the same claim as a comment in the "comments already on this pull request" section, keep it and set \`repeat_of\` to that comment's id — do not drop it. Corroborating a human reviewer has value on its own, and these are shown separately from the new findings, so they cost the reader nothing. Drop it only if the current code shows the comment has already been addressed.
 
@@ -148,7 +159,9 @@ Do all of the following:
 
 6. **Judge intent alignment.** Compare what the author said this PR does against what the diff actually does. Report only substantive divergences: behavior changed that the description does not mention, a stated goal the diff does not accomplish, or scope that looks unrelated to the stated purpose. Say nothing if it lines up.
 
-7. **Cap.** Keep at most ${MAX_POSTED} new findings. Anything carrying \`repeat_of\` is shown in a separate section and does not count against that limit. Production impact decides what survives the cut: a finding in shipped \`src/\` code or in deployment config outranks one in \`scripts/\` or a test harness at the same severity. Keep a tooling finding only when the tooling is actually broken — sloppiness there is not worth a comment. Cut low-confidence and nice-to-have items first. Sorting is handled for you. A finding that is sound but did not make the cut goes in \`drop\` with the reason \`cap\` and nothing else; those are listed separately for the author, so do not use \`cap\` for anything you rejected on its merits.
+7. **Separate what was already there.** A finding is pre-existing when the problem is in code this change did not add or modify, and the change does not make it worse or newly reachable. Reviewers mark these with \`preexisting: true\`, and a finding whose cited line falls outside the lines this change added carries \`"hint": "${OUTSIDE_HUNKS}"\`. The hint is only a hint: a changed caller can make an untouched line newly reachable, and then the finding belongs to the change. Set \`preexisting\` on a kept finding to correct the reviewer either way. Keep the severity as it is; the flag already says the change did not introduce it.
+
+8. **Cap.** Keep at most ${o.maxNew ?? MAX_POSTED} new findings on the change, and at most ${MAX_PREEXISTING} pre-existing ones, which are capped separately. Anything carrying \`repeat_of\` is shown in a separate section and does not count against either limit. Production impact decides what survives the cut: a finding in shipped \`src/\` code or in deployment config outranks one in \`scripts/\` or a test harness at the same severity. Keep a tooling finding only when the tooling is actually broken — sloppiness there is not worth a comment. Cut low-confidence and nice-to-have items first. Sorting is handled for you. A finding that is sound but did not make the cut goes in \`drop\` with the reason \`cap\` and nothing else; those are listed separately for the author, so do not use \`cap\` for anything you rejected on its merits.
 
 Your output is a set of decisions, not a rewritten review. The reviewers' own wording is kept verbatim, so do not restate it — every finding you keep must be listed by number, and every finding you do not keep must appear in \`drop\` with a reason. Correct a finding only through \`severity\`, which overrides theirs, or \`note\`, one sentence appended to their explanation when they got the reasoning slightly wrong but the finding stands.
 
@@ -156,7 +169,7 @@ Write a single JSON object to \`${o.outFile}\`:
 \`\`\`json
 {
   "keep": [ { "id": 0, "severity": "blocker|should-fix|question|nice-to-have",
-              "merge_with": [3, 7], "repeat_of": 123456, "note": "" } ],
+              "merge_with": [3, 7], "repeat_of": 123456, "preexisting": false, "note": "" } ],
   "drop": [ { "id": 1, "reason": "why it did not survive verification" } ],
   "resolved": [ { "id": 987654, "note": "the null check was added in this push" } ],
   "intent_alignment": {
@@ -166,7 +179,7 @@ Write a single JSON object to \`${o.outFile}\`:
   }
 }
 \`\`\`
-\`severity\`, \`merge_with\`, \`repeat_of\` and \`note\` are all optional, and \`resolved\` is an empty array when nothing you previously raised has been fixed. Ids in \`resolved\` are comment ids from the "what you already told this author" section, not finding numbers. Write the file even if \`keep\` is empty.`;
+\`severity\`, \`merge_with\`, \`repeat_of\`, \`preexisting\` and \`note\` are all optional, and \`resolved\` is an empty array when nothing you previously raised has been fixed. Ids in \`resolved\` are comment ids from the "what you already told this author" section, not finding numbers. Write the file even if \`keep\` is empty.`;
 }
 
 export interface ReviewUnit {

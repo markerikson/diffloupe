@@ -18,14 +18,14 @@ import { countLines, ensureDir, exists, removeIfPresent, writeJson, writeText } 
 import { openSubject } from "./lib/subject.ts";
 import { targetKey, type Target } from "./lib/target.ts";
 import { fingerprint } from "./lib/marker.ts";
-import { compactDeletedFiles } from "./lib/hunks.ts";
+import { compactDeletedFiles, parseDiffHunks } from "./lib/hunks.ts";
 import { SUBJECT, ARTIFACTS, RUNNER, MODEL, EFFORT, MODEL_WALK, MODEL_MERGE, EFFORT_AUX, WALK_BUDGET, PART_BUDGET, GROUPING, SLICE_BUDGET, MERGE_BUDGET, POOL, MAX_SLICES, MAX_SLICE_TOKENS, WALK_DIFF_TOKENS, OUT, applyConfig, setRunState, resetRunState, releaseSubject, type ReviewConfig } from "./config.ts";
 import { classifyFile, type Finding } from "./findings.ts";
 import { gitText, diffOutline, gatherIntent, gatherPriorComments, renderPriorComments, type PriorComment } from "./context.ts";
 import { agent, CancelledError, killAgents, resetOpenCodeConfig, type AgentFailure } from "./runner.ts";
 import { slicePrompt, mergePrompt, type ReviewUnit, coverUnits, packUnits, type Walkthrough, partitionPrompt, groupNamingPrompt, walkthroughPrompt } from "./prompts.ts";
 import { classifySurface, SURFACE_RANK, CONF, SEV } from "./surface.ts";
-import { saidFingerprints, readCheckedClaims, mergeBudgetFor, fallbackRank, coordinatorHasWork, type MergeDecisions, MAX_POSTED, applyDecisions } from "./coordinate.ts";
+import { saidFingerprints, readCheckedClaims, mergeBudgetFor, fallbackRank, coordinatorHasWork, type MergeDecisions, MAX_POSTED, MAX_PREEXISTING, applyDecisions, capFindings } from "./coordinate.ts";
 import { writeArtifacts } from "./render.ts";
 
 export * from "./config.ts";
@@ -533,6 +533,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
   await removeIfPresent(mergeOut);
   const mp = mergePrompt({
     findings: toMerge, intent, files: sliceFiles, prior: priorMd, outFile: mergeOut, instructions: options.instructions,
+    changedLines: parseDiffHunks(diffU0),
   });
   await writeText(path.join(ARTIFACTS, "prompts", `${mergeTag}.txt`), mp);
   const mergeBudget = mergeBudgetFor(toMerge.length, MERGE_BUDGET);
@@ -646,6 +647,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
   // Findings the review stands behind but did not post because of the cap.
   // Listed in the detail file, so a reader can see what the cut removed.
   let overCap: Finding[] = [];
+  const capLimits = { maxNew: MAX_POSTED, maxPreexisting: MAX_PREEXISTING };
 
   if (mp2.keep) {
     const applied = applyDecisions(mp2, toMerge, prior);
@@ -663,15 +665,12 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     // they are exempt — a flat slice here would let a batch of high-severity
     // agreements sort to the front and push real findings past the cut.
     stillOpen = new Set([...byImportance, ...applied.capped].map((f) => fingerprint(f.file, f.title)));
-    const open = suppressSaid(byImportance);
-    const echoes = open.filter((f) => f.repeat_of);
-    const allFresh = open.filter((f) => !f.repeat_of);
-    const fresh = allFresh.slice(0, MAX_POSTED);
+    const cut = capFindings(suppressSaid(byImportance), capLimits);
     // The coordinator's own cap cuts rank below anything this cut leaves over,
     // and go through the same suppression so an already-posted claim is not
     // listed again as past the cap.
-    overCap = [...allFresh.slice(MAX_POSTED), ...suppressSaid(applied.capped.sort(importance))];
-    finalFindings = [...fresh, ...echoes].sort(importance);
+    overCap = [...cut.overCap, ...suppressSaid(applied.capped.sort(importance))];
+    finalFindings = cut.posted;
   }
   if (!mp2.keep) {
     // The coordinator died (usually budget). Unverified findings beat no review.
@@ -689,9 +688,9 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     // unvetted id would route the finding out of the review and into a reply
     // endpoint that may not accept it, losing a finding this path exists to
     // salvage.
-    const open = suppressSaid(ranked).map((f) => ({ ...f, repeat_of: undefined }));
-    finalFindings = open.slice(0, MAX_POSTED);
-    overCap = open.slice(MAX_POSTED);
+    const cut = capFindings(suppressSaid(ranked).map((f) => ({ ...f, repeat_of: undefined })), capLimits);
+    finalFindings = cut.posted;
+    overCap = cut.overCap;
   }
 
   // A comment cannot be both closed out as fixed and reported again in the same

@@ -114,6 +114,7 @@ export interface MergeDecisions {
     severity?: Finding["severity"];
     merge_with?: number[];
     repeat_of?: number;
+    preexisting?: boolean;
     note?: string;
   }[];
   drop?: { id: number; reason: string }[];
@@ -137,8 +138,38 @@ export interface MergeDecisions {
  */
 /** New findings posted per review. The coordinator is told the same number. */
 export const MAX_POSTED = 10;
+/** New findings posted on a re-review that only looked at what changed since the last one. */
+export const MAX_POSTED_INCREMENTAL = 5;
+/** Findings about code the change did not touch, capped on their own so they cannot crowd out the change. */
+export const MAX_PREEXISTING = 3;
 /** "cap", or the phrasing the coordinator used before it was told the exact word. */
 export const CAP_REASON = /^\s*(cut for the )?cap\b/i;
+
+/**
+ * Splits findings already sorted by importance into what is posted and what is
+ * listed as over the cap. Corroborations (`repeat_of`) are uncapped, new
+ * findings on the change get `maxNew` slots, and pre-existing findings get
+ * their own `maxPreexisting`, so neither pool can push the other out.
+ */
+export function capFindings(
+  sorted: Finding[],
+  limits: { maxNew: number; maxPreexisting: number },
+): { posted: Finding[]; overCap: Finding[] } {
+  const posted: Finding[] = [];
+  const overCap: Finding[] = [];
+  const seen = { fresh: 0, preexisting: 0 };
+  for (const f of sorted) {
+    if (f.repeat_of) {
+      posted.push(f);
+      continue;
+    }
+    const pool = f.preexisting ? "preexisting" : "fresh";
+    const limit = f.preexisting ? limits.maxPreexisting : limits.maxNew;
+    (seen[pool] < limit ? posted : overCap).push(f);
+    seen[pool] += 1;
+  }
+  return { posted, overCap };
+}
 
 export function applyDecisions(
   decisions: MergeDecisions,
@@ -193,6 +224,7 @@ export function applyDecisions(
       // check above. Adding the key only on success would leave that value
       // untouched and the rejection logged above would do nothing.
       repeat_of: corroborates,
+      preexisting: typeof d.preexisting === "boolean" ? d.preexisting : base.preexisting,
     } as Finding);
   }
   for (const d of decisions.drop ?? []) {

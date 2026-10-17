@@ -5,6 +5,7 @@ import path from "node:path";
 import {
   anchorCovers,
   applyDecisions,
+  capFindings,
   classifyFile,
   classifySurface,
   condenseOwnSummary,
@@ -1069,6 +1070,48 @@ describe("applyDecisions", () => {
       expect(kept).toHaveLength(1);
       expect(kept[0].title).toBe("first");
     });
+  });
+
+  describe("preexisting", () => {
+    const tagged = [finding({ title: "old", preexisting: true }), finding({ title: "new" })];
+
+    it("keeps the reviewer's tag when the coordinator says nothing", () => {
+      const { kept } = applyDecisions({ keep: [{ id: 0 }, { id: 1 }] }, tagged, []);
+      expect(kept.map((f) => f.preexisting)).toEqual([true, undefined]);
+    });
+
+    it("lets the coordinator set or clear the tag", () => {
+      const { kept } = applyDecisions(
+        { keep: [{ id: 0, preexisting: false }, { id: 1, preexisting: true }] },
+        tagged,
+        [],
+      );
+      expect(kept.map((f) => f.preexisting)).toEqual([false, true]);
+    });
+  });
+});
+
+describe("capFindings", () => {
+  const limits = { maxNew: 2, maxPreexisting: 1 };
+
+  it("caps pre-existing findings apart from new ones", () => {
+    const sorted = [
+      finding({ title: "old 1", preexisting: true }),
+      finding({ title: "new 1" }),
+      finding({ title: "old 2", preexisting: true }),
+      finding({ title: "new 2" }),
+      finding({ title: "new 3" }),
+    ];
+    const { posted, overCap } = capFindings(sorted, limits);
+    expect(posted.map((f) => f.title)).toEqual(["old 1", "new 1", "new 2"]);
+    expect(overCap.map((f) => f.title)).toEqual(["old 2", "new 3"]);
+  });
+
+  it("never caps agreements with existing comments", () => {
+    const sorted = [1, 2, 3].map((n) => finding({ title: `echo ${n}`, repeat_of: n }));
+    const { posted, overCap } = capFindings(sorted, limits);
+    expect(posted).toHaveLength(3);
+    expect(overCap).toEqual([]);
   });
 });
 

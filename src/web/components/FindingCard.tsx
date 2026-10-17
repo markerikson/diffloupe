@@ -37,6 +37,7 @@ export const FindingCard = memo(function FindingCard({ finding, overCap }: Findi
       className={styles.card}
       data-severity={finding.severity}
       data-focused={focused}
+      data-preexisting={finding.preexisting ?? false}
       aria-label={`${SEVERITY_LABEL[finding.severity]}: ${finding.title}`}
       onClick={(e) => {
         if ((e.target as HTMLElement).closest("a, button")) return;
@@ -51,6 +52,11 @@ export const FindingCard = memo(function FindingCard({ finding, overCap }: Findi
       <div className={styles.meta}>
         <span>{finding.category}</span>
         <span>{finding.confidence} confidence</span>
+        {finding.preexisting && (
+          <span className={styles.badge} title="The problem is in code this change did not add or modify">
+            pre-existing
+          </span>
+        )}
         {overCap && <span className={styles.badge}>over the posting cap</span>}
         {finding.carriedFrom && (
           <Link to="/runs/$runId" params={{ runId: finding.carriedFrom }} className={styles.badge}>

@@ -51,6 +51,12 @@ export interface Finding {
    * instead of as a new comment.
    */
   repeat_of?: number | undefined;
+  /**
+   * The problem is in code this change did not add or modify, and the change
+   * does not make it worse. Set by the reviewer; the coordinator may override.
+   * Pre-existing findings have their own cap and never block the change.
+   */
+  preexisting?: boolean | undefined;
   /** Filled by the pipeline, not the model. */
   _slice?: string;
   /**

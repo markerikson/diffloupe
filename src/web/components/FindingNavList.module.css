@@ -64,6 +64,16 @@
   font-style: italic;
 }
 
+.finding[data-preexisting="true"] {
+  opacity: 0.7;
+}
+
+.tag {
+  flex: none;
+  font-size: 0.85em;
+  color: var(--fg-mute);
+}
+
 .finding[data-severity="blocker"] {
   --dot: var(--error);
 }

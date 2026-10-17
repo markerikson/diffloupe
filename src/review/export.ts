@@ -68,6 +68,7 @@ export function findingMarkdown(f: RunFinding): string {
   const notes = [
     f.carriedFrom && `Open since run ${f.carriedFrom}.`,
     f.repeatOf !== undefined && `Repeats PR comment #${f.repeatOf}.`,
+    f.preexisting && "Pre-existing: not introduced by this change.",
   ].filter(Boolean);
   if (notes.length) out.push(`_${notes.join(" ")}_`);
   out.push(f.explanation.trim());
@@ -92,15 +93,21 @@ export function sortFindings(findings: readonly RunFinding[]): RunFinding[] {
   );
 }
 
-/** "3 findings: 1 blocker, 2 should-fix." or "No issues found." — the first thing a reader or agent needs. */
-function countLine(run: ReviewRun): string {
-  const overCap = run.overCapFindings.length ? ` ${run.overCapFindings.length} more over the posting cap.` : "";
-  if (run.findings.length === 0) return `No issues found.${overCap}`;
-  const bySeverity = SEVERITY_ORDER.map((s) => [s, run.findings.filter((f) => f.severity === s).length] as const)
+/**
+ * "3 findings: 1 blocker, 2 should-fix. 2 pre-existing." or "No issues found."
+ * — the first thing a reader or agent needs. The severity tally covers only
+ * findings on the change itself.
+ */
+function countLine(run: ReviewRun, introduced: readonly RunFinding[], preexisting: readonly RunFinding[]): string {
+  const tail =
+    (preexisting.length ? ` ${preexisting.length} pre-existing.` : "") +
+    (run.overCapFindings.length ? ` ${run.overCapFindings.length} more over the posting cap.` : "");
+  if (introduced.length === 0) return `${preexisting.length ? "No issues found in this change." : "No issues found."}${tail}`;
+  const bySeverity = SEVERITY_ORDER.map((s) => [s, introduced.filter((f) => f.severity === s).length] as const)
     .filter(([, n]) => n > 0)
     .map(([s, n]) => `${n} ${s}`);
-  const n = run.findings.length;
-  return `${n} finding${n === 1 ? "" : "s"}: ${bySeverity.join(", ")}.${overCap}`;
+  const n = introduced.length;
+  return `${n} finding${n === 1 ? "" : "s"}: ${bySeverity.join(", ")}.${tail}`;
 }
 
 export interface RunMarkdownOptions {
@@ -112,8 +119,14 @@ export function runMarkdown(run: ReviewRun, opts: RunMarkdownOptions = {}): stri
     `# Review findings: ${formatTarget(run.target)}`,
     `Base ${code(run.base.slice(0, 12))}, head ${code(run.head.slice(0, 12))}`,
   ];
-  out.push(countLine(run));
-  for (const f of sortFindings(run.findings)) out.push(findingMarkdown(f));
+  const introduced = run.findings.filter((f) => !f.preexisting);
+  const preexisting = run.findings.filter((f) => f.preexisting);
+  out.push(countLine(run, introduced, preexisting));
+  for (const f of sortFindings(introduced)) out.push(findingMarkdown(f));
+  if (preexisting.length) {
+    out.push(`## Pre-existing (not introduced by this change)`);
+    for (const f of sortFindings(preexisting)) out.push(findingMarkdown(f));
+  }
   if (opts.includeOverCap && run.overCapFindings.length) {
     out.push(`## Over the posting cap (${run.overCapFindings.length})`);
     for (const f of sortFindings(run.overCapFindings)) out.push(findingMarkdown(f));

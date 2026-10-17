@@ -121,6 +121,7 @@ export type FindingSeverity = typeof FindingSeveritySchema.infer;
  * - `repeatOf`: id of a human's earlier comment making the same claim.
  * - `carriedFrom`: set when an earlier run of the same target reported this
  *   finding: the id of the run that first did.
+ * - `preexisting`: the problem is in code the change did not add or modify.
  */
 export const RunFindingSchema = type({
   id: "string",
@@ -140,6 +141,7 @@ export const RunFindingSchema = type({
   "repeatOf?": "number",
   "carriedFrom?": "string",
   "surface?": SurfaceSchema,
+  "preexisting?": "boolean",
 });
 export type RunFinding = typeof RunFindingSchema.infer;
 

@@ -117,6 +117,31 @@ describe("runMarkdown", () => {
     expect(line).toContain(`${largePr.overCapFindings.length} more over the posting cap.`);
   });
 
+  test("pre-existing findings get their own section and count", () => {
+    const run = {
+      ...smallCommit,
+      findings: [
+        finding({ id: "a", title: "new bug", severity: "blocker" }),
+        finding({ id: "b", title: "old bug", severity: "should-fix", preexisting: true }),
+      ],
+      overCapFindings: [],
+    };
+    const md = runMarkdown(run);
+    expect(md.split("\n\n")[2]).toBe("1 finding: 1 blocker. 1 pre-existing.");
+    const section = md.indexOf("## Pre-existing (not introduced by this change)");
+    expect(section).toBeGreaterThan(md.indexOf("### [blocker] new bug"));
+    expect(md.indexOf("### [should-fix] old bug")).toBeGreaterThan(section);
+  });
+
+  test("a run whose only findings are pre-existing", () => {
+    const run = {
+      ...smallCommit,
+      findings: [finding({ title: "old bug", preexisting: true })],
+      overCapFindings: [],
+    };
+    expect(runMarkdown(run).split("\n\n")[2]).toBe("No issues found in this change. 1 pre-existing.");
+  });
+
   test("snapshot", () => {
     expect(runMarkdown(largePr, { includeOverCap: true })).toMatchSnapshot();
   });

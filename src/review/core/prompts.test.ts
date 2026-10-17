@@ -23,6 +23,39 @@ const merge = (instructions?: string) =>
     ...(instructions !== undefined ? { instructions } : {}),
   });
 
+describe("pre-existing hint", () => {
+  const f = (line: number) => ({
+    file: "a.ts",
+    line,
+    severity: "should-fix" as const,
+    category: "bug",
+    title: `at ${line}`,
+    explanation: "e",
+    evidence: "v",
+    confidence: "high" as const,
+  });
+
+  test("marks only findings whose cited line is outside the changed hunks", () => {
+    const prompt = mergePrompt({
+      findings: [f(10), f(200)],
+      intent,
+      files: ["a.ts"],
+      prior: "",
+      outFile: "/tmp/out.json",
+      changedLines: new Map([["a.ts", [{ start: 8, end: 12 }]]]),
+    });
+    expect(prompt.match(/cited line is outside the changed hunks/g)).toHaveLength(2);
+    expect(prompt).toMatch(/"title": "at 200",[^}]*"hint": "cited line is outside the changed hunks"/);
+    expect(prompt).not.toMatch(/"title": "at 10",[^}]*"hint"/);
+  });
+
+  test("states the separate pre-existing cap and the new-finding cap", () => {
+    const prompt = mergePrompt({ findings: [], intent, files: ["a.ts"], prior: "", outFile: "/tmp/o.json", maxNew: 5 });
+    expect(prompt).toContain("at most 5 new findings");
+    expect(prompt).toContain("at most 3 pre-existing");
+  });
+});
+
 describe("repo instructions", () => {
   test("reach both the reviewers and the coordinator", () => {
     const text = "Recorded tables are append-only.";

@@ -50,7 +50,8 @@ export function formatRunList(runs: RunHeader[]): string {
 }
 
 function carried(f: RunFinding): string {
-  return f.carriedFrom ? `  (open since ${f.carriedFrom})` : "";
+  const notes = [f.preexisting && "pre-existing", f.carriedFrom && `open since ${f.carriedFrom}`].filter(Boolean);
+  return notes.length ? `  (${notes.join(", ")})` : "";
 }
 
 function findingLine(f: RunFinding): string {
@@ -190,7 +191,9 @@ export function formatRunSummary(run: ReviewRun): string {
   if (run.overview.focus) out.push("", `Focus: ${run.overview.focus}`);
 
   const findings = [...run.findings].sort(
-    (a, b) => SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity),
+    (a, b) =>
+      Number(a.preexisting ?? false) - Number(b.preexisting ?? false) ||
+      SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity),
   );
   out.push("", findings.length ? `Findings (${findings.length})` : "No findings.");
   for (const f of findings) {

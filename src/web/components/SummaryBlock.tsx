@@ -115,6 +115,7 @@ export function SummaryBlock({ run }: { run: ReviewRun }) {
   const reportedCount = summary.main.length + summary.other.length;
   const mainCount = summary.main.reduce((n, g) => n + g.findings.length, 0);
   const otherCount = summary.other.reduce((n, g) => n + g.findings.length, 0);
+  const preexistingCount = summary.preexisting.reduce((n, g) => n + g.findings.length, 0);
   const overCap = run.overCapFindings;
   // With nothing stated to compare against, only the inferred intent means anything.
   const source = intentSource(run);
@@ -183,6 +184,13 @@ export function SummaryBlock({ run }: { run: ReviewRun }) {
         <details className={styles.details}>
           <summary>Everything else ({otherCount}) — lower-risk surfaces</summary>
           <FindingList groups={summary.other} files={files} />
+        </details>
+      )}
+
+      {preexistingCount > 0 && (
+        <details className={styles.details}>
+          <summary>Pre-existing ({preexistingCount}) — not introduced by this change</summary>
+          <FindingList groups={summary.preexisting} files={files} />
         </details>
       )}
 

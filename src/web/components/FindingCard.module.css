@@ -29,6 +29,11 @@
   --sev: var(--magenta);
 }
 
+.card[data-preexisting="true"] {
+  border-left-style: dashed;
+  background: var(--bg);
+}
+
 .card[data-focused="true"] {
   border-color: var(--sev);
   box-shadow: 0 0 0 1px var(--sev);

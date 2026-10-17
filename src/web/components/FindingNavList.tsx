@@ -69,12 +69,14 @@ export function FindingNavList({ findings, overCap }: FindingNavListProps) {
                   className={styles.finding}
                   data-severity={f.severity}
                   data-over-cap={overCap.has(f.id)}
+                  data-preexisting={f.preexisting ?? false}
                   aria-current={f.id === current ? "true" : undefined}
-                  title={`${SEVERITY_LABEL[f.severity]}: ${f.title}`}
+                  title={`${SEVERITY_LABEL[f.severity]}${f.preexisting ? " (pre-existing)" : ""}: ${f.title}`}
                   onClick={() => nav.goToFinding(f.id)}
                 >
                   <span className={styles.dot} aria-hidden />
                   <span className={styles.title}>{f.title}</span>
+                  {f.preexisting && <span className={styles.tag}>pre-existing</span>}
                   <span className={styles.line}>{lineOf(f)}</span>
                 </button>
               </li>

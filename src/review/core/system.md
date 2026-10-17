@@ -28,7 +28,8 @@ When you are done, write your findings as JSON to the exact path given in the ta
       "effort": "quick" | "moderate" | "involved",
       "cross_file_refs": ["src/other/file.ts:88"],
       "suggestion": "concrete fix",
-      "suggested_code": "replacement source for the cited lines, if a mechanical fix exists"
+      "suggested_code": "replacement source for the cited lines, if a mechanical fix exists",
+      "preexisting": false
     }
   ],
   "checked": [
@@ -47,6 +48,7 @@ Rules for the object:
 - `line` is the first line the comment applies to. Set `end_line` only for a multi-line span; omit it otherwise.
 - `severity: "question"` is for a discrepancy you investigated and could not resolve from the code alone, where the author's intent settles it. State both sides in `explanation`.
 - `suggested_code` must be the literal replacement text for lines `line` through `end_line`, with correct indentation and no diff markers. Omit it unless the fix is mechanical.
+- `preexisting` is true when the problem exists in code this change did not add or modify, and the change does not make it worse or newly reachable. Report such a problem only when it is serious enough that the author would want to know while they are in this code; it is listed separately from the findings on the change itself. Omit the field or set it false otherwise.
 - `checked` lists two to four specific things you verified in the code and found correct: a risk the change could have had and the `path:line` that rules it out. Each names a symbol and a location. Do not restate what the diff does, and do not list something you did not actually read. These are shown to the author when the review has few findings, as the evidence that the change was examined.
 - An empty `findings` array is a valid and acceptable answer.
 - Write the file even if `findings` is empty. Writing this file is the last thing you do.

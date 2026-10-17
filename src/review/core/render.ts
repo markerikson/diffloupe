@@ -164,6 +164,7 @@ export function renderReview(o: {
         `confidence: ${f.confidence}`,
         where,
         SURFACE_TAG[classifySurface(f.file)],
+        f.preexisting ? "pre-existing" : "",
       ]
         .filter(Boolean)
         .join(" · "),
@@ -334,7 +335,7 @@ export function renderReview(o: {
     // whether the rest of this comment is worth opening. Severity is deliberately
     // not folded in: a blocker in a test helper is still not a production risk,
     // and collapsing the two axes is what made the old single list unreadable.
-    s.push(line(prodRisk(reported.map((f) => ({ severity: f.severity, surface: classifySurface(f.file) })))));
+    s.push(line(prodRisk(reported.map((f) => ({ severity: f.severity, preexisting: f.preexisting, surface: classifySurface(f.file) })))));
     s.push("");
     s.push(
       Object.entries(SEV)

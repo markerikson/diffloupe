@@ -24,11 +24,14 @@ export interface Verdict {
 
 interface Judged {
   severity: string;
+  preexisting?: boolean | undefined;
 }
 
 const severe = (f: Judged) => f.severity === "blocker" || f.severity === "should-fix";
 
-export function mergeRisk(findings: readonly Judged[]): Verdict {
+/** Risk the change carries. Pre-existing problems were there before it, so they do not count. */
+export function mergeRisk(all: readonly Judged[]): Verdict {
+  const findings = all.filter((f) => !f.preexisting);
   const blockers = findings.filter((f) => f.severity === "blocker").length;
   const shoulds = findings.filter((f) => f.severity === "should-fix").length;
   if (blockers) {
@@ -49,7 +52,7 @@ export function mergeRisk(findings: readonly Judged[]): Verdict {
  * blocker in a test helper is still not a production risk.
  */
 export function prodRisk(findings: readonly (Judged & { surface: Surface })[]): Verdict {
-  const product = findings.filter((f) => f.surface === "product");
+  const product = findings.filter((f) => f.surface === "product" && !f.preexisting);
   const count = product.filter(severe).length;
   if (product.length === 0) {
     return { level: "low", label: "Prod risk: none", detail: "everything found is in tooling, deploy or test code." };
