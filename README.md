@@ -21,6 +21,10 @@ It is also a plain diff viewer. `diffloupe diff` shows the same grouped diff in 
 
 Each review is saved as a run that you can list and reopen. Reviewing the same target again links the new run to the previous one: findings that were fixed are listed as fixed, and ones still open are carried forward instead of being reported again.
 
+A re-review (round 2 and later) only sends the files that changed since the previous run's head to the reviewers. Each of them sees the full diff plus what changed since the last review, and is told to focus on the new lines. The cap on new findings drops from 10 to 5. Grouping and the walkthrough still cover the whole change. If more than half the files changed, or the previous head is no longer available, the round falls back to a full review. `--full` forces one. From round 4 on, the CLI warns that later rounds mostly find smaller problems.
+
+Findings about code the change did not add or modify are tagged **pre-existing**. They have their own cap of 3, so they never push findings on the new code out of the review. They are listed after the other findings, do not count toward merge risk, and are shown muted in the web UI.
+
 ## The web UI
 
 - **Summary** at the top, laid out like a GitHub review comment: merge risk and production risk, finding counts, findings grouped by file with links to their lines, whether the change matches its stated intent, what to focus on, and where to start.
@@ -134,6 +138,7 @@ diffloupe runs
 | `--max-cost <usd>` | Stop starting new review slices once spending reaches this amount. Slices already running finish, so the total can go over: by up to six slices at $3 each, plus the coordinator and walkthrough. |
 | `--host <host>`, `--port <port>` | Server address (default `127.0.0.1:4517`, or the next free port) |
 | `--open` | Open the run in a browser. On WSL this opens the Windows browser. |
+| `--full` | On a re-review, review every changed file instead of only the files changed since the last run |
 | `--headless` | Run without a server and print a summary to stdout |
 | `--markdown` | With `--headless`, print the full review markdown instead of the summary |
 
@@ -173,6 +178,7 @@ Runs the server until you stop it. `-C` sets the repository that runs use by def
 | `diffloupe runs [--kind review\|diff] [--json]` | List saved runs, newest first |
 | `diffloupe runs show <id> [--json]` | Show a run: groups with their files and findings, walkthrough stops, totals |
 | `diffloupe runs show <id> --markdown [--over-cap]` | Print the findings as markdown, the same text as Copy all in the UI |
+| `diffloupe runs stats [--repo <path\|owner/name>] [--since 30d] [--by-version] [--json]` | For each chain of re-reviews of the same target: findings raised, carried and fixed per round, findings dismissed and still open, cost per fixed finding, and totals (resolution rate for findings on the change, mean rounds, share of chains past three rounds). `--by-version` splits the counts by the hash of the review prompts and of the repo's instructions, which each run records |
 | `diffloupe runs rm <id>` | Delete a run, its artifacts, its scratch files and the git refs that pin its commits |
 | `diffloupe runs prune [--older-than 30d] [--keep 20] [--kind review\|diff] [--yes]` | Delete runs older than the cutoff, except the newest `--keep`, plus scratch files no run owns. Lists what it would delete unless `--yes` is given |
 
