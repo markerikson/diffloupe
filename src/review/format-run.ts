@@ -192,6 +192,8 @@ function lead(text: string, max = 200): string {
 export function formatRunSummary(run: ReviewRun): string {
   const out: string[] = [];
   out.push(`${formatTarget(run.target)}  ${run.base.slice(0, 12)}..${run.head.slice(0, 12)}`);
+  const round = describeRound(run);
+  if (round) out.push(round);
   if (run.unreviewed.failed.length) out.push(`Incomplete: ${run.unreviewed.failed.length} slice(s) failed.`);
   const budgetSkipped = run.unreviewed.budget ?? [];
   if (budgetSkipped.length) out.push(`Incomplete: cost limit reached, ${budgetSkipped.length} file(s) not reviewed.`);
