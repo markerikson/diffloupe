@@ -173,6 +173,12 @@ export function runKind(run: { meta: { kind?: RunKind | undefined } }): RunKind 
  * - `unreviewed`: code files no reviewer read: over the slice cap, in a failed
  *   slice, or skipped at the cost limit.
  * - `meta.budgetStopped`: the cost limit stopped new slices from starting.
+ * - `meta.reviewScope`: `incremental` when a re-review looked only at files
+ *   changed since the prior run's head; `meta.reviewedFiles` counts the files
+ *   the reviewers read, `meta.scopeReason` says why a re-review went full.
+ * - `meta.promptVersion`, `meta.instructionsHash`: short hashes of the review
+ *   prompts and the repo's review instructions, to compare runs across versions.
+ * - `round`: 1 for a first review, one more than the prior run's otherwise.
  * - `untrackedSkipped`: untracked files left out of a working-tree snapshot
  *   because of their size.
  */
@@ -227,9 +233,15 @@ export const ReviewRunSchema = type({
     coreSource: "string",
     "mergeMode?": "'coordinator' | 'nothing-to-merge' | 'deterministic-fallback'",
     "budgetStopped?": "boolean",
+    "reviewScope?": "'full' | 'incremental'",
+    "reviewedFiles?": "number",
+    "scopeReason?": "string",
+    "promptVersion?": "string",
+    "instructionsHash?": "string",
   },
   untrackedSkipped: "string[]",
   "priorRunId?": "string",
+  "round?": "number",
   "error?": "string",
 });
 export type ReviewRun = typeof ReviewRunSchema.infer;

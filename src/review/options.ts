@@ -21,6 +21,8 @@ export interface ReviewCommandOptions {
   config?: string;
   /** Stop starting new slices once the run has cost this many dollars. */
   maxCost?: number;
+  /** Review everything even when an earlier run of this target exists. */
+  full?: boolean;
   headless?: boolean;
   /** Print the review markdown to stdout instead of the terminal summary. */
   markdown?: boolean;

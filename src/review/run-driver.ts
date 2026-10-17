@@ -97,6 +97,7 @@ export async function requestFromOptions(opts: ReviewCommandOptions): Promise<St
     ...(opts.effort ? { effort: opts.effort } : {}),
     ...(opts.maxCost !== undefined ? { maxCostUsd: opts.maxCost } : {}),
     ...(opts.config ? { settingsFile: path.resolve(opts.config) } : {}),
+    ...(opts.full ? { full: true } : {}),
   };
 }
 
@@ -150,6 +151,10 @@ export interface PreparedRun {
   patch: string;
   priorRunId?: string;
   previous?: { run: ReviewRun; dismissed: string[]; lineMap: Map<string, LineHunk[]> };
+  /** Review runs only: 1 for a first review, one more than the prior run's otherwise. */
+  round?: number;
+  /** Review everything even when there is a prior run. */
+  full: boolean;
   untrackedSkipped: string[];
   coreSource: string;
   models?: NonNullable<ReviewRun["meta"]["models"]>;
@@ -276,6 +281,18 @@ export async function prepareRun(
   if (previous?.run.findings.length) {
     log(`  ${previous.run.findings.length} finding(s) from prior run ${previous.run.id}`);
   }
+  const full = req.full === true;
+  const round = isDiff ? undefined : previous ? (await roundOf(previous.run)) + 1 : 1;
+  if (round !== undefined && round > 1) {
+    log(
+      full
+        ? `  round ${round}, full review (--full)`
+        : `  round ${round}: reviewing what changed since ${previous?.run.head.slice(0, 12) ?? "the last review"} (--full to review everything)`,
+    );
+    if (round > ROUND_WARNING) {
+      log(`  warning: this change has been reviewed ${round - 1} times; later rounds mostly find smaller problems`);
+    }
+  }
   const source = await coreSource();
   const models = setup ? runModels(setup, stages) : undefined;
 
@@ -292,6 +309,7 @@ export async function prepareRun(
     untrackedSkipped,
     coreSource: source,
     ...(priorRunId ? { priorRunId } : {}),
+    ...(round !== undefined ? { round } : {}),
     ...(models ? { models } : {}),
     ...(isDiff ? { kind } : {}),
   });
@@ -313,6 +331,8 @@ export async function prepareRun(
     patch,
     ...(priorRunId ? { priorRunId } : {}),
     ...(previous ? { previous } : {}),
+    ...(round !== undefined ? { round } : {}),
+    full,
     untrackedSkipped,
     coreSource: source,
     ...(models ? { models } : {}),
@@ -383,6 +403,7 @@ export async function executeRun(prep: PreparedRun, opts: ExecuteRunOptions): Pr
             ...(prep.intent ? { intent: prep.intent } : {}),
             ...(prep.instructions ? { instructions: prep.instructions } : {}),
             ...(prep.previous ? { prior: priorComments(prep.previous.run) } : {}),
+            ...(prep.previous && !prep.full ? { priorHead: prep.previous.run.head } : {}),
             onProgress,
           });
   } catch (err) {
@@ -439,9 +460,29 @@ function pendingInput(prep: PreparedRun): BuildPendingRunInput {
     untrackedSkipped: prep.untrackedSkipped,
     coreSource: prep.coreSource,
     ...(prep.priorRunId ? { priorRunId: prep.priorRunId } : {}),
+    ...(prep.round !== undefined ? { round: prep.round } : {}),
     ...(prep.models ? { models: prep.models } : {}),
     ...(prep.kind === "diff" ? { kind: prep.kind } : {}),
   };
+}
+
+/** Reviews past this many rounds get a warning; the extra rounds rarely pay. */
+const ROUND_WARNING = 3;
+
+/**
+ * A run's round. Runs saved before rounds were recorded count the prior runs
+ * they link back to.
+ */
+export async function roundOf(run: Pick<ReviewRun, "round" | "priorRunId">, load = loadRun): Promise<number> {
+  if (run.round !== undefined) return run.round;
+  const walk = async (next: string | undefined, seen: Set<string>): Promise<number> => {
+    if (!next || seen.has(next)) return 1;
+    seen.add(next);
+    const prior = await load(next).catch(() => undefined);
+    if (!prior) return 1;
+    return 1 + (prior.round ?? (await walk(prior.priorRunId, seen)));
+  };
+  return walk(run.priorRunId, new Set());
 }
 
 /**

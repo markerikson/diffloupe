@@ -25,7 +25,7 @@ import { gitText, diffOutline, gatherIntent, gatherPriorComments, renderPriorCom
 import { agent, CancelledError, killAgents, resetOpenCodeConfig, type AgentFailure } from "./runner.ts";
 import { slicePrompt, mergePrompt, type ReviewUnit, coverUnits, packUnits, type Walkthrough, partitionPrompt, groupNamingPrompt, walkthroughPrompt } from "./prompts.ts";
 import { classifySurface, SURFACE_RANK, CONF, SEV } from "./surface.ts";
-import { saidFingerprints, readCheckedClaims, mergeBudgetFor, fallbackRank, coordinatorHasWork, type MergeDecisions, MAX_POSTED, MAX_PREEXISTING, applyDecisions, capFindings } from "./coordinate.ts";
+import { saidFingerprints, readCheckedClaims, mergeBudgetFor, fallbackRank, coordinatorHasWork, type MergeDecisions, MAX_POSTED, MAX_POSTED_INCREMENTAL, MAX_PREEXISTING, applyDecisions, capFindings } from "./coordinate.ts";
 import { writeArtifacts } from "./render.ts";
 
 export * from "./config.ts";
@@ -97,6 +97,38 @@ export interface RunReviewOptions {
    * still spend.
    */
   maxCostUsd?: number;
+  /**
+   * The head an earlier review of this target saw. When set, only files that
+   * changed since then are reviewed again, unless too many changed.
+   */
+  priorHead?: string;
+}
+
+const MIN_FILES_FOR_FALLBACK = 4;
+
+export interface ReviewScope {
+  kind: "full" | "incremental";
+  /** The code files the review slices look at. */
+  files: string[];
+  /** Why a re-review fell back to a full review. */
+  reason?: string;
+}
+
+/**
+ * Which files a review looks at. A re-review narrows to the files that changed
+ * since the previous head; `changedSince` is null when that diff could not be
+ * computed. Once more than half of the files changed the change is mostly new
+ * and gets a full review; a small change is narrowed regardless, since a
+ * one-file fix-up is the common re-review.
+ */
+export function chooseReviewScope(files: string[], changedSince: string[] | null): ReviewScope {
+  if (!changedSince) return { kind: "full", files, reason: "the previous head is not available" };
+  const changed = new Set(changedSince);
+  const again = files.filter((f) => changed.has(f));
+  if (files.length >= MIN_FILES_FOR_FALLBACK && again.length > files.length / 2) {
+    return { kind: "full", files, reason: `${again.length} of ${files.length} files changed since the last review` };
+  }
+  return { kind: "incremental", files: again };
 }
 
 export interface RunReviewResult {
@@ -234,6 +266,23 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     return { record: null, units: [], byClass, findings: [], costUsd: 0, wallMs: Date.now() - started, markdownPath };
   }
 
+  let scope: ReviewScope = { kind: "full", files: sliceFiles };
+  if (options.priorHead) {
+    const since = options.priorHead === head
+      ? []
+      : await gitText(["diff", "--name-only", options.priorHead, head]).then(
+        (out) => out.trim().split("\n").filter(Boolean),
+        () => null,
+      );
+    scope = chooseReviewScope(sliceFiles, since);
+    console.error(
+      scope.kind === "incremental"
+        ? `  re-review: ${scope.files.length} of ${sliceFiles.length} code files changed since ${options.priorHead.slice(0, 12)}`
+        : `  re-review in full: ${scope.reason}`,
+    );
+  }
+  const incremental = scope.kind === "incremental";
+
   // Grouping needs only the git range, so it runs before the registry check and
   // the repo map, and the computed groups go to the page before any model call.
   // The naming call below replaces them with its titles and file moves.
@@ -352,8 +401,20 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
   const packed = packUnits(ordered0, fileTokens, MAX_SLICE_TOKENS).sort(
     (a, b) => a.part - b.part || (unitRank.get(a.unitId) ?? 0) - (unitRank.get(b.unitId) ?? 0),
   );
-  const capped = packed.slice(0, MAX_SLICES);
-  const notReviewed = packed.slice(MAX_SLICES).flatMap((s) => s.files);
+  // A re-review keeps the full grouping, which the walkthrough reads, and gives
+  // the reviewers only the files that changed since the last review.
+  const inScope = new Set(scope.files);
+  const reviewPacked = incremental
+    ? packed
+      .map((s) => {
+        const files = s.files.filter((f) => inScope.has(f));
+        return { ...s, files, tokens: files.reduce((a, f) => a + (fileTokens.get(f) ?? 0), 0) };
+      })
+      .filter((s) => s.files.length > 0)
+    : packed;
+  const capped = reviewPacked.slice(0, MAX_SLICES);
+  const walkSlices = packed.slice(0, MAX_SLICES);
+  const notReviewed = reviewPacked.slice(MAX_SLICES).flatMap((s) => s.files);
   const oversized = capped.filter((s) => s.tokens > MAX_SLICE_TOKENS);
 
   console.error(
@@ -408,13 +469,20 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
         priority: slice.priority,
       };
       const tag = `${tagBase}-s${String(i).padStart(2, "0")}`;
-      const diff = compactDeletedFiles(await gitText(["diff", `${base}..${head}`, "--", ...slice.files]), base);
+      const [fullDiff, sinceLast] = await Promise.all([
+        gitText(["diff", `${base}..${head}`, "--", ...slice.files]),
+        incremental && options.priorHead
+          ? gitText(["diff", options.priorHead, head, "--", ...slice.files])
+          : undefined,
+      ]);
+      const diff = compactDeletedFiles(fullDiff, base);
       if (!diff.trim()) continue;
       const outFile = `${OUT}/${tag}.json`;
       await removeIfPresent(outFile);
       const prompt = slicePrompt({
         unit, diff, intent, registry: regMd, prior: priorMd, mapNote, outFile,
         crossLinks: crossLinksFor(slice.files, links), instructions: options.instructions,
+        sinceLast,
       });
       await writeText(path.join(ARTIFACTS, "prompts", `${tag}.txt`), prompt);
       const sliceEvent = { type: "slice", index: i, total: capped.length, title: slice.title } as const;
@@ -534,6 +602,8 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
   const mp = mergePrompt({
     findings: toMerge, intent, files: sliceFiles, prior: priorMd, outFile: mergeOut, instructions: options.instructions,
     changedLines: parseDiffHunks(diffU0),
+    maxNew: incremental ? MAX_POSTED_INCREMENTAL : MAX_POSTED,
+    sinceLast: incremental ? scope.files : undefined,
   });
   await writeText(path.join(ARTIFACTS, "prompts", `${mergeTag}.txt`), mp);
   const mergeBudget = mergeBudgetFor(toMerge.length, MERGE_BUDGET);
@@ -549,7 +619,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
   // whose body it could not see. Units, not slices: a unit split across three
   // reviewers is still one mechanism, and that is the level the guide's
   // chapters are written at.
-  const walkUnits = ordered0.filter((u) => capped.some((s) => s.unitId === u.id));
+  const walkUnits = ordered0.filter((u) => walkSlices.some((s) => s.unitId === u.id));
   const inWalkUnit = new Set(walkUnits.flatMap((u) => u.files));
   const unreviewed = packed.flatMap((s) => s.files).filter((f) => !inWalkUnit.has(f));
   const walkGroups = [...walkUnits, ...(unreviewed.length ? [{ files: [...new Set(unreviewed)] }] : [])];
@@ -597,8 +667,10 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     return { wallMs: 0, exitCode: -1, costUsd: 0, numTurns: 0, usage: null, payload: null };
   };
     const skipped = { wallMs: 0, exitCode: 0, costUsd: 0, numTurns: 0, usage: null, payload: null };
-    const mergeIdle = !coordinatorHasWork(toMerge, prior);
-    if (mergeIdle) console.error("  coordinator skipped: no findings and no earlier comments to close out");
+    const nothingChanged = incremental && scope.files.length === 0;
+    const mergeIdle = nothingChanged || !coordinatorHasWork(toMerge, prior);
+    if (nothingChanged) console.error("  coordinator skipped: no code changed since the last review");
+    else if (mergeIdle) console.error("  coordinator skipped: no findings and no earlier comments to close out");
     emit({ type: "stage", stage: "coordinating" });
     emit({ type: "stage", stage: "walkthrough" });
     const [merged, walked] = await Promise.all([
@@ -647,7 +719,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
   // Findings the review stands behind but did not post because of the cap.
   // Listed in the detail file, so a reader can see what the cut removed.
   let overCap: Finding[] = [];
-  const capLimits = { maxNew: MAX_POSTED, maxPreexisting: MAX_PREEXISTING };
+  const capLimits = { maxNew: incremental ? MAX_POSTED_INCREMENTAL : MAX_POSTED, maxPreexisting: MAX_PREEXISTING };
 
   if (mp2.keep) {
     const applied = applyDecisions(mp2, toMerge, prior);
@@ -750,6 +822,9 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     "after verification": verified.length,
     "registry signals": reg.findings.length,
     "prior comments considered": prior.length,
+    ...(incremental
+      ? { "review scope": `${scope.files.length} of ${sliceFiles.length} code files changed since the last review` }
+      : scope.reason ? { "review scope": `full: ${scope.reason}` } : {}),
     "wall time": `${(wallMs / 60000).toFixed(1)} min`,
     cost: `$${totalCost.toFixed(2)}`,
     model: MODEL,
@@ -818,6 +893,9 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     grouping: GROUPING,
     groupMoves,
     reviewUnits: capped,
+    reviewScope: scope.kind,
+    reviewedFiles: capped.reduce((n, s) => n + s.files.length, 0),
+    ...(scope.reason ? { scopeReason: scope.reason } : {}),
     registry: { meta: reg.meta, findings: reg.findings },
     priorComments: prior.length,
     prior,

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mergePrompt, slicePrompt } from "./prompts.ts";
+import { mergePrompt, SINCE_LAST_FOCUS, slicePrompt } from "./prompts.ts";
 
 const intent = { title: "t", body: "b", commits: "c" };
 const slice = (instructions?: string) =>
@@ -53,6 +53,33 @@ describe("pre-existing hint", () => {
     const prompt = mergePrompt({ findings: [], intent, files: ["a.ts"], prior: "", outFile: "/tmp/o.json", maxNew: 5 });
     expect(prompt).toContain("at most 5 new findings");
     expect(prompt).toContain("at most 3 pre-existing");
+  });
+});
+
+describe("re-review", () => {
+  test("slices get the changes since the last review and the focus rule", () => {
+    const prompt = slicePrompt({
+      unit: { id: "u", title: "Unit", files: ["a.ts"] },
+      diff: "",
+      intent,
+      registry: "",
+      prior: "",
+      mapNote: "",
+      outFile: "/tmp/out.json",
+      sinceLast: "+const fixed = 1;",
+    });
+    expect(prompt).toContain("## Changes since the last review");
+    expect(prompt).toContain(SINCE_LAST_FOCUS);
+    expect(prompt).toContain("+const fixed = 1;");
+    expect(slice()).not.toContain("## Changes since the last review");
+  });
+
+  test("the coordinator hears which files were reviewed again", () => {
+    const prompt = mergePrompt({ findings: [], intent, files: ["a.ts", "b.ts"], prior: "", outFile: "/tmp/o.json", sinceLast: ["b.ts"] });
+    expect(prompt).toContain("## This is a re-review");
+    expect(prompt).toContain("`b.ts`");
+    expect(prompt).toContain(SINCE_LAST_FOCUS);
+    expect(merge()).not.toContain("## This is a re-review");
   });
 });
 

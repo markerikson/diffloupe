@@ -4,7 +4,7 @@
  * it uses no DOM or Bun APIs.
  */
 import { code, fence } from "./core/lib/markdown.ts";
-import { formatTarget } from "./format-run.ts";
+import { describeRound, formatTarget } from "./format-run.ts";
 import type { DiffAnchor, FindingSeverity, ReviewRun, RunFinding } from "../types/review-run.ts";
 
 export const SEVERITY_ORDER: readonly FindingSeverity[] = ["blocker", "should-fix", "nice-to-have", "question"];
@@ -115,9 +115,10 @@ export interface RunMarkdownOptions {
 }
 
 export function runMarkdown(run: ReviewRun, opts: RunMarkdownOptions = {}): string {
+  const round = describeRound(run);
   const out = [
     `# Review findings: ${formatTarget(run.target)}`,
-    `Base ${code(run.base.slice(0, 12))}, head ${code(run.head.slice(0, 12))}`,
+    `Base ${code(run.base.slice(0, 12))}, head ${code(run.head.slice(0, 12))}${round ? `. ${round}.` : ""}`,
   ];
   const introduced = run.findings.filter((f) => !f.preexisting);
   const preexisting = run.findings.filter((f) => f.preexisting);

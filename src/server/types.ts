@@ -35,6 +35,8 @@ export const StartRunRequestSchema = type({
    * `target` again. A working-tree run keeps the snapshot it was given.
    */
   "fromRun?": "string",
+  /** A re-review normally looks only at what changed since the prior run; this reviews everything. */
+  "full?": "boolean",
 });
 export type StartRunRequest = typeof StartRunRequestSchema.infer;
 

@@ -96,6 +96,13 @@ describe("runMarkdown", () => {
     expect(md).toContain(`Base \`${renames.base.slice(0, 12)}\`, head \`${renames.head.slice(0, 12)}\``);
   });
 
+  test("a re-review states its round and scope on the base line", () => {
+    const run = { ...renames, round: 2, meta: { ...renames.meta, reviewScope: "incremental" as const, reviewedFiles: 2 } };
+    const md = runMarkdown(run);
+    expect(md.split("\n\n")[1]).toEndWith(". Round 2: only the 2 files changed since the last review were reviewed again.");
+    expect(runMarkdown(renames).split("\n\n")[1]).not.toContain("Round");
+  });
+
   test("over-cap findings only when asked", () => {
     expect(largePr.overCapFindings.length).toBeGreaterThan(0);
     const without = runMarkdown(largePr);

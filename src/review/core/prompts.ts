@@ -6,6 +6,9 @@ import { anchorFor, type HunkMap } from "./lib/hunks.ts";
 
 const OUTSIDE_HUNKS = "cited line is outside the changed hunks";
 
+export const SINCE_LAST_FOCUS =
+  "Focus on the lines that changed since the last review. Report problems elsewhere in the file only if the new changes caused them or made them reachable.";
+
 // ---------------------------------------------------------------- prompts
 
 export const QUESTION_AFFORDANCE = `
@@ -70,8 +73,13 @@ export function slicePrompt(o: {
   outFile: string;
   crossLinks?: string[];
   instructions?: string | undefined;
+  /** On a re-review, the diff from the previously reviewed head to this one. */
+  sinceLast?: string | undefined;
 }) {
   const files = o.unit.files.map((f) => `\`${f}\``).join(", ");
+  const sinceLast = o.sinceLast
+    ? `\n## Changes since the last review\nThis change was reviewed before, and the earlier findings are listed above. ${SINCE_LAST_FOCUS}\n\`\`\`diff\n${o.sinceLast}\n\`\`\`\n`
+    : "";
   const cross = o.crossLinks?.length
     ? `\n\nThese changed files are linked to files that another reviewer has. That reviewer is checking the other side, so check the contract from yours — that each name used here matches what the other file now defines, and each definition here suits how the other file uses it:\n${o.crossLinks.map((l) => `- ${l}`).join("\n")}`
     : "";
@@ -100,7 +108,7 @@ ${o.mapNote}${o.registry ? `\n${o.registry}\n` : ""}${o.prior ? `\n${o.prior}\n`
 \`\`\`diff
 ${o.diff}
 \`\`\`
-
+${sinceLast}
 Write your findings as JSON to \`${o.outFile}\`. Write the file even if you have no findings (use an empty array).`;
 }
 
@@ -115,7 +123,12 @@ export function mergePrompt(o: {
   changedLines?: HunkMap | undefined;
   /** Cap on new findings; lower on a re-review that only looked at what changed. */
   maxNew?: number | undefined;
+  /** On a re-review, the files reviewed again because they changed since the last review. */
+  sinceLast?: string[] | undefined;
 }) {
+  const sinceLast = o.sinceLast
+    ? `\n## This is a re-review\nThis change was reviewed before. Only these files changed since then, and only they were reviewed again: ${o.sinceLast.map((f) => `\`${f}\``).join(", ")}. ${SINCE_LAST_FOCUS} Earlier findings in files that did not change stay open on their own; do not close them out as resolved.\n`
+    : "";
   const listed = o.findings.map((f, i) => {
     const outside = o.changedLines && anchorFor(o.changedLines, f.file, f.line, f.end_line).kind !== "anchorable";
     return { ...f, id: i, ...(outside ? { hint: OUTSIDE_HUNKS } : {}) };
@@ -132,7 +145,7 @@ ${description(o.intent, 4000)}
 
 Commit messages:
 ${o.intent.commits.slice(0, 3000) || "(none)"}
-${o.prior ? `\n${o.prior}\n` : ""}
+${o.prior ? `\n${o.prior}\n` : ""}${sinceLast}
 ## Raw findings from the per-file reviewers
 Each carries an \`id\`. You will refer to them by that id; you never retype their text.
 The \`id\` is assigned here and overwrites anything a reviewer wrote, so it is always the

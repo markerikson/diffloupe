@@ -220,6 +220,16 @@ function ReviewButton({ run }: { run: RunWithProgress }) {
   );
 }
 
+function roundTitle(run: RunWithProgress): string {
+  const { reviewScope, reviewedFiles, scopeReason } = run.meta;
+  if (reviewScope === "incremental") {
+    return reviewedFiles
+      ? `Only the ${plural(reviewedFiles, "file")} changed since the last review were reviewed again`
+      : "No code changed since the last review";
+  }
+  return scopeReason ? `Full review: ${scopeReason}` : "Full review";
+}
+
 interface HeaderProps {
   run: RunWithProgress;
   tree: GroupTree;
@@ -273,6 +283,7 @@ export function Header({ run, tree, visible, collapseActions }: HeaderProps) {
           </span>
           <span>{plural(run.files.length, "file")}</span>
           <DiffStats additions={totals.additions} deletions={totals.deletions} />
+          {run.round !== undefined && run.round > 1 && <span title={roundTitle(run)}>Round {run.round}</span>}
           <span className={styles.right}>
             {isDiff && !run.repo.remote && <ReviewButton run={run} />}
             <span title={run.repo.root}>{run.repo.slug ?? run.repo.root}</span>

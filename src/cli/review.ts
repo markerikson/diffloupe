@@ -178,6 +178,12 @@ export function createReviewCommand(): Command {
         "(default: maxCostUsd from ~/.config/diffloupe/config.json, else no limit)",
       parseCost,
     )
+    .option(
+      "--full",
+      "Review every changed file even when this target was reviewed before (default: a re-review looks only at " +
+        "files changed since the last run)",
+      false,
+    )
     .option("--host <host>", `Address for the server to listen on (default: ${DEFAULT_HOST})`)
     .option("--port <port>", `Port for the server (default: ${DEFAULT_PORT}, or the next free one)`, parsePort)
     .option("--open", "Open the run in a browser", false)

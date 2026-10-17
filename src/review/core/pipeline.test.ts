@@ -6,6 +6,7 @@ import {
   anchorCovers,
   applyDecisions,
   capFindings,
+  chooseReviewScope,
   classifyFile,
   classifySurface,
   condenseOwnSummary,
@@ -1591,5 +1592,30 @@ describe("slice failure reporting", () => {
   it("suggests doctor when a slice hit a provider error", () => {
     const failed = [{ tag: "t-s00", exitCode: 1, failure: { kind: "provider", message: "auth" } }];
     expect(describeSliceFailures(failed, "t", 1)).toContain("diffloupe doctor");
+  });
+});
+
+describe("chooseReviewScope", () => {
+  const files = ["a.ts", "b.ts", "c.ts", "d.ts", "e.ts"];
+
+  it("narrows to the files that changed since the last review", () => {
+    expect(chooseReviewScope(files, ["b.ts", "README.md"])).toEqual({ kind: "incremental", files: ["b.ts"] });
+  });
+
+  it("reviews nothing when no code file changed", () => {
+    expect(chooseReviewScope(files, [])).toEqual({ kind: "incremental", files: [] });
+  });
+
+  it("falls back to a full review when most files changed", () => {
+    const scope = chooseReviewScope(files, ["a.ts", "b.ts", "c.ts"]);
+    expect(scope).toEqual({ kind: "full", files, reason: "3 of 5 files changed since the last review" });
+  });
+
+  it("keeps small changes incremental even when most of their files changed", () => {
+    expect(chooseReviewScope(["a.ts", "b.ts"], ["a.ts", "b.ts"]).kind).toBe("incremental");
+  });
+
+  it("reviews in full when the previous head is not available", () => {
+    expect(chooseReviewScope(files, null).kind).toBe("full");
   });
 });

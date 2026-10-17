@@ -47,6 +47,9 @@ interface CoreRecord {
   overCapFindings?: Finding[];
   unreviewed?: { overCap: string[]; failed: string[]; budget?: string[] };
   budgetStopped?: boolean;
+  reviewScope?: string;
+  reviewedFiles?: number;
+  scopeReason?: string;
   resolved?: { id: number; note?: string }[];
   rejected?: unknown[];
   intentAlignment?: {
@@ -69,6 +72,7 @@ export interface BuildReviewRunInput {
   untrackedSkipped?: string[];
   coreSource: string;
   priorRunId?: string;
+  round?: number;
   /** The model each stage was resolved to before the run started. */
   models?: NonNullable<ReviewRun["meta"]["models"]>;
   /** Omitted for reviews. */
@@ -540,9 +544,15 @@ export function buildReviewRun(input: BuildReviewRunInput): ReviewRun {
           }
         : {}),
       ...(record?.budgetStopped ? { budgetStopped: true } : {}),
+      ...(record?.reviewScope === "full" || record?.reviewScope === "incremental"
+        ? { reviewScope: record.reviewScope }
+        : {}),
+      ...(typeof record?.reviewedFiles === "number" ? { reviewedFiles: record.reviewedFiles } : {}),
+      ...(record?.scopeReason ? { scopeReason: record.scopeReason } : {}),
     },
     untrackedSkipped: input.untrackedSkipped ?? [],
     ...(input.priorRunId ? { priorRunId: input.priorRunId } : {}),
+    ...(input.round !== undefined ? { round: input.round } : {}),
   };
 }
 
@@ -558,6 +568,7 @@ export type BuildPendingRunInput = Pick<
   | "patch"
   | "untrackedSkipped"
   | "priorRunId"
+  | "round"
   | "coreSource"
   | "models"
   | "kind"
@@ -626,5 +637,6 @@ export function buildPendingRun(input: BuildPendingRunInput): ReviewRun {
     },
     untrackedSkipped: input.untrackedSkipped ?? [],
     ...(input.priorRunId ? { priorRunId: input.priorRunId } : {}),
+    ...(input.round !== undefined ? { round: input.round } : {}),
   };
 }

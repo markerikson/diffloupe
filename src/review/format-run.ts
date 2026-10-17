@@ -69,6 +69,19 @@ function resolvedLines(run: ReviewRun, indent: string): string[] {
   ];
 }
 
+/** "Round 2: only the 3 files changed since the last review were reviewed again", or nothing for a first review. */
+export function describeRound(run: Pick<ReviewRun, "round" | "meta">): string | undefined {
+  if (!run.round || run.round < 2) return undefined;
+  const { reviewScope, reviewedFiles, scopeReason } = run.meta;
+  if (reviewScope === "incremental") {
+    const n = reviewedFiles ?? 0;
+    return n === 0
+      ? `Round ${run.round}: no code changed since the last review`
+      : `Round ${run.round}: only the ${n === 1 ? "file" : `${n} files`} changed since the last review ${n === 1 ? "was" : "were"} reviewed again`;
+  }
+  return `Round ${run.round}: full review${scopeReason ? ` (${scopeReason})` : ""}`;
+}
+
 export function formatRun(run: ReviewRun): string {
   const out: string[] = [];
   out.push(`${run.id}  ${run.status}`);
@@ -76,6 +89,8 @@ export function formatRun(run: ReviewRun): string {
   out.push(`${run.repo.slug ?? run.repo.root}  ${run.createdAt}`);
   if (run.error) out.push(`error: ${run.error}`);
   if (run.priorRunId) out.push(`prior run: ${run.priorRunId}`);
+  const round = describeRound(run);
+  if (round) out.push(round);
   if (run.overview.focus) out.push(`focus: ${run.overview.focus}`);
   if (run.intent.alignment) out.push(`intent: ${run.intent.alignment}`);
 
