@@ -1,5 +1,27 @@
 import { describe, expect, test } from "bun:test";
-import { mergePrompt, SINCE_LAST_FOCUS, slicePrompt } from "./prompts.ts";
+import { resetRunState, setRunState } from "./config.ts";
+import { instructionsHash, mergePrompt, promptVersion, SINCE_LAST_FOCUS, slicePrompt } from "./prompts.ts";
+
+describe("prompt version", () => {
+  test("is stable, follows the system prompt, and ignores the repository name", () => {
+    const v = promptVersion("system");
+    expect(v).toMatch(/^[0-9a-f]{12}$/);
+    expect(promptVersion("system")).toBe(v);
+    expect(promptVersion("other")).not.toBe(v);
+    setRunState({ repoName: "acme/widgets" });
+    try {
+      expect(promptVersion("system")).toBe(v);
+    } finally {
+      resetRunState();
+    }
+  });
+
+  test("instructions hash ignores surrounding whitespace and is absent without instructions", () => {
+    expect(instructionsHash(" do X ")).toBe(instructionsHash("do X"));
+    expect(instructionsHash("  ")).toBeUndefined();
+    expect(instructionsHash(undefined)).toBeUndefined();
+  });
+});
 
 const intent = { title: "t", body: "b", commits: "c" };
 const slice = (instructions?: string) =>

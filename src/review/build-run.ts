@@ -50,6 +50,8 @@ interface CoreRecord {
   reviewScope?: string;
   reviewedFiles?: number;
   scopeReason?: string;
+  promptVersion?: string;
+  instructionsHash?: string;
   resolved?: { id: number; note?: string }[];
   rejected?: unknown[];
   intentAlignment?: {
@@ -549,6 +551,8 @@ export function buildReviewRun(input: BuildReviewRunInput): ReviewRun {
         : {}),
       ...(typeof record?.reviewedFiles === "number" ? { reviewedFiles: record.reviewedFiles } : {}),
       ...(record?.scopeReason ? { scopeReason: record.scopeReason } : {}),
+      ...(record?.promptVersion ? { promptVersion: record.promptVersion } : {}),
+      ...(record?.instructionsHash ? { instructionsHash: record.instructionsHash } : {}),
     },
     untrackedSkipped: input.untrackedSkipped ?? [],
     ...(input.priorRunId ? { priorRunId: input.priorRunId } : {}),

@@ -1,9 +1,11 @@
 import { rm } from "node:fs/promises";
+import path from "node:path";
 import { Command, InvalidArgumentError } from "commander";
 import pc from "picocolors";
 import { runMarkdown } from "../review/export.js";
 import { formatRun, formatRunList } from "../review/format-run.js";
-import { deleteRun, listRuns, loadRun, orphanScratch, pruneCandidates } from "../review/run-store.js";
+import { chainStats, formatStats, statsByVersion, statsTotals } from "../review/run-stats.js";
+import { deleteRun, listRuns, loadRun, loadState, orphanScratch, pruneCandidates } from "../review/run-store.js";
 import type { ReviewRun, RunHeader, RunKind } from "../types/review-run.js";
 
 async function loadOrExit(id: string): Promise<ReviewRun> {
@@ -40,6 +42,41 @@ export function createRunsCommand(): Command {
         return;
       }
       console.log(options.json ? JSON.stringify(run, null, 2) : formatRun(run));
+    });
+
+  runs
+    .command("stats")
+    .description("How findings fared across re-reviews of the same change: raised, fixed, dismissed, still open")
+    .option("--repo <path-or-slug>", "Only runs in this repository (a path, or owner/name)")
+    .option("--since <age>", "Only chains reviewed within this window, e.g. 30d, 12h, 2w")
+    .option("--by-version", "Also split the counts by prompt version and repo instructions", false)
+    .option("--json", "Print the stats as JSON", false)
+    .action(async (options: { repo?: string; since?: string; byVersion: boolean; json: boolean }) => {
+      const sinceMs = options.since === undefined ? undefined : parseAge(options.since);
+      if (sinceMs === null) {
+        console.error(pc.red("--since takes a number with d, h, or w"));
+        process.exit(1);
+      }
+      const repoPath = options.repo === undefined ? undefined : path.resolve(options.repo);
+      const headers = (await listRuns()).filter(
+        (h) =>
+          !h.invalid &&
+          h.status === "complete" &&
+          h.kind !== "diff" &&
+          (options.repo === undefined || h.repo.root === repoPath || h.repo.slug === options.repo),
+      );
+      const inputs = await Promise.all(
+        headers.map(async (h) => ({ run: await loadRun(h.id), state: await loadState(h.id) })),
+      );
+      const cutoff = sinceMs === undefined ? undefined : new Date(Date.now() - sinceMs).toISOString();
+      const chains = chainStats(inputs).filter((c) => cutoff === undefined || c.lastAt >= cutoff);
+      const kept = new Set(chains.flatMap((c) => c.rounds.map((r) => r.id)));
+      const versions = options.byVersion ? statsByVersion(inputs.filter((i) => kept.has(i.run.id))) : undefined;
+      if (options.json) {
+        console.log(JSON.stringify({ chains, totals: statsTotals(chains), ...(versions ? { versions } : {}) }, null, 2));
+        return;
+      }
+      console.log(formatStats(chains, versions));
     });
 
   runs

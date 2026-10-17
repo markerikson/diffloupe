@@ -14,16 +14,16 @@ import { projectFilesFromGit } from "./lib/module-resolver.ts";
 import { crossGroupLinkLines, groupLinkLines, selectWalkFiles, sketchFiles, sketchLine } from "./lib/walk-input.ts";
 import { applyGroupNaming, crossLinksFor, type GroupNaming } from "./lib/grouping.ts";
 import { groupTitles } from "./lib/group-title.ts";
-import { countLines, ensureDir, exists, removeIfPresent, writeJson, writeText } from "./lib/io.ts";
+import { countLines, ensureDir, exists, readText, removeIfPresent, writeJson, writeText } from "./lib/io.ts";
 import { openSubject } from "./lib/subject.ts";
 import { targetKey, type Target } from "./lib/target.ts";
 import { fingerprint } from "./lib/marker.ts";
 import { compactDeletedFiles, parseDiffHunks } from "./lib/hunks.ts";
-import { SUBJECT, ARTIFACTS, RUNNER, MODEL, EFFORT, MODEL_WALK, MODEL_MERGE, EFFORT_AUX, WALK_BUDGET, PART_BUDGET, GROUPING, SLICE_BUDGET, MERGE_BUDGET, POOL, MAX_SLICES, MAX_SLICE_TOKENS, WALK_DIFF_TOKENS, OUT, applyConfig, setRunState, resetRunState, releaseSubject, type ReviewConfig } from "./config.ts";
+import { DIR, SUBJECT, ARTIFACTS, RUNNER, MODEL, EFFORT, MODEL_WALK, MODEL_MERGE, EFFORT_AUX, WALK_BUDGET, PART_BUDGET, GROUPING, SLICE_BUDGET, MERGE_BUDGET, POOL, MAX_SLICES, MAX_SLICE_TOKENS, WALK_DIFF_TOKENS, OUT, applyConfig, setRunState, resetRunState, releaseSubject, type ReviewConfig } from "./config.ts";
 import { classifyFile, type Finding } from "./findings.ts";
 import { gitText, diffOutline, gatherIntent, gatherPriorComments, renderPriorComments, type PriorComment } from "./context.ts";
 import { agent, CancelledError, killAgents, resetOpenCodeConfig, type AgentFailure } from "./runner.ts";
-import { slicePrompt, mergePrompt, type ReviewUnit, coverUnits, packUnits, type Walkthrough, partitionPrompt, groupNamingPrompt, walkthroughPrompt } from "./prompts.ts";
+import { slicePrompt, mergePrompt, promptVersion, instructionsHash, type ReviewUnit, coverUnits, packUnits, type Walkthrough, partitionPrompt, groupNamingPrompt, walkthroughPrompt } from "./prompts.ts";
 import { classifySurface, SURFACE_RANK, CONF, SEV } from "./surface.ts";
 import { saidFingerprints, readCheckedClaims, mergeBudgetFor, fallbackRank, coordinatorHasWork, type MergeDecisions, MAX_POSTED, MAX_POSTED_INCREMENTAL, MAX_PREEXISTING, applyDecisions, capFindings } from "./coordinate.ts";
 import { writeArtifacts } from "./render.ts";
@@ -896,6 +896,8 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     reviewScope: scope.kind,
     reviewedFiles: capped.reduce((n, s) => n + s.files.length, 0),
     ...(scope.reason ? { scopeReason: scope.reason } : {}),
+    promptVersion: promptVersion(await readText(path.join(DIR, "system.md"))),
+    ...(options.instructions?.trim() ? { instructionsHash: instructionsHash(options.instructions) } : {}),
     registry: { meta: reg.meta, findings: reg.findings },
     priorComments: prior.length,
     prior,

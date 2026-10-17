@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describeLink, type CodeGroup, type Link } from "./lib/grouping.ts";
 import { repoName } from "./config.ts";
 import { type Finding } from "./findings.ts";
@@ -193,6 +194,33 @@ Write a single JSON object to \`${o.outFile}\`:
 }
 \`\`\`
 \`severity\`, \`merge_with\`, \`repeat_of\`, \`preexisting\` and \`note\` are all optional, and \`resolved\` is an empty array when nothing you previously raised has been fixed. Ids in \`resolved\` are comment ids from the "what you already told this author" section, not finding numbers. Write the file even if \`keep\` is empty.`;
+}
+
+function shortHash(text: string): string {
+  return createHash("sha256").update(text).digest("hex").slice(0, 12);
+}
+
+/**
+ * Identifies the review prompts a run used, so results can be compared across
+ * prompt changes. Hashes the reviewer contract and both templates rendered
+ * from fixed input, with the repository name factored out so the same prompts
+ * hash the same in every repository.
+ */
+export function promptVersion(systemPrompt: string): string {
+  const intent = { title: "t", body: "b", commits: "c" };
+  const unit: ReviewUnit = { id: "u", title: "u", files: ["f"] };
+  const rendered = [
+    systemPrompt,
+    slicePrompt({ unit, diff: "d", intent, registry: "", prior: "", mapNote: "", outFile: "o" }),
+    mergePrompt({ findings: [], intent, files: ["f"], prior: "", outFile: "o" }),
+  ].map((s) => s.replaceAll(repoName, "{{repo}}"));
+  return shortHash(rendered.join("\0"));
+}
+
+/** Hash of the repository's review instructions, or undefined when it has none. */
+export function instructionsHash(instructions: string | undefined): string | undefined {
+  const text = instructions?.trim();
+  return text ? shortHash(text) : undefined;
 }
 
 export interface ReviewUnit {

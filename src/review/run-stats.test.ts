@@ -1,0 +1,107 @@
+import { describe, expect, test } from "bun:test";
+import { loadFixture } from "./__fixtures__/load.ts";
+import { chainStats, formatStats, statsByVersion, statsTotals, type StatsInput } from "./run-stats.ts";
+import type { ReviewRun, RunFinding } from "../types/review-run.ts";
+
+const base = loadFixture("small-commit").build();
+const template = base.findings[0]!;
+
+const finding = (id: string, extra: Partial<RunFinding> = {}): RunFinding => ({ ...template, id, ...extra });
+
+function run(id: string, createdAt: string, over: Partial<ReviewRun>, costUsd = 1): ReviewRun {
+  return { ...base, id, createdAt, resolved: [], findings: [], ...over, meta: { ...base.meta, ...over.meta, costUsd } };
+}
+
+const input = (r: ReviewRun, dismissed: string[] = []): StatsInput => ({
+  run: r,
+  state: { findingStatus: Object.fromEntries(dismissed.map((id) => [id, "dismissed" as const])) },
+});
+
+// Round 1 raises a, b and a pre-existing p. Round 2 fixes a and p, carries b
+// and raises c, which the author dismisses. Round 3 fixes b.
+const r1 = run("r1", "2026-10-01T00:00:00Z", {
+  round: 1,
+  findings: [finding("a", { severity: "blocker" }), finding("b", { severity: "should-fix" }), finding("p", { preexisting: true })],
+  meta: { ...base.meta, promptVersion: "v1" },
+});
+const r2 = run("r2", "2026-10-02T00:00:00Z", {
+  round: 2,
+  priorRunId: "r1",
+  resolved: [{ id: "a", title: "a" }, { id: "p", title: "p" }],
+  findings: [finding("b", { severity: "should-fix", carriedFrom: "r1" }), finding("c", { severity: "question" })],
+  meta: { ...base.meta, promptVersion: "v2", reviewScope: "incremental" },
+});
+const r3 = run("r3", "2026-10-03T00:00:00Z", {
+  round: 3,
+  priorRunId: "r2",
+  resolved: [{ id: "b", title: "b" }],
+  findings: [],
+  meta: { ...base.meta, promptVersion: "v2", reviewScope: "incremental" },
+});
+const lone = run("lone", "2026-09-01T00:00:00Z", { findings: [finding("x")] });
+const diffRun = run("d", "2026-10-04T00:00:00Z", { meta: { ...base.meta, kind: "diff" } });
+
+const inputs = [input(r3), input(lone), input(r1), input(r2, ["c"]), input(diffRun)];
+
+describe("chainStats", () => {
+  const chains = chainStats(inputs);
+
+  test("links runs by priorRunId into chains, newest chain first, diff runs left out", () => {
+    expect(chains.map((c) => c.rounds.map((r) => r.id))).toEqual([["r1", "r2", "r3"], ["lone"]]);
+  });
+
+  test("counts new, carried and fixed findings per round", () => {
+    expect(chains[0]!.rounds.map((r) => [r.new, r.newPreexisting, r.carried, r.resolved])).toEqual([
+      [3, 1, 0, 0],
+      [1, 0, 1, 2],
+      [0, 0, 0, 1],
+    ]);
+  });
+
+  test("totals raised, fixed, dismissed and open for the chain", () => {
+    const c = chains[0]!;
+    expect(c.raised).toEqual({ blocker: 1, "should-fix": 1, "nice-to-have": 0, question: 1 });
+    expect(c.raisedPreexisting).toBe(1);
+    expect([c.fixed, c.fixedPreexisting, c.dismissed, c.open, c.costUsd]).toEqual([3, 1, 1, 0, 3]);
+  });
+
+  test("findings still listed on the last run count as open unless dismissed", () => {
+    expect(chains[1]!.open).toBe(1);
+  });
+});
+
+describe("statsTotals", () => {
+  test("resolution rate counts findings on the change only", () => {
+    const t = statsTotals(chainStats(inputs));
+    expect(t.chains).toBe(2);
+    expect(t.meanRounds).toBe(2);
+    expect(t.pastThreeRounds).toBe(0);
+    expect(t.raised).toBe(4);
+    expect(t.resolutionRate).toBe(0.5);
+  });
+});
+
+describe("statsByVersion", () => {
+  test("credits each fix to the version of the run that raised the finding", () => {
+    const versions = statsByVersion(inputs);
+    const v1 = versions.find((v) => v.promptVersion === "v1")!;
+    const v2 = versions.find((v) => v.promptVersion === "v2")!;
+    expect([v1.runs, v1.raised, v1.raisedPreexisting, v1.fixed, v1.fixedPreexisting]).toEqual([1, 2, 1, 2, 1]);
+    expect([v2.runs, v2.raised, v2.fixed]).toEqual([2, 1, 0]);
+    expect(versions.find((v) => v.promptVersion === "unrecorded")?.runs).toBe(1);
+  });
+});
+
+describe("formatStats", () => {
+  test("prints a block per chain and the totals", () => {
+    const text = formatStats(chainStats(inputs), statsByVersion(inputs));
+    expect(text).toContain("round 2  r2  1 new, 1 carried, 2 fixed, changes only");
+    expect(text).toContain("fixed 3, dismissed 1, still open at last run 0, $1.00 per fixed finding");
+    expect(text).toContain("resolution rate 50%");
+    expect(text).toContain("By prompt version / instructions:");
+  });
+
+  test("says so when nothing matches", () => {
+    expect(formatStats([])).toBe("No complete review runs match.");
+  });
+});
