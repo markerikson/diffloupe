@@ -53,12 +53,13 @@ export const INSTALL_HINTS: Record<string, string> = {
   gh: "https://cli.github.com/ (then `gh auth login`)",
 };
 
-type ModelKey = "model" | "modelMerge" | "modelWalk";
+type ModelKey = "model" | "modelMerge" | "modelWalk" | "modelIntent";
 
 const STAGES: Record<ReviewModelStage, ModelKey> = {
   review: "model",
   coordinator: "modelMerge",
   walkthrough: "modelWalk",
+  intent: "modelIntent",
 };
 
 /** `--model stage=id` pairs as a stage → model map. */

@@ -107,6 +107,41 @@ test("providersInUse groups stages by provider", () => {
   const m = resolveModels({ cli: { models: { walkthrough: "openai/gpt-x" } } });
   expect([...providersInUse(m)]).toEqual([
     ["anthropic", ["review", "coordinator"]],
-    ["openai", ["walkthrough"]],
+    ["openai", ["walkthrough", "intent"]],
   ]);
+});
+
+describe("intent stage", () => {
+  test("defaults to Haiku and skips the OpenCode default model", () => {
+    expect(resolveModels({}).intent).toMatchObject({ model: "anthropic/claude-haiku-5-5#medium", source: "default" });
+    expect(resolveModels({ openCodeModel: "anthropic/claude-sonnet-5-5" }).intent).toMatchObject({
+      model: "anthropic/claude-haiku-5-5#medium",
+      source: "default",
+    });
+  });
+
+  test("follows the walkthrough model when the walkthrough is not on Anthropic", () => {
+    expect(resolveModels({ openCodeModel: "openai/gpt-x" }).intent).toMatchObject({
+      model: "openai/gpt-x",
+      source: "opencode",
+    });
+    expect(resolveModels({ cli: { models: { walkthrough: "openai/gpt-x" } } }).intent.model).toBe("openai/gpt-x");
+  });
+
+  test("an explicit intent model wins, from env, cli, settings or config", () => {
+    expect(resolveModels({ env: { REVIEW_MODEL_INTENT: "openai/mini" } }).intent).toMatchObject({
+      model: "openai/mini",
+      source: "env",
+    });
+    expect(
+      resolveModels({ cli: { models: { walkthrough: "openai/gpt-x", intent: "openai/mini" } } }).intent.model,
+    ).toBe("openai/mini");
+    expect(resolveModels({ config: { models: { intent: "claude-haiku-4-5" } } }).intent.model).toBe(
+      "anthropic/claude-haiku-4-5",
+    );
+  });
+
+  test("effort follows REVIEW_EFFORT_AUX", () => {
+    expect(resolveModels({ env: { REVIEW_EFFORT: "high", REVIEW_EFFORT_AUX: "low" } }).intent.variant).toBe("low");
+  });
 });

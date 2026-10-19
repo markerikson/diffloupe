@@ -208,6 +208,67 @@ export function compactDeletedFiles(diff: string, base: string): string {
     .join("");
 }
 
+const CUT_LINE = " [rest of line cut]";
+const MIN_LINE_PREFIX = 80;
+/** Room kept for the `[N more lines in this file]` note. */
+const CUT_NOTE_CHARS = 36;
+
+/**
+ * Fits a diff into `budgetChars` while keeping every file in it.
+ *
+ * Plain truncation keeps the first files whole and drops the rest, so a model
+ * asked what the change is for never sees the later half of it. Here each file
+ * gets a fair share instead: files smaller than the share are kept whole, the
+ * space they leave is split among the rest, and each large file keeps its
+ * header and its first lines up to its share, followed by a note saying how
+ * much was cut. The output is for reading, not parsing: a cut hunk no longer
+ * matches its header's line counts.
+ */
+export function compactForIntent(diff: string, budgetChars: number): string {
+  if (diff.length <= budgetChars) return diff;
+  const sections = diff.split(/^(?=diff --git )/m).filter((s) => s.length > 0);
+  const shares = new Map<number, number>();
+  const order = sections.map((s, i) => ({ i, size: s.length })).sort((a, b) => a.size - b.size);
+  let left = budgetChars;
+  for (const [n, { i, size }] of order.entries()) {
+    const share = Math.floor(left / (order.length - n));
+    const given = Math.min(size, share);
+    shares.set(i, given);
+    left -= given;
+  }
+  return sections
+    .map((section, i) => {
+      if (section.length <= (shares.get(i) ?? 0)) return section;
+      const share = (shares.get(i) ?? 0) - CUT_NOTE_CHARS;
+      const lines = section.replace(/\n$/, "").split("\n");
+      const firstHunk = lines.findIndex((l) => l.startsWith("@@"));
+      const headerEnd = firstHunk < 0 ? lines.length : firstHunk;
+      // The first hunk header always fits, so a file over its share still
+      // shows where its changes start.
+      const kept = lines.slice(0, Math.min(headerEnd + 1, lines.length));
+      let used = kept.reduce((n, l) => n + l.length + 1, 0);
+      let next = kept.length;
+      for (const line of lines.slice(next)) {
+        if (used + line.length + 1 > share) break;
+        kept.push(line);
+        used += line.length + 1;
+        next++;
+      }
+      // A line longer than the space left, typically one-line JSON or minified
+      // output, would otherwise leave the file's whole share unused.
+      const room = share - used - CUT_LINE.length;
+      const long = lines[next];
+      if (long !== undefined && room >= MIN_LINE_PREFIX) {
+        kept.push(`${long.slice(0, room)}${CUT_LINE}`);
+        next++;
+      }
+      const cut = lines.length - next;
+      if (cut > 0) kept.push(`[${cut} more lines in this file]`);
+      return `${kept.join("\n")}\n`;
+    })
+    .join("");
+}
+
 /** The parsing half of `loadHunks`, separated so it can be tested without a repo. */
 export function parseDiffHunks(out: string): HunkMap {
   const map: HunkMap = new Map();

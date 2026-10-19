@@ -3,6 +3,7 @@ import {
   SNAP_LIMIT,
   anchorFor,
   compactDeletedFiles,
+  compactForIntent,
   diffLines,
   diffSizes,
   parseDiffHunks,
@@ -312,5 +313,39 @@ describe("compactDeletedFiles", () => {
   it("shows a short deleted file whole", () => {
     const diff = deleted("small.ts", ["export const a = 1;", "export const b = 2;"]).join("\n");
     expect(compactDeletedFiles(diff, "abc")).toBe(diff);
+  });
+});
+
+describe("compactForIntent", () => {
+  const file = (name: string, lines: number, width = 20) =>
+    [
+      `diff --git a/${name} b/${name}`,
+      `--- a/${name}`,
+      `+++ b/${name}`,
+      `@@ -0,0 +1,${lines} @@`,
+      ...Array.from({ length: lines }, (_, i) => `+${String(i).padStart(width, "x")}`),
+    ].join("\n") + "\n";
+
+  it("returns a diff under the budget unchanged", () => {
+    const diff = file("a.ts", 5) + file("b.ts", 5);
+    expect(compactForIntent(diff, 10_000)).toBe(diff);
+  });
+
+  it("keeps every file within the budget, small files whole and large ones cut with a marker", () => {
+    const small = file("small.ts", 3);
+    const diff = small + file("big.ts", 2000) + file("bigger.ts", 4000);
+    const out = compactForIntent(diff, 20_000);
+    expect(out.length).toBeLessThanOrEqual(20_000);
+    expect(out).toContain(small);
+    for (const name of ["big.ts", "bigger.ts"]) expect(out).toContain(`diff --git a/${name} b/${name}`);
+    expect(out).toMatch(/\[\d+ more lines in this file\]/);
+  });
+
+  it("shows the start of a single huge line instead of dropping the file", () => {
+    const diff = file("data.json", 1, 100_000) + file("code.ts", 10);
+    const out = compactForIntent(diff, 4000);
+    expect(out).toContain("[rest of line cut]");
+    expect(out).toContain("+++ b/data.json");
+    expect(out).toContain("+++ b/code.ts");
   });
 });

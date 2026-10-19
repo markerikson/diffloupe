@@ -9,6 +9,7 @@ const setup: RunSetup = {
     review: { model: BUILTIN_MODELS.review, provider: "anthropic", id: "claude-opus-5-5", source: "default" },
     coordinator: { model: BUILTIN_MODELS.coordinator, provider: "anthropic", id: "claude-opus-5-5", source: "default" },
     walkthrough: { model: BUILTIN_MODELS.walkthrough, provider: "anthropic", id: "claude-sonnet-5-5", source: "default" },
+    intent: { model: BUILTIN_MODELS.intent, provider: "anthropic", id: "claude-haiku-5-5", source: "default" },
   },
   openCodeUser: {},
   credentials: {

@@ -23,6 +23,7 @@ export const StartRunRequestSchema = type({
     "review?": "string",
     "coordinator?": "string",
     "walkthrough?": "string",
+    "intent?": "string",
   },
   "effort?": "string",
   "maxCostUsd?": "number > 0",

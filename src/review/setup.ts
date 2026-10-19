@@ -81,6 +81,7 @@ export function setupConfig(setup: RunSetup): Partial<ReviewConfig> {
     model: setup.models.review.model,
     modelMerge: setup.models.coordinator.model,
     modelWalk: setup.models.walkthrough.model,
+    modelIntent: setup.models.intent.model,
     effort: "",
     effortAux: "",
     providers: setup.openCodeUser.providers ?? {},

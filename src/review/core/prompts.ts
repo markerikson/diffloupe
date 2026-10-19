@@ -64,10 +64,80 @@ function description(intent: { body: string; commits: string }, limit: number): 
     : "(No description and no commit messages: infer the intent from the diff alone, and do not report the missing description as a gap.)";
 }
 
+/** What a smaller model, shown the whole diff, thinks the change is for. */
+export interface IntentDraft {
+  title: string;
+  goal: string;
+  expected_changes: string[];
+}
+
+/** The fixed draft `promptVersion` renders with, so the hash covers the section's wording. */
+const SAMPLE_DRAFT: IntentDraft = { title: "t", goal: "g", expected_changes: ["e"] };
+
+/**
+ * The draft as a labelled prompt section, or nothing without one. The label
+ * says where it came from because it can be wrong, and a reviewer that took it
+ * as the author's word would report the author for missing goals they never had.
+ */
+export function intentDraftSection(draft: IntentDraft | undefined): string {
+  if (!draft) return "";
+  const changes = draft.expected_changes.map((c) => `- ${c}`).join("\n");
+  return `## Inferred intent (drafted by a smaller model from the whole diff; it may be wrong, so check it against the code)
+Title: ${draft.title}
+${draft.goal}${changes ? `\n\nExpected changes:\n${changes}` : ""}
+
+`;
+}
+
+export const INTENT_DRAFT_SYSTEM = `You infer the intent of a code change for a code review bot, before any reviewer reads the code. Reviewers each see one part of the change, and will use your output to judge whether their part does what the change set out to do. Be concrete and specific to this change. Do not praise or critique the code, and do not look for bugs.
+
+You have no tools except writing your answer. Everything you need is in the message.`;
+
+export function intentDraftPrompt(o: {
+  branch?: string | undefined;
+  intent: { title: string; body: string; commits: string };
+  diffstat: string;
+  diff: string;
+  /** Changed files that are not code, listed by name only. */
+  otherFiles: string[];
+  outFile: string;
+}): string {
+  const branch = o.branch ? `Branch: ${o.branch}\n\n` : "";
+  const other = o.otherFiles.length
+    ? `\n\n## Other changed files (docs and data, not shown)\n${o.otherFiles.map((f) => `- ${f}`).join("\n")}`
+    : "";
+  return `${branch}## Pull request description
+Title: ${o.intent.title || "(none)"}
+
+${o.intent.body.slice(0, 4000) || "(none)"}
+
+## Commit messages (oldest last)
+${o.intent.commits.slice(0, 6000) || "(none)"}
+
+## Diffstat
+${o.diffstat.slice(0, 6000)}${other}
+
+## Diff
+Large files are cut to fit; a cut file ends with a note saying how many lines are not shown.
+\`\`\`diff
+${o.diff}
+\`\`\`
+
+Write a single JSON object to \`${o.outFile}\` with the write tool, and do nothing else:
+\`\`\`json
+{
+  "title": "one line, imperative, like a good pull request title",
+  "goal": "2-4 sentences: what the change is for and the main approach",
+  "expected_changes": ["each distinct piece of work the change contains"]
+}
+\`\`\``;
+}
+
 export function slicePrompt(o: {
   unit: ReviewUnit;
   diff: string;
   intent: { title: string; body: string; commits: string };
+  draft?: IntentDraft | undefined;
   registry: string;
   prior: string;
   mapNote: string;
@@ -104,7 +174,7 @@ ${description(o.intent, 4000)}
 Commit messages:
 ${o.intent.commits.slice(0, 3000) || "(none)"}
 
-${o.mapNote}${o.registry ? `\n${o.registry}\n` : ""}${o.prior ? `\n${o.prior}\n` : ""}
+${intentDraftSection(o.draft)}${o.mapNote}${o.registry ? `\n${o.registry}\n` : ""}${o.prior ? `\n${o.prior}\n` : ""}
 ## Diff for this slice
 \`\`\`diff
 ${o.diff}
@@ -116,6 +186,7 @@ Write your findings as JSON to \`${o.outFile}\`. Write the file even if you have
 export function mergePrompt(o: {
   findings: Finding[];
   intent: { title: string; body: string; commits: string };
+  draft?: IntentDraft | undefined;
   files: string[];
   prior: string;
   outFile: string;
@@ -146,7 +217,7 @@ ${description(o.intent, 4000)}
 
 Commit messages:
 ${o.intent.commits.slice(0, 3000) || "(none)"}
-${o.prior ? `\n${o.prior}\n` : ""}${sinceLast}
+${o.draft ? `\n${intentDraftSection(o.draft).trimEnd()}\n` : ""}${o.prior ? `\n${o.prior}\n` : ""}${sinceLast}
 ## Raw findings from the per-file reviewers
 Each carries an \`id\`. You will refer to them by that id; you never retype their text.
 The \`id\` is assigned here and overwrites anything a reviewer wrote, so it is always the
@@ -171,7 +242,7 @@ Do all of the following:
 
 5. **Close out what you fixed.** For each comment in the "what you already told this author" section, open the code it points at. If the current code no longer has the problem, put its id in \`resolved\` with one sentence naming what changed. Say nothing about it anywhere else. A point that quietly disappears reads as you losing track of it; saying it is fixed ends the thread and stops any later review from raising it again. Only put a comment in \`resolved\` when you have read the code and it is genuinely fixed — never to clear out a point you merely no longer believe.
 
-6. **Judge intent alignment.** Compare what the author said this PR does against what the diff actually does. Report only substantive divergences: behavior changed that the description does not mention, a stated goal the diff does not accomplish, or scope that looks unrelated to the stated purpose. Say nothing if it lines up.
+6. **Judge intent alignment.** Compare what the author said this PR does against what the diff actually does. Report only substantive divergences: behavior changed that the description does not mention, a stated goal the diff does not accomplish, or scope that looks unrelated to the stated purpose. Say nothing if it lines up.${o.draft ? " Judge against the author's statement, not the inferred intent: the draft was written from the diff, so it cannot show the diff missing a goal." : ""}
 
 7. **Separate what was already there.** A finding is pre-existing when the problem is in code this change did not add or modify, and the change does not make it worse or newly reachable. Reviewers mark these with \`preexisting: true\`, and a finding whose cited line falls outside the lines this change added carries \`"hint": "${OUTSIDE_HUNKS}"\`. The hint is only a hint: a changed caller can make an untouched line newly reachable, and then the finding belongs to the change. Set \`preexisting\` on a kept finding to correct the reviewer either way. Keep the severity as it is; the flag already says the change did not introduce it.
 
@@ -211,8 +282,10 @@ export function promptVersion(systemPrompt: string): string {
   const unit: ReviewUnit = { id: "u", title: "u", files: ["f"] };
   const rendered = [
     systemPrompt,
-    slicePrompt({ unit, diff: "d", intent, registry: "", prior: "", mapNote: "", outFile: "o" }),
-    mergePrompt({ findings: [], intent, files: ["f"], prior: "", outFile: "o" }),
+    slicePrompt({ unit, diff: "d", intent, draft: SAMPLE_DRAFT, registry: "", prior: "", mapNote: "", outFile: "o" }),
+    mergePrompt({ findings: [], intent, draft: SAMPLE_DRAFT, files: ["f"], prior: "", outFile: "o" }),
+    INTENT_DRAFT_SYSTEM,
+    intentDraftPrompt({ intent, diffstat: "s", diff: "d", otherFiles: [], outFile: "o" }),
   ].map((s) => s.replaceAll(repoName, "{{repo}}"));
   return shortHash(rendered.join("\0"));
 }
@@ -524,6 +597,7 @@ export function walkthroughPrompt(o: {
   diffstat: string;
   diff: string;
   intent: { title: string; body: string; commits: string };
+  draft?: IntentDraft | undefined;
   /** Undefined for a diff run, where no review happened and the agent has no file tools. */
   findingIndex?: string;
   unitSummary: string;
@@ -548,7 +622,7 @@ ${description(o.intent, 4000)}
 Commit messages:
 ${o.intent.commits.slice(0, 3000) || "(none)"}
 
-## Files changed
+${intentDraftSection(o.draft)}## Files changed
 ${o.diffstat}
 
 ## ${reviewed ? "How the review was split up" : "How the files are grouped"}

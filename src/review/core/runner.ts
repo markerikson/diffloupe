@@ -241,7 +241,16 @@ export function summarizeOpenCodeTools(stdout: string, cwd = ""): ToolSummary {
  */
 export type AgentTools = "repo" | "none";
 
-const openCodeHomes = new Map<AgentTools, { home: Promise<string>; key: string }>();
+/**
+ * A system prompt other than the reviewer contract, for a call that is not a
+ * review. `name` picks its config directory, so it must be unique per prompt.
+ */
+export interface AgentSystem {
+  name: string;
+  text: string;
+}
+
+const openCodeHomes = new Map<string, { home: Promise<string>; key: string }>();
 
 /**
  * Write the configuration directory the OpenCode runner reads, once per run.
@@ -259,15 +268,21 @@ const openCodeHomes = new Map<AgentTools, { home: Promise<string>; key: string }
  * symptom — a reviewer following a prompt nobody sent it — would be very hard
  * to read back from the output.
  */
-export function openCodeConfig(system: string, guidance: string, tools: AgentTools = "repo"): Promise<string> {
+export function openCodeConfig(
+  system: string,
+  guidance: string,
+  tools: AgentTools = "repo",
+  name?: string,
+): Promise<string> {
   const key = `${system}\u0000${guidance}`;
-  const memo = openCodeHomes.get(tools);
+  const dir = `${tools === "repo" ? "shared" : "no-tools"}${name ? `-${name}` : ""}`;
+  const memo = openCodeHomes.get(dir);
   if (memo && memo.key !== key) {
     throw new Error("openCodeConfig called with a different prompt after the config was written");
   }
   if (memo) return memo.home;
   const home = (async () => {
-    const home = path.join(OUT, "oc", tools === "repo" ? "shared" : "no-tools");
+    const home = path.join(OUT, "oc", dir);
     const configDir = path.join(home, "config");
     await writeJson(path.join(configDir, "opencode.json"), openCodeSettings(system, guidance, tools));
     await writeText(
@@ -276,7 +291,7 @@ export function openCodeConfig(system: string, guidance: string, tools: AgentToo
     );
     return home;
   })();
-  openCodeHomes.set(tools, { home, key });
+  openCodeHomes.set(dir, { home, key });
   return home;
 }
 
@@ -381,11 +396,20 @@ export function openCodeSettings(system: string, guidance: string, tools: AgentT
  */
 export async function openCodeInvocation(
   system: string,
-  opts: { budget: number; model: string; effort: string; tag: string; outFile: string; tools?: AgentTools },
+  opts: {
+    budget: number;
+    model: string;
+    effort: string;
+    tag: string;
+    outFile: string;
+    tools?: AgentTools;
+    /** Names a system prompt other than the reviewer contract; see `AgentSystem`. */
+    systemName?: string | undefined;
+  },
 ): Promise<Invocation> {
   const tools = opts.tools ?? "repo";
   const guidance = tools === "repo" ? await readText(path.join(DIR, "opencode", "tools.md")) : "";
-  const home = await openCodeConfig(system, guidance, tools);
+  const home = await openCodeConfig(system, guidance, tools, opts.systemName);
   const configDir = path.join(home, "config");
   const usageFile = path.join(ARTIFACTS, "logs", `${opts.tag}.usage.json`);
   await ensureDir(path.dirname(usageFile));
@@ -537,13 +561,22 @@ export function diagnoseMissingOutput(o: {
 
 export async function agent(
   prompt: string,
-  opts: { budget: number; outFile: string; tag: string; model?: string; effort?: string; tools?: AgentTools },
+  opts: {
+    budget: number;
+    outFile: string;
+    tag: string;
+    model?: string;
+    effort?: string;
+    tools?: AgentTools;
+    /** Replaces the reviewer contract in `system.md`, for a call that does not review. */
+    system?: AgentSystem;
+  },
 ) {
   if (SIGNAL?.aborted) throw new CancelledError();
-  const system = (await readText(path.join(DIR, "system.md"))).replaceAll("{{repo}}", repoName);
+  const system = opts.system?.text ?? (await readText(path.join(DIR, "system.md"))).replaceAll("{{repo}}", repoName);
   const model = opts.model ?? MODEL;
   const effort = opts.effort ?? EFFORT;
-  const spec: Invocation = await openCodeInvocation(system, { ...opts, model, effort });
+  const spec: Invocation = await openCodeInvocation(system, { ...opts, model, effort, systemName: opts.system?.name });
   const env: Record<string, string | undefined> = { ...process.env, ...CHILD_ENV, ...spec.env };
   for (const key of spec.unsetEnv) delete env[key];
   const privateDirs = [spec.env.XDG_DATA_HOME, spec.env.XDG_STATE_HOME].filter((d) => d !== undefined);

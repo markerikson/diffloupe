@@ -15,7 +15,7 @@ It is also a plain diff viewer. `diffloupe diff` shows the same grouped diff in 
 ## How a review works
 
 1. **Group.** The changed files are grouped into review units from links in the code: a name defined in one file and used in another, a test and its source, an import, a shared directory. Generated and lock files are skipped. Docs are listed but not reviewed in depth.
-2. **Review.** Each unit gets its own reviewer agent, which reads the surrounding code with [tilth](https://github.com/jahala/tilth) and reports findings with evidence. Up to six run at once.
+2. **Review.** A small model first reads the whole diff and drafts what the change is for, so each reviewer knows what the parts it cannot see are doing. Each unit then gets its own reviewer agent, which reads the surrounding code with [tilth](https://github.com/jahala/tilth) and reports findings with evidence. Up to six run at once.
 3. **Coordinate.** A coordinator merges and deduplicates the findings, drops the ones it cannot verify, and checks the change against its stated intent: the PR description, `--intent`, or the commit messages.
 4. **Walk through.** A walkthrough pass orders the change into chapters and stops, with a "start here" list.
 
@@ -53,7 +53,7 @@ Findings about code the change did not add or modify are tagged **pre-existing**
 
 Run `diffloupe doctor` to check all of this, along with which models a review will use and where each credential comes from.
 
-**Cost.** With the built-in defaults (Claude Opus 5.5 for the reviewers and the coordinator, Claude Sonnet 5.5 for the walkthrough and group naming), real runs so far cost about $0.10 for a one-file commit, about $1 for a small PR, and $4–5 for a large one. If your OpenCode config sets a default model, DiffLoupe uses it for every stage instead, which changes the cost. Use `--max-cost` or `maxCostUsd` to set a limit. The run page and `diffloupe runs` show what each run cost. Models whose provider reports no price show "cost not reported", and `--max-cost` cannot be enforced for them.
+**Cost.** With the built-in defaults (Claude Opus 5.5 for the reviewers and the coordinator, Claude Sonnet 5.5 for the walkthrough and group naming, Claude Haiku 5.5 for the intent draft at about $0.01), real runs so far cost about $0.10 for a one-file commit, about $1 for a small PR, and $4–5 for a large one. If your OpenCode config sets a default model, DiffLoupe uses it for every stage instead, which changes the cost. Use `--max-cost` or `maxCostUsd` to set a limit. The run page and `diffloupe runs` show what each run cost. Models whose provider reports no price show "cost not reported", and `--max-cost` cannot be enforced for them.
 
 **Platforms.** Developed and tested on Linux and WSL2. On WSL the server binds `127.0.0.1` and the Windows browser reaches it through `localhost`. macOS should work but has not been tried. Native Windows is not supported; use WSL.
 
@@ -132,7 +132,7 @@ diffloupe runs
 | `--base <ref>` | For `staged`/`worktree`: diff against `merge-base(<ref>, HEAD)` instead of HEAD |
 | `-i, --intent <text>` | Describe the intent of the changes |
 | `--intent-file <path>` | Read the intent from a file |
-| `--model <stage=id>` | Model for a stage: `review`, `coordinator`, `walkthrough` (repeatable) |
+| `--model <stage=id>` | Model for a stage: `review`, `coordinator`, `walkthrough`, `intent` (repeatable) |
 | `--effort <level>` | Reasoning effort: `low`, `medium`, `high` |
 | `--config <file>` | Per-repo review settings (see below) |
 | `--max-cost <usd>` | Stop starting new review slices once spending reaches this amount. Slices already running finish, so the total can go over: by up to six slices at $3 each, plus the coordinator and walkthrough. |
@@ -230,6 +230,7 @@ Every field is optional.
 | Reviewer model | `models.review` | `models.review` | `--model review=<id>` | `REVIEW_MODEL` | OpenCode default model, else `anthropic/claude-opus-5-5` |
 | Coordinator model | `models.coordinator` | `models.coordinator` | `--model coordinator=<id>` | `REVIEW_MODEL_MERGE` | OpenCode default model, else `anthropic/claude-opus-5-5` |
 | Walkthrough model | `models.walkthrough` | `models.walkthrough` | `--model walkthrough=<id>` | `REVIEW_MODEL_WALK` | OpenCode default model, else `anthropic/claude-sonnet-5-5` |
+| Intent draft model | `models.intent` | `models.intent` | `--model intent=<id>` | `REVIEW_MODEL_INTENT` | `anthropic/claude-haiku-5-5` when the walkthrough model is Anthropic, else the walkthrough model |
 | Provider for bare model ids | `provider` | `provider` | | `REVIEW_PROVIDER` | `anthropic` |
 | Effort | `effort` | `effort` | `--effort` | `REVIEW_EFFORT`, `REVIEW_EFFORT_AUX` | `medium` for built-in default models only |
 | Use the OpenCode default model | `opencode.useDefaultModel` | | | | `true` |

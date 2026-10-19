@@ -1444,6 +1444,13 @@ describe("openCodeConfig", () => {
     expect(() => openCodeConfig("different system", "guidance")).toThrow(/different prompt/);
   });
 
+  it("keeps a named system prompt in its own directory beside the reviewer contract", async () => {
+    const reviewer = await openCodeConfig("system", "", "none");
+    const named = await openCodeConfig("intent system", "", "none", "intent");
+    expect(named).not.toBe(reviewer);
+    expect(path.basename(named)).toBe("no-tools-intent");
+  });
+
   it("forgets the config when a run ends, so a server's next run can review another repository", async () => {
     const saved = { out: OUT, artifacts: ARTIFACTS };
     const tmp = mkdtempSync(path.join(os.tmpdir(), "diffloupe-config-reset-"));

@@ -14,7 +14,7 @@ export interface ReviewCommandOptions {
   base?: string;
   intent?: string;
   intentFile?: string;
-  /** `stage=model-id` pairs; stages are review, coordinator, walkthrough. */
+  /** `stage=model-id` pairs; stages are review, coordinator, walkthrough, intent. */
   model?: string[];
   effort?: string;
   /** Per-repo settings file; see settings.ts. */
@@ -31,4 +31,4 @@ export interface ReviewCommandOptions {
   open?: boolean;
 }
 
-export type ReviewModelStage = "review" | "coordinator" | "walkthrough";
+export type ReviewModelStage = "review" | "coordinator" | "walkthrough" | "intent";

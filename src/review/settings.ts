@@ -3,7 +3,7 @@
  *
  * {
  *   "provider": "anthropic",
- *   "models": { "review": "...", "coordinator": "...", "walkthrough": "..." },
+ *   "models": { "review": "...", "coordinator": "...", "walkthrough": "...", "intent": "..." },
  *   "effort": "medium",
  *   "surfaces": { "deploy": ["^infra/"], "tooling": ["^docs/"] },
  *   "extraExcludes": ["vendor/openssl/"],
@@ -30,6 +30,7 @@ const ReviewSettings = type({
     "review?": "string",
     "coordinator?": "string",
     "walkthrough?": "string",
+    "intent?": "string",
   },
   "effort?": "string",
   "surfaces?": {

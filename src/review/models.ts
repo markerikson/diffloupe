@@ -2,12 +2,16 @@
  * Which model each review stage runs, and where that choice came from.
  *
  * Per stage, first match wins:
- * 1. `REVIEW_MODEL`, `REVIEW_MODEL_MERGE`, `REVIEW_MODEL_WALK` (overrides for experiments)
+ * 1. `REVIEW_MODEL`, `REVIEW_MODEL_MERGE`, `REVIEW_MODEL_WALK`, `REVIEW_MODEL_INTENT` (overrides for experiments)
  * 2. `--model stage=id`
  * 3. the settings file passed to `--config`
  * 4. ~/.config/diffloupe/config.json
  * 5. the `model` in the user's global OpenCode config, unless `opencode.useDefaultModel` is false
  * 6. the built-in defaults
+ *
+ * The intent stage skips step 5: a small model drafts the intent, so it
+ * defaults to Haiku while the walkthrough runs on an Anthropic model, and to
+ * the walkthrough's model otherwise.
  *
  * Effort becomes a `#variant` on the model only when the user set it, or when
  * the model is a built-in default (which get `medium`). A model the user
@@ -18,12 +22,14 @@ import type { ReviewModelStage } from "./options.ts";
 
 export type ModelSource = "env" | "cli" | "settings" | "config" | "opencode" | "default";
 
-export const MODEL_STAGES: ReviewModelStage[] = ["review", "coordinator", "walkthrough"];
+/** `intent` comes after `walkthrough`, whose model it falls back to. */
+export const MODEL_STAGES: ReviewModelStage[] = ["review", "coordinator", "walkthrough", "intent"];
 
 export const BUILTIN_MODELS: Record<ReviewModelStage, string> = {
   review: "anthropic/claude-opus-5-5",
   coordinator: "anthropic/claude-opus-5-5",
   walkthrough: "anthropic/claude-sonnet-5-5",
+  intent: "anthropic/claude-haiku-5-5",
 };
 
 /** The config and settings field naming each stage's model. */
@@ -31,6 +37,7 @@ export const STAGE_SETTING: Record<ReviewModelStage, string> = {
   review: "models.review",
   coordinator: "models.coordinator",
   walkthrough: "models.walkthrough",
+  intent: "models.intent",
 };
 
 export const BUILTIN_EFFORT = "medium";
@@ -81,10 +88,12 @@ function envModels(env: NodeJS.ProcessEnv): StageModels {
   const review = nonEmpty(env.REVIEW_MODEL);
   const coordinator = nonEmpty(env.REVIEW_MODEL_MERGE) ?? review;
   const walkthrough = nonEmpty(env.REVIEW_MODEL_WALK);
+  const intent = nonEmpty(env.REVIEW_MODEL_INTENT);
   return {
     ...(review ? { review } : {}),
     ...(coordinator ? { coordinator } : {}),
     ...(walkthrough ? { walkthrough } : {}),
+    ...(intent ? { intent } : {}),
   };
 }
 
@@ -127,18 +136,25 @@ export function resolveModels(inputs: ModelInputs): ResolvedModels {
       ["cli", inputs.cli?.models?.[stage]],
       ["settings", inputs.settings?.models?.[stage]],
       ["config", inputs.config?.models?.[stage]],
-      ["opencode", openCodeModel],
-      ["default", BUILTIN_MODELS[stage]],
     ];
+    if (stage !== "intent") candidates.push(["opencode", openCodeModel]);
     let source: ModelSource = "default";
     let name = BUILTIN_MODELS[stage];
+    let picked = false;
     for (const [s, v] of candidates) {
       const n = nonEmpty(v);
       if (n) {
         source = s;
         name = n;
+        picked = true;
         break;
       }
+    }
+    // The built-in intent model is an Anthropic model; on another provider
+    // the draft runs on the walkthrough model instead.
+    if (stage === "intent" && !picked && out.walkthrough.provider !== DEFAULT_PROVIDER) {
+      out.intent = { ...out.walkthrough };
+      continue;
     }
     const parsed = parseModelName(name, provider);
     const effort =

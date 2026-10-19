@@ -223,6 +223,7 @@ export const ReviewRunSchema = type({
       "review?": { model: "string", "source?": "string" },
       "coordinator?": { model: "string", "source?": "string" },
       "walkthrough?": { model: "string", "source?": "string" },
+      "intent?": { model: "string", "source?": "string" },
     },
     /** `diff`: grouped diff with no review agents. Missing means `review`. */
     "kind?": RunKindSchema,

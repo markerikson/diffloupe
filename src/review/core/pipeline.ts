@@ -19,7 +19,7 @@ import { openSubject } from "./lib/subject.ts";
 import { targetKey, type Target } from "./lib/target.ts";
 import { fingerprint } from "./lib/marker.ts";
 import { compactDeletedFiles, parseDiffHunks } from "./lib/hunks.ts";
-import { DIR, SUBJECT, ARTIFACTS, RUNNER, MODEL, EFFORT, MODEL_WALK, MODEL_MERGE, EFFORT_AUX, WALK_BUDGET, PART_BUDGET, GROUPING, SLICE_BUDGET, MERGE_BUDGET, POOL, MAX_SLICES, MAX_SLICE_TOKENS, WALK_DIFF_TOKENS, OUT, applyConfig, setRunState, resetRunState, releaseSubject, type ReviewConfig } from "./config.ts";
+import { DIR, SUBJECT, ARTIFACTS, RUNNER, MODEL, EFFORT, MODEL_WALK, MODEL_MERGE, MODEL_INTENT, EFFORT_AUX, WALK_BUDGET, PART_BUDGET, GROUPING, SLICE_BUDGET, MERGE_BUDGET, POOL, MAX_SLICES, MAX_SLICE_TOKENS, WALK_DIFF_TOKENS, OUT, applyConfig, setRunState, resetRunState, releaseSubject, type ReviewConfig } from "./config.ts";
 import { classifyFile, type Finding } from "./findings.ts";
 import { gitText, diffOutline, gatherIntent, gatherPriorComments, renderPriorComments, type PriorComment } from "./context.ts";
 import { agent, CancelledError, killAgents, resetOpenCodeConfig, type AgentFailure } from "./runner.ts";
@@ -27,6 +27,7 @@ import { slicePrompt, mergePrompt, promptVersion, instructionsHash, type ReviewU
 import { classifySurface, SURFACE_RANK, CONF, SEV } from "./surface.ts";
 import { saidFingerprints, readCheckedClaims, mergeBudgetFor, fallbackRank, coordinatorHasWork, type MergeDecisions, MAX_POSTED, MAX_POSTED_INCREMENTAL, MAX_PREEXISTING, applyDecisions, capFindings } from "./coordinate.ts";
 import { writeArtifacts } from "./render.ts";
+import { draftIntent, type IntentDraftRecord } from "./intent-draft.ts";
 
 export * from "./config.ts";
 export * from "./findings.ts";
@@ -295,6 +296,24 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     files: sliceFiles,
     source: () => projectFilesFromGit(SUBJECT),
   });
+  // Runs alongside the registry check, the map and the naming call; the slice
+  // reviewers wait for it. It never throws: a failure is recorded and the
+  // review goes on without the section.
+  const draftPending: Promise<IntentDraftRecord> = draftIntent({
+    tag: tagBase,
+    cacheKey: mapKey,
+    intent,
+    diffstat,
+    diff: wholeDiff,
+    otherFiles: byClass.docs,
+  }).catch((err: unknown) => ({
+    model: MODEL_INTENT,
+    costUsd: 0,
+    wallMs: 0,
+    cached: false,
+    diffChars: 0,
+    failure: err instanceof Error ? err.message : String(err),
+  }));
   const outline = await diffOutline(base, head, sliceFiles);
   const computed = GROUPING === "code" ? grouping : undefined;
   // A single computed group needs no name beyond the pull request's own title,
@@ -437,6 +456,17 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
   // Indexed by slice so the list reads in slice order, not completion order.
   const checkedBySlice: string[][] = [];
 
+  const intentDraft = await draftPending;
+  checkAbort();
+  addCost(intentDraft.costUsd);
+  const draft = intentDraft.draft;
+  emit({
+    type: "log",
+    message: draft
+      ? `  intent draft${intentDraft.cached ? " (cached)" : ""}: ${draft.title}`
+      : `  warning: no intent draft (${intentDraft.failure ?? "unknown error"}); reviewing without it`,
+  });
+
   emit({ type: "units", units, byClass });
   emit({ type: "stage", stage: "reviewing" });
   let cursor = 0;
@@ -480,7 +510,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
       const outFile = `${OUT}/${tag}.json`;
       await removeIfPresent(outFile);
       const prompt = slicePrompt({
-        unit, diff, intent, registry: regMd, prior: priorMd, mapNote, outFile,
+        unit, diff, intent, draft, registry: regMd, prior: priorMd, mapNote, outFile,
         crossLinks: crossLinksFor(slice.files, links), instructions: options.instructions,
         sinceLast,
       });
@@ -600,7 +630,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
   const mergeOut = `${OUT}/${mergeTag}.json`;
   await removeIfPresent(mergeOut);
   const mp = mergePrompt({
-    findings: toMerge, intent, files: sliceFiles, prior: priorMd, outFile: mergeOut, instructions: options.instructions,
+    findings: toMerge, intent, draft, files: sliceFiles, prior: priorMd, outFile: mergeOut, instructions: options.instructions,
     changedLines: parseDiffHunks(diffU0),
     maxNew: incremental ? MAX_POSTED_INCREMENTAL : MAX_POSTED,
     sinceLast: incremental ? scope.files : undefined,
@@ -641,6 +671,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     sketches: walkOmitted.map((f) => sketchLine(sketches.get(f) ?? { file: f, added: 0, removed: 0, defines: [], touches: [] })),
     crossLinks: crossGroupLinkLines(walkUnits, links),
     intent,
+    draft,
     findingIndex: toMerge.map((f) => `- [${f.severity}] ${f.file}:${f.line} — ${f.title}`).join("\n"),
     unitSummary: walkUnits
       .map((u) => {
@@ -809,7 +840,8 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     budget: budgetSkipped,
   };
   const checked = checkedBySlice.flat().filter(Boolean);
-  const totalCost = sliceRuns.reduce((a, r) => a + (r.costUsd as number), 0) + merged.costUsd + walked.costUsd;
+  const totalCost =
+    sliceRuns.reduce((a, r) => a + (r.costUsd as number), 0) + merged.costUsd + walked.costUsd + intentDraft.costUsd;
   const wallMs = Date.now() - started;
 
   const stats = {
@@ -879,7 +911,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     // as much as the model does, and a stored run is the only evidence of which
     // configuration produced a given result.
     pr, base, head, runner: RUNNER, model: MODEL, effort: EFFORT, effortAux: EFFORT_AUX,
-    models: { review: MODEL, coordinator: MODEL_MERGE, walkthrough: MODEL_WALK },
+    models: { review: MODEL, coordinator: MODEL_MERGE, walkthrough: MODEL_WALK, intent: MODEL_INTENT },
     tag: tagBase,
     wallMs, totalCostUsd: totalCost,
     mergeMode, preTrimmed, budgetStopped,
@@ -890,6 +922,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     },
     walk: { model: MODEL_WALK, wallMs: walked.wallMs, costUsd: walked.costUsd, numTurns: walked.numTurns },
     walkthrough: walkthrough ?? null,
+    intentDraft,
     grouping: GROUPING,
     groupMoves,
     reviewUnits: capped,

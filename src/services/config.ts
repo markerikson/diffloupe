@@ -33,6 +33,8 @@ export interface DiffLoupeConfig {
     coordinator?: string;
     /** Writes the walkthrough and names the review groups. */
     walkthrough?: string;
+    /** Drafts the change's intent from the whole diff before the review starts. */
+    intent?: string;
   };
   /** Reasoning effort for `diffloupe review` (low, medium, high, ...). */
   effort?: string;

@@ -168,7 +168,7 @@ export function createReviewCommand(): Command {
     .option("--base <ref>", "For staged/worktree: diff against merge-base(<ref>, HEAD) instead of HEAD")
     .option("-i, --intent <text>", "Describe the intent of the changes")
     .option("--intent-file <path>", "Read the intent from a file")
-    .option("--model <stage=id>", "Model for a stage: review, coordinator, walkthrough (repeatable)", collect, [])
+    .option("--model <stage=id>", "Model for a stage: review, coordinator, walkthrough, intent (repeatable)", collect, [])
     .option("--effort <level>", "Reasoning effort: the model variant to use, e.g. low, medium, high")
     .option("--config <file>", "Per-repo review settings JSON (models, effort, surfaces, extraExcludes, instructions)")
     .option(

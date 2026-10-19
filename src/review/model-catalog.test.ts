@@ -10,6 +10,7 @@ const catalog: CatalogModel[] = [
     cost: [{ input: 5, output: 25 }],
   },
   { id: "claude-sonnet-5-5", providerID: "anthropic", variants: [{ id: "medium" }], cost: [{ input: 1, output: 5 }] },
+  { id: "claude-haiku-5-5", providerID: "anthropic", variants: [{ id: "medium" }], cost: [{ input: 0.1, output: 0.5 }] },
   { id: "free", providerID: "opencode", variants: [], cost: [{ input: 0, output: 0 }] },
 ];
 
@@ -39,6 +40,7 @@ describe("checkModels", () => {
       "review",
       "coordinator",
       "walkthrough",
+      "intent",
     ]);
   });
 });

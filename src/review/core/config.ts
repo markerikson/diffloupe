@@ -73,6 +73,12 @@ export let MODEL_WALK = process.env.REVIEW_MODEL_WALK ?? "claude-sonnet-5-5";
  */
 export let MODEL_MERGE = process.env.REVIEW_MODEL_MERGE ?? MODEL;
 /**
+ * Drafts the change's intent from the whole diff before the slices start, so a
+ * reviewer that sees one part knows what the rest is for. A summary of text
+ * already in the prompt: the smallest tier does it.
+ */
+export let MODEL_INTENT = process.env.REVIEW_MODEL_INTENT ?? "claude-haiku-5-5";
+/**
  * Effort for the three calls that are not the review itself: planning the
  * units, writing the walkthrough, and consolidating findings.
  *
@@ -99,6 +105,7 @@ export function envNumber(name: string, fallback: number): number {
 }
 export let WALK_BUDGET = envNumber("WALK_BUDGET_USD", 2);
 export let PART_BUDGET = envNumber("PART_BUDGET", 0.6);
+export let INTENT_BUDGET = envNumber("INTENT_BUDGET_USD", 0.1);
 /**
  * How changed files become review units. `code` computes the groups from links
  * in the diff (`lib/grouping.ts`) and asks the aux model only to name them and,
@@ -221,12 +228,14 @@ export interface ReviewConfig {
   model: string;
   modelMerge: string;
   modelWalk: string;
+  modelIntent: string;
   effort: string;
   effortAux: string;
   sliceBudget: number;
   mergeBudget: number;
   walkBudget: number;
   partBudget: number;
+  intentBudget: number;
   pool: number;
   maxSlices: number;
   maxSliceTokens: number;
@@ -259,6 +268,7 @@ export function applyConfig(o: Partial<ReviewConfig>): void {
   }
   if (o.modelMerge !== undefined) MODEL_MERGE = o.modelMerge;
   if (o.modelWalk !== undefined) MODEL_WALK = o.modelWalk;
+  if (o.modelIntent !== undefined) MODEL_INTENT = o.modelIntent;
   if (o.effort !== undefined) {
     EFFORT = o.effort;
     if (o.effortAux === undefined && process.env.REVIEW_EFFORT_AUX === undefined) EFFORT_AUX = o.effort;
@@ -268,6 +278,7 @@ export function applyConfig(o: Partial<ReviewConfig>): void {
   if (o.mergeBudget !== undefined) MERGE_BUDGET = o.mergeBudget;
   if (o.walkBudget !== undefined) WALK_BUDGET = o.walkBudget;
   if (o.partBudget !== undefined) PART_BUDGET = o.partBudget;
+  if (o.intentBudget !== undefined) INTENT_BUDGET = o.intentBudget;
   if (o.pool !== undefined) POOL = o.pool;
   if (o.maxSlices !== undefined) MAX_SLICES = o.maxSlices;
   if (o.maxSliceTokens !== undefined) MAX_SLICE_TOKENS = o.maxSliceTokens;
