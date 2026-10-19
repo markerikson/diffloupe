@@ -6,6 +6,7 @@ import {
   compactForIntent,
   diffLines,
   diffSizes,
+  numberDiff,
   parseDiffHunks,
   type HunkMap,
 } from "./hunks.ts";
@@ -347,5 +348,53 @@ describe("compactForIntent", () => {
     expect(out).toContain("[rest of line cut]");
     expect(out).toContain("+++ b/data.json");
     expect(out).toContain("+++ b/code.ts");
+  });
+});
+
+describe("numberDiff", () => {
+  test("numbers new-side lines, leaves removed lines and headers unnumbered", () => {
+    const diff = [
+      "diff --git a/a.ts b/a.ts",
+      "--- a/a.ts",
+      "+++ b/a.ts",
+      "@@ -8,4 +8,5 @@ function f() {",
+      " keep8",
+      "-old9",
+      "+new9",
+      "+new10",
+      " keep11",
+      " keep12",
+      "\\ No newline at end of file",
+      "diff --git a/b.ts b/b.ts",
+      "--- /dev/null",
+      "+++ b/b.ts",
+      "@@ -0,0 +1 @@",
+      "+only",
+      "",
+    ].join("\n");
+    expect(numberDiff(diff).split("\n")).toEqual([
+      "diff --git a/a.ts b/a.ts",
+      "--- a/a.ts",
+      "+++ b/a.ts",
+      "@@ -8,4 +8,5 @@ function f() {",
+      " 8  keep8",
+      "   -old9",
+      " 9 +new9",
+      "10 +new10",
+      "11  keep11",
+      "12  keep12",
+      "\\ No newline at end of file",
+      "diff --git a/b.ts b/b.ts",
+      "--- /dev/null",
+      "+++ b/b.ts",
+      "@@ -0,0 +1 @@",
+      "1 +only",
+      "",
+    ]);
+  });
+
+  test("a body line that looks like a header is still numbered", () => {
+    const diff = ["--- a/x", "+++ b/x", "@@ -1,2 +1,2 @@", "--- a/y", "+++ b/y", ""].join("\n");
+    expect(numberDiff(diff).split("\n").slice(3, 5)).toEqual(["  --- a/y", "1 +++ b/y"]);
   });
 });

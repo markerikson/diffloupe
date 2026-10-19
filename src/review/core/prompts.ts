@@ -3,7 +3,7 @@ import { describeLink, type CodeGroup, type Link } from "./lib/grouping.ts";
 import { repoName } from "./config.ts";
 import { type Finding } from "./findings.ts";
 import { MAX_POSTED, MAX_PREEXISTING } from "./coordinate.ts";
-import { anchorFor, type HunkMap } from "./lib/hunks.ts";
+import { anchorFor, numberDiff, type HunkMap } from "./lib/hunks.ts";
 
 const OUTSIDE_HUNKS = "cited line is outside the changed hunks";
 
@@ -650,8 +650,9 @@ ${o.unitSummary}
 ${o.crossLinks.length ? `\n### Links between groups\nThese cross from one group to another. A stop that follows one of them can name locations in both groups.\n${o.crossLinks.map((l) => `- ${l}`).join("\n")}\n` : ""}
 ${reviewed ? `## What the reviewers found\n${o.findingIndex || "(nothing)"}\n\n` : ""}${o.docsFiles.length ? `## Documentation-only files (${reviewed ? "already excluded from review; " : ""}cover them with one \`support\` group)\n${groupByDir(o.docsFiles)}\n` : ""}${o.registry ? `\n${o.registry}\n` : ""}
 ## Diff
+Each line inside a hunk starts with its line number in the new version of the file, then the usual diff marker. Removed lines have no number. Cite these numbers; do not count lines from the \`@@\` headers.
 \`\`\`diff
-${o.diff}
+${numberDiff(o.diff)}
 \`\`\`
 ${
   o.sketches.length

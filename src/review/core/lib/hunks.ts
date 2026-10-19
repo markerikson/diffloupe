@@ -123,6 +123,45 @@ export function* diffLines(out: string): Generator<{ file?: string | undefined; 
 }
 
 /**
+ * Prefixes each hunk body line with its new-side line number, and removed lines
+ * with blanks of the same width, so a model citing a line reads the number
+ * instead of counting down from the hunk header. Everything outside hunk
+ * bodies passes through unchanged.
+ */
+export function numberDiff(diff: string): string {
+  const out: string[] = [];
+  let oldLeft = 0;
+  let newLeft = 0;
+  let next = 0;
+  let width = 0;
+  for (const line of diff.split("\n")) {
+    if (oldLeft > 0 || newLeft > 0) {
+      if (line.startsWith("\\") || line.startsWith("-")) {
+        if (line.startsWith("-")) oldLeft--;
+        out.push(`${" ".repeat(width)} ${line}`);
+        continue;
+      }
+      if (line.startsWith("+")) newLeft--;
+      else {
+        oldLeft--;
+        newLeft--;
+      }
+      out.push(`${String(next++).padStart(width)} ${line}`);
+      continue;
+    }
+    const m = /^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
+    if (m) {
+      oldLeft = m[1] === undefined ? 1 : Number(m[1]);
+      next = Number(m[2]);
+      newLeft = m[3] === undefined ? 1 : Number(m[3]);
+      width = String(Math.max(next + newLeft - 1, 1)).length;
+    }
+    out.push(line);
+  }
+  return out.join("\n");
+}
+
+/**
  * How many bytes of diff text each changed file accounts for.
  *
  * This exists because sizing needs the old-side path that `diffLines`
