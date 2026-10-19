@@ -11,9 +11,10 @@
  * then outlines that set under a token budget.
  */
 import path from "node:path";
-import type { FileOutline } from "./lib/code-outline.ts";
+import type { FileOutline, OutlineExtractor } from "./lib/code-outline.ts";
+import { blobIds, OutlineCache } from "./lib/outline-cache.ts";
 import { diffLines } from "./lib/hunks.ts";
-import { detectLanguage } from "./lib/languages.ts";
+import { detectLanguage, type LanguageId } from "./lib/languages.ts";
 import { projectFilesFromGit, resolveOutlineImports } from "./lib/module-resolver.ts";
 import { text } from "./lib/proc.ts";
 import { readText } from "./lib/io.ts";
@@ -54,6 +55,8 @@ export interface MapOptions {
   base: string;
   head: string;
   budgetTokens?: number;
+  /** Where parsed outlines are cached by blob id. Without it every file is parsed. */
+  cacheDir?: string;
 }
 
 const approxTokens = (s: string) => Math.ceil(s.length / 3.6);
@@ -67,26 +70,47 @@ export async function buildDiffSeededMap(opts: MapOptions): Promise<{ markdown: 
     .split("\n").map((s) => s.trim()).filter(Boolean);
   const changedSet = new Set(changed);
 
-  const tracked = (await text("git", ["-C", repo, "ls-files"]))
-    .split("\n").map((s) => s.trim())
+  const staged = await text("git", ["-C", repo, "ls-files", "-s"]);
+  const tracked = staged
+    .split("\n").map((l) => l.slice(l.indexOf("\t") + 1).trim())
     .filter((p) => p && !excluded(p) && detectLanguage(p) !== null);
+  const cache = opts.cacheDir ? new OutlineCache(opts.cacheDir) : null;
+  const blobs = cache
+    ? blobIds(staged, await text("git", ["-C", repo, "diff", "--name-only"]))
+    : new Map<string, string>();
 
   // Loaded here rather than at module scope: this is the only code in the
   // pipeline that needs the tree-sitter grammars, and a missing grammar should
-  // cost the caller its map, not its review.
-  const { OutlineExtractor } = await import("./lib/code-outline.ts");
-  const extractor = await OutlineExtractor.create();
-  await extractor.warmup(["typescript", "tsx", "cpp"]);
+  // cost the caller its map, not its review. The parser is created on the first
+  // cache miss, so a run whose outlines are all cached never loads a grammar.
+  const { OutlineExtractor, resolveOutline } = await import("./lib/code-outline.ts");
+  let extractor: Promise<OutlineExtractor> | undefined;
+  const parser = () => (extractor ??= OutlineExtractor.create().then(async (e) => {
+    await e.warmup(["typescript", "tsx", "cpp"]);
+    return e;
+  }));
+  const parseFresh = async (rel: string, language: LanguageId) => {
+    const source = await readText(path.join(repo, rel)).catch(() => null);
+    return source === null ? null : (await parser()).parseRaw(source, rel, language);
+  };
 
   const outlines = new Map<string, Outline>();
   const tParse = Date.now();
   for (const rel of tracked) {
+    const language = detectLanguage(rel);
+    if (!language) continue;
     try {
-      const o = await extractor.parseFile(path.join(repo, rel), rel, repo);
-      if (o) outlines.set(rel, o);
+      const blob = blobs.get(rel);
+      let raw = blob ? (cache?.get(blob, language) ?? null) : null;
+      if (!raw) {
+        raw = await parseFresh(rel, language);
+        if (raw && blob) cache?.set(blob, language, raw);
+      }
+      if (raw) outlines.set(rel, resolveOutline(raw, rel, repo));
     } catch { /* unparseable file: skipped, counted via tracked-vs-outlines delta */ }
   }
   const parseMs = Date.now() - tParse;
+  cache?.prune();
   const resolver = resolveOutlineImports([...outlines.values()], projectFilesFromGit(repo));
 
   // import graph
@@ -312,6 +336,7 @@ export async function buildDiffSeededMap(opts: MapOptions): Promise<{ markdown: 
       symbolsIndexed: symbolIndex.size, diffIdentifiers: idents.size,
       candidatesScored: score.size, changedRendered, relatedRendered,
       approxTokens: used, parseMs, totalMs: Date.now() - t0,
+      ...(cache ? { outlineCache: { hits: cache.hits, misses: cache.misses } } : {}),
       inferredAliases: resolver.aliases.map((a) => `${a.scope || "."}: ${a.prefix} -> ${a.root || "."}`),
     },
   };

@@ -63,6 +63,16 @@ export interface FileOutline {
   parseError: boolean;
 }
 
+/** An outline before its imports are resolved, which is the part worth caching by content. */
+export interface RawOutline {
+  language: LanguageId;
+  lines: number;
+  symbols: SymbolDef[];
+  /** Import specifiers as written, in source order */
+  importSpecs: string[];
+  parseError: boolean;
+}
+
 // ============================================================================
 // Queries
 // ============================================================================
@@ -225,6 +235,12 @@ export class OutlineExtractor {
     files: SourceFiles,
     language?: LanguageId,
   ): Promise<FileOutline | null> {
+    const raw = await this.parseRaw(source, relPath, language);
+    return raw ? resolveOutline(raw, relPath, files) : null;
+  }
+
+  /** Parse without resolving imports: the result depends only on `source` and its language. */
+  async parseRaw(source: string, relPath: string, language?: LanguageId): Promise<RawOutline | null> {
     const id = language ?? detectLanguage(relPath);
     if (!id) return null;
 
@@ -239,19 +255,14 @@ export class OutlineExtractor {
     // is exactly the shape that turns one leak into thousands.
     try {
       const root = tree.rootNode;
-      const symbols = collectSymbols(root, source, definitions, id);
-      const { resolved, external } = collectImports(root, source, imports, relPath, files, id);
-
       return {
-        path: relPath,
         language: id,
         // Same rule as countLines in lib/io.ts: a trailing newline does not add
         // a line. The map feeds these counts to the model, and an inflated one
         // invites a citation past EOF that verification then throws away.
         lines: source.length === 0 ? 0 : source.replace(/\n$/, "").split("\n").length,
-        symbols,
-        imports: resolved,
-        externalImports: external,
+        symbols: collectSymbols(root, source, definitions, id),
+        importSpecs: collectImportSpecs(root, imports),
         parseError: root.hasError,
       };
     } finally {
@@ -468,36 +479,42 @@ const TS_RESOLVE_SUFFIXES = [
   "/index.js",
 ];
 
-function collectImports(
-  root: unknown,
-  _source: string,
-  query: Query,
-  relPath: string,
-  files: SourceFiles,
-  language: LanguageId,
-): { resolved: string[]; external: string[] } {
-  const matches = query.matches(root as never);
-  const resolved = new Set<string>();
-  const external = new Set<string>();
-  const fromDir = posix.dirname(relPath.replace(/\\/g, "/"));
-
-  for (const match of matches) {
+function collectImportSpecs(root: unknown, query: Query): string[] {
+  const specs = new Set<string>();
+  for (const match of query.matches(root as never)) {
     for (const capture of match.captures) {
       if (capture.name !== "path") continue;
       const spec = (capture.node as unknown as TSNode).text.replace(/^["'<]|["'>]$/g, "");
-      if (!spec) continue;
-
-      const target =
-        language === "cpp"
-          ? resolveInclude(spec, fromDir, files)
-          : resolveTsImport(spec, fromDir, files);
-
-      if (target) resolved.add(target);
-      else external.add(spec);
+      if (spec) specs.add(spec);
     }
   }
+  return [...specs];
+}
 
-  return { resolved: [...resolved].sort(), external: [...external].sort() };
+/**
+ * Resolve a raw outline's import specifiers against the repository's files.
+ * Kept apart from parsing because the parse depends only on the file's content,
+ * while what an import resolves to depends on which other files exist.
+ */
+export function resolveOutline(raw: RawOutline, relPath: string, files: SourceFiles): FileOutline {
+  const resolved = new Set<string>();
+  const external = new Set<string>();
+  const fromDir = posix.dirname(relPath.replace(/\\/g, "/"));
+  for (const spec of raw.importSpecs) {
+    const target =
+      raw.language === "cpp" ? resolveInclude(spec, fromDir, files) : resolveTsImport(spec, fromDir, files);
+    if (target) resolved.add(target);
+    else external.add(spec);
+  }
+  return {
+    path: relPath,
+    language: raw.language,
+    lines: raw.lines,
+    symbols: raw.symbols,
+    imports: [...resolved].sort(),
+    externalImports: [...external].sort(),
+    parseError: raw.parseError,
+  };
 }
 
 function isFile(p: string): boolean {

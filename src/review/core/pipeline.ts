@@ -343,7 +343,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     // equal finding quality. If the tree-sitter grammars are missing, reviewing
     // without it beats not reviewing at all.
     try {
-      const built = await buildDiffSeededMap({ repo: SUBJECT, base, head });
+      const built = await buildDiffSeededMap({ repo: SUBJECT, base, head, cacheDir: path.join(ARTIFACTS, "outlines") });
       await writeText(mapPath, built.markdown);
         await writeJson(path.join(ARTIFACTS, "maps", `${mapKey}.meta.json`), built.meta);
       haveMap = true;
