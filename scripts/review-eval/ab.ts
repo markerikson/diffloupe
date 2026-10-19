@@ -6,20 +6,24 @@
 //   intent_norisk  intent draft without the risk list + pointer
 //   intent_names   intent_norisk + ranked file names (~600 tokens)
 //   intent_mini    intent_norisk + 12 files with symbols for the top 5 (~700 tokens)
-// The draft comes from intent.ts (`full-haiku` variant).
+//   intent_shipped the pipeline's own draft and section (intent-check.ts, `shipped` variant) + pointer
+// The other drafts come from intent.ts (`full-haiku` variant).
 // Usage: bun ab.ts render | bun ab.ts run <sliceTag> [samples=2] [arms=csv]
 import fs from "node:fs";
 import path from "node:path";
 import { prepare, rank, fit, type Prepared, type Ranked } from "./rank.ts";
 import { AB, ARTIFACTS, DATA, SLICES, loadTargets, repoFor, type Target } from "./env.ts";
 import { applyConfig, setRunState } from "../../src/review/core/config.ts";
+import { intentDraftSection } from "../../src/review/core/prompts.ts";
 import { agent, resetOpenCodeConfig } from "../../src/review/core/runner.ts";
 import { resolveRunSetup, setupConfig } from "../../src/review/setup.ts";
 import { loadConfig } from "../../src/services/config.ts";
 import { dataDir } from "../../src/review/run-store.ts";
 
 export { SLICES };
-export const ARMS = ["base", "inline", "intent", "intent_nomap", "intent_norisk", "intent_names", "intent_mini"] as const;
+export const ARMS = [
+  "base", "inline", "intent", "intent_nomap", "intent_norisk", "intent_names", "intent_mini", "intent_shipped",
+] as const;
 export type Arm = (typeof ARMS)[number];
 const MAP_BUDGET = 6000;
 const RANKING = { damp: true, hop2: true, strings: true, stringWeight: 3 } as const;
@@ -108,6 +112,13 @@ function renderIntent(runId: string, risks = true): string {
   return out.join("\n");
 }
 
+function shippedIntent(runId: string): string {
+  intents ??= JSON.parse(fs.readFileSync(path.join(DATA, "intents.json"), "utf8"));
+  const v = intents?.[runId]?.shipped;
+  if (!v) throw new Error(`${runId}: no shipped intent; run intent-check.ts first`);
+  return intentDraftSection({ title: v.title, goal: v.goal, expected_changes: v.expected_changes ?? [] });
+}
+
 const MAP_NOTE = /A repository orientation map for this change is at `[^`]+`\.[^\n]*/;
 
 export function prompts(tag: string) {
@@ -130,6 +141,7 @@ export function prompts(tag: string) {
     intent_norisk: saved.replace(MAP_NOTE, (note) => `${lite}\n\n${note}`),
     intent_names: saved.replace(MAP_NOTE, (note) => `${lite}\n\n${names}\n\n${note}`),
     intent_mini: saved.replace(MAP_NOTE, (note) => `${lite}\n\n${mini}\n\n${note}`),
+    intent_shipped: saved.replace(MAP_NOTE, (note) => `${shippedIntent(t.id)}${note}`),
   };
   return { t, s, files, text };
 }

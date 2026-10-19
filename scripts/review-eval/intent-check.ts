@@ -1,13 +1,17 @@
 // Runs the pipeline's intent draft (src/review/core/intent-draft.ts) on eval targets through
-// OpenCode, and reports cost, wall time and whether a complete draft came back.
+// OpenCode, and reports cost, wall time and whether a complete draft came back. The input is
+// built the way pipeline.ts builds it (code files only, deleted files compacted, no branch).
+// Drafts are also saved to <eval dir>/data/intents.json as the `shipped` variant, which the
+// `intent_shipped` arm in ab.ts reads.
 // Usage: bun intent-check.ts [model=anthropic/claude-haiku-5-5] [targetId,...] (default: every target)
 // Artifacts go to <eval dir>/intent-check; nothing is cached between invocations.
 import fs from "node:fs";
 import path from "node:path";
-import { EVAL_DIR, git, loadTargets, repoFor } from "./env.ts";
+import { DATA, EVAL_DIR, git, loadTargets, repoFor } from "./env.ts";
 import { applyConfig, setRunState } from "../../src/review/core/config.ts";
 import { classifyFile } from "../../src/review/core/findings.ts";
 import { draftIntent } from "../../src/review/core/intent-draft.ts";
+import { compactDeletedFiles } from "../../src/review/core/lib/hunks.ts";
 import { resetOpenCodeConfig } from "../../src/review/core/runner.ts";
 import { resolveRunSetup, setupConfig } from "../../src/review/setup.ts";
 import { loadConfig } from "../../src/services/config.ts";
@@ -15,6 +19,7 @@ import { loadConfig } from "../../src/services/config.ts";
 const [model = "anthropic/claude-haiku-5-5", ids] = process.argv.slice(2);
 const wanted = ids?.split(",");
 const dir = path.join(EVAL_DIR, "intent-check", String(Date.now()));
+const intentsFile = path.join(DATA, "intents.json");
 
 const userConfig = await loadConfig();
 const setup = await resolveRunSetup({ userConfig, stages: ["walkthrough"] });
@@ -29,11 +34,10 @@ for (const t of loadTargets().filter((x) => !wanted || wanted.includes(x.id))) {
   const files = git(repo, ["diff", "--name-only", range]).trim().split("\n").filter(Boolean);
   const code = files.filter((f) => classifyFile(f) === "code");
   const docs = files.filter((f) => classifyFile(f) === "docs");
-  const diff = git(repo, ["diff", range, "--", ...code]);
+  const diff = compactDeletedFiles(git(repo, ["diff", range, "--", ...code]), t.base);
   const r = await draftIntent({
     tag: t.id,
     cacheKey: t.id,
-    branch: t.branch,
     intent: { title: t.prTitle, body: t.prBody, commits: git(repo, ["log", "--format=%s%n%b%n---", range]).trim() },
     diffstat: git(repo, ["diff", "--stat", range]),
     diff,
@@ -45,6 +49,11 @@ for (const t of loadTargets().filter((x) => !wanted || wanted.includes(x.id))) {
   };
   results.push({ ...line, draft: r.draft });
   console.log(JSON.stringify(line));
+  if (r.draft) {
+    const saved = fs.existsSync(intentsFile) ? JSON.parse(fs.readFileSync(intentsFile, "utf8")) : {};
+    saved[t.id] = { ...saved[t.id], shipped: { ...r.draft, model, costUsd: r.costUsd, wallMs: r.wallMs } };
+    fs.writeFileSync(intentsFile, JSON.stringify(saved, null, 2));
+  }
 }
 fs.mkdirSync(dir, { recursive: true });
 fs.writeFileSync(path.join(dir, "results.json"), JSON.stringify(results, null, 2));
