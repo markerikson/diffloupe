@@ -47,7 +47,7 @@ export async function complete(
 }
 
 export function parseJson<T>(text: string): T {
-  const m = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  const m = text.match(/```json\s*([\s\S]*?)```/) ?? text.match(/```\s*\n(\{[\s\S]*?)```/);
   const body = m?.[1] ?? text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1);
   return JSON.parse(body) as T;
 }
