@@ -452,7 +452,7 @@ export interface Walkthrough {
       title: string;
       importance?: "critical" | "normal" | "context";
       prose?: string;
-      locations?: { file: string; line?: number; label?: string }[];
+      locations?: { file: string; line?: number; symbol?: string; label?: string }[];
     }[];
   }[];
   support?: { files: string[]; reason: string }[];
@@ -669,7 +669,7 @@ Produce two things.
 **2. A guided walkthrough.**
 - \`start_here\`: the 2-4 files a reviewer should open first, each with a one-line reason. Order matters. Pick the files where understanding the change begins or where the risk concentrates — not the largest files.
 - \`chapters\`: 1-6 conceptual groups in reading order. A chapter is an idea, not a file. \`title\` is 1-2 words, at most 16 characters ("Runtime", "CLI", "Tests", "Cleanup"). \`icon\` is one of bug, wrench, path, flask, doc, gear. \`blurb\` is one sentence.
-- \`chapters[].stops\`: one review *idea* per stop. \`title\` is 2-6 words, semantic and never a filename — "Prevent duplicate payments", not "update payments.ts". \`prose\` is 1-3 sentences on why this stop matters and what to check. \`importance\` is "critical" if a reviewer must understand it, "normal" for the main path, "context" for supporting detail. \`locations\` are the file/line pairs to read for this stop, cross-file allowed, in reading order. Total stops across all chapters: 1-3 for a small change, 5-9 for a medium one, 7-12 for a large one. Never exceed 14.
+- \`chapters[].stops\`: one review *idea* per stop. \`title\` is 2-6 words, semantic and never a filename — "Prevent duplicate payments", not "update payments.ts". \`prose\` is 1-3 sentences on why this stop matters and what to check. \`importance\` is "critical" if a reviewer must understand it, "normal" for the main path, "context" for supporting detail. \`locations\` are the places to read for this stop, cross-file allowed, in reading order. Each has the \`file\`, the \`line\` number as printed in the diff, and the \`symbol\` on that line the stop is about: a function, class, method or variable name written exactly as it appears in the code. \`label\` is a few words for the reader. Total stops across all chapters: 1-3 for a small change, 5-9 for a medium one, 7-12 for a large one. Never exceed 14.
 - \`support\`: changed files deliberately kept off the main path — generated output, lockfiles, snapshots, mechanical repeats, anything you did not read — grouped with a reason. A reviewer should be able to skip everything here. **At most 8 groups.** An entry in \`files\` may be a directory path ending in \`/\`, which means every changed file under it that no stop names; prefer that to listing files. Name a file outright only when it is alone in its directory or the reason applies to it and not its neighbours.
 
 Account for every changed file: each one should be reachable either from a stop or from a \`support\` entry, where a directory entry covers everything beneath it. Do not enumerate files to prove coverage — a directory that covers forty files is a better answer than forty filenames, and the guide is read by a human who will not read a list that long. Do not invent files, directories, or lines.
@@ -684,7 +684,7 @@ Write a single JSON object to \`${o.outFile}\`:
   "start_here": [ { "file": "...", "why": "..." } ],
   "chapters": [ { "title": "Runtime", "icon": "bug", "blurb": "...",
     "stops": [ { "title": "...", "importance": "critical", "prose": "...",
-                 "locations": [ { "file": "...", "line": 123, "label": "..." } ] } ] } ],
+                 "locations": [ { "file": "...", "line": 123, "symbol": "handleRetry", "label": "..." } ] } ] } ],
   "support": [ { "files": ["path/to/dir/", "standalone-file.ts"], "reason": "..." } ]
 }
 \`\`\`

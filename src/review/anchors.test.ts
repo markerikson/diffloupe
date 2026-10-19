@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { anchor, SNAP_LIMIT, visibleRanges } from "./anchors.ts";
+import { anchor, locationSymbol, SNAP_LIMIT, snapToSymbol, visibleRanges } from "./anchors.ts";
 import { parseRunPatch } from "./build-run.ts";
 
 function numbered(prefix: string, from: number, to: number): string[] {
@@ -206,5 +206,83 @@ describe("anchor", () => {
     const f = one(RENAME_CHANGED);
     expect(f.prevName).toBe("src/old.ts");
     expect(anchor(f, "lib/new.ts", 3)).toMatchObject({ kind: "line", line: 3, text: "keep3" });
+  });
+});
+
+/** A new 60-line file: `dispose` defined at 40 and called at 12 and 55; `run` defined at 20. */
+const NEW_FILE = (() => {
+  const body = numbered("+const filler", 1, 60);
+  body[11] = "+  this.dispose();";
+  body[19] = "+export async function run(fn: () => void) {";
+  body[39] = "+  async dispose(): Promise<void> {";
+  body[54] = "+    void session.dispose();";
+  return [
+    "diff --git a/src/session.ts b/src/session.ts",
+    "new file mode 100644",
+    "index 0000000000000000000000000000000000000000..7777777777777777777777777777777777777777",
+    "--- /dev/null",
+    "+++ b/src/session.ts",
+    "@@ -0,0 +1,60 @@",
+    ...body,
+    "",
+  ].join("\n");
+})();
+
+describe("locationSymbol", () => {
+  test("prefers symbol, accepts a one-identifier label, takes the last dotted segment", () => {
+    expect(locationSymbol("dispose", "teardown path")).toBe("dispose");
+    expect(locationSymbol(undefined, "Session.dispose")).toBe("dispose");
+    expect(locationSymbol(undefined, "dispose()")).toBe("dispose");
+    expect(locationSymbol(undefined, "dispose and run")).toBeUndefined();
+    expect(locationSymbol("  ", undefined)).toBeUndefined();
+  });
+});
+
+describe("snapToSymbol", () => {
+  const f = one(NEW_FILE);
+  const at = (line: number) => anchor(f, "src/session.ts", line);
+
+  test("keeps a line that already holds the symbol", () => {
+    const a = at(55);
+    expect(snapToSymbol(f, a, "dispose")).toBe(a);
+  });
+
+  test("moves a miscounted line to the definition, keeping the cited line", () => {
+    expect(snapToSymbol(f, at(30), "dispose")).toMatchObject({
+      kind: "line",
+      line: 40,
+      cited: { line: 30 },
+      text: "  async dispose(): Promise<void> {",
+    });
+    expect(snapToSymbol(f, at(48), "run")).toMatchObject({ line: 20 });
+  });
+
+  test("a use within a few lines of the cited line wins over the definition", () => {
+    expect(snapToSymbol(f, at(14), "dispose")).toMatchObject({ line: 12 });
+  });
+
+  test("does not match the symbol inside a longer identifier", () => {
+    expect(snapToSymbol(f, at(30), "dis")).toMatchObject({ line: 30 });
+  });
+
+  test("leaves the anchor alone when the symbol is not in the diff", () => {
+    const a = at(30);
+    expect(snapToSymbol(f, a, "missing")).toBe(a);
+    expect(snapToSymbol(undefined, a, "dispose")).toBe(a);
+  });
+
+  test("repairs a file-level anchor whose line was out of range", () => {
+    const a = at(400);
+    expect(a.kind).toBe("file");
+    expect(snapToSymbol(f, a, "dispose")).toMatchObject({ kind: "line", line: 40, cited: { line: 400 } });
+  });
+
+  test("searches removed lines with the deletions fallback", () => {
+    const d = one(DELETED);
+    const a = anchor(d, "src/gone.ts", 1, undefined, { deletionsFallback: true });
+    expect(snapToSymbol(d, a, "gone3", { deletionsFallback: true })).toMatchObject({
+      side: "deletions",
+      line: 3,
+    });
   });
 });

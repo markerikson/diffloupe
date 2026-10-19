@@ -203,6 +203,41 @@ describe("buildReviewRun details", () => {
     expect(run.stops[0]!.locations[0]).toMatchObject({ side: "deletions", kind: "line", line: 5, label: "removed5" });
   });
 
+  test("a stop location whose line misses its symbol moves to the line that has it", () => {
+    const fx = loadFixture("small-commit");
+    const file = "src/services/decomposition/flow-detection.ts";
+    const run = buildReviewRun({
+      ...fx.input,
+      log: () => {},
+      result: {
+        ...fx.input.result,
+        record: {
+          ...fx.input.result.record,
+          walkthrough: {
+            chapters: [
+              {
+                title: "Tiers",
+                stops: [
+                  {
+                    title: "Adapter call",
+                    locations: [
+                      { file, line: 284, symbol: "createAdapter", label: "tier passed" },
+                      { file, line: 290, label: "createAdapter" },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    });
+    expect(run.stops[0]!.locations.map((l) => [l.line, l.cited.line])).toEqual([
+      [287, 284],
+      [287, 290],
+    ]);
+  });
+
   test("no walkthrough: flat leaf groups in priority order", () => {
     const run = loadFixture("worktree").build();
     expect(run.groups.map((g) => [g.id, g.parentId ?? null])).toEqual([

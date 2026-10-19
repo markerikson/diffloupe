@@ -18,7 +18,7 @@ import type {
   RunKind,
   RunSlice,
 } from "../types/review-run.ts";
-import { anchor } from "./anchors.ts";
+import { anchor, locationSymbol, snapToSymbol } from "./anchors.ts";
 import { classifyFile, type Finding } from "./core/findings.ts";
 import { groupTitles } from "./core/lib/group-title.ts";
 import { fingerprint } from "./core/lib/marker.ts";
@@ -339,7 +339,14 @@ export function buildReviewRun(input: BuildReviewRunInput): ReviewRun {
           log(`  walkthrough: dropped directory location ${loc.file} in "${st.title}"`);
           continue;
         }
-        const a: DiffAnchor = anchor(byPath.get(loc.file), loc.file, loc.line, undefined, { deletionsFallback: true });
+        const file = byPath.get(loc.file);
+        const opts = { deletionsFallback: true };
+        const a: DiffAnchor = snapToSymbol(
+          file,
+          anchor(file, loc.file, loc.line, undefined, opts),
+          locationSymbol(loc.symbol, loc.label),
+          opts,
+        );
         locations.push({ ...a, ...(loc.label ? { label: loc.label } : {}) });
       }
       stops.push({

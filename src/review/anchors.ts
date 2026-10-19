@@ -144,3 +144,71 @@ export function anchor(
   }
   return fileAnchor(path, cited, "far-from-diff");
 }
+
+/** A usage this close to the cited line wins over a definition further away. */
+const USAGE_NEAR = 3;
+
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * The identifier a location names: its `symbol`, or a label that is itself one
+ * identifier (`dispose`, `Session.dispose`). The last dotted segment is what
+ * appears on a definition line.
+ */
+export function locationSymbol(symbol: string | undefined, label: string | undefined): string | undefined {
+  for (const s of [symbol, label]) {
+    const t = s?.trim().replace(/\(\)$/, "");
+    if (t && /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.test(t)) return t.slice(t.lastIndexOf(".") + 1);
+  }
+  return undefined;
+}
+
+/**
+ * Moves a location to the line that holds `symbol` when the cited line does not.
+ *
+ * Models count lines in a unified diff badly, and are off by tens of lines on a
+ * long hunk, but they name the function they mean correctly. When the anchored
+ * line lacks the name, this searches the file's visible lines for it: a use
+ * within a few lines of the cited one first, then the definition nearest the
+ * cited line, then the nearest use. Additions are searched before deletions,
+ * which are searched only with `deletionsFallback` or for a deleted file.
+ * `cited` keeps what the model wrote.
+ */
+export function snapToSymbol(
+  file: FileDiffMetadata | undefined,
+  a: DiffAnchor,
+  symbol: string | undefined,
+  opts: AnchorOptions = {},
+): DiffAnchor {
+  if (!file || !symbol) return a;
+  const word = new RegExp(`(?<![\\w$])${escapeRegExp(symbol)}(?![\\w$])`);
+  if (a.kind !== "file" && a.text !== undefined && word.test(a.text)) return a;
+
+  const name = escapeRegExp(symbol);
+  const definition = new RegExp(
+    [
+      `\\b(?:function\\*?|class|interface|type|enum|namespace|def|fn|struct|trait|const|let|var)\\s+${name}(?![\\w$])`,
+      `^\\s*(?:(?:export|default|public|private|protected|static|readonly|async|override|get|set|pub)\\s+)*\\*?${name}\\s*(?:<[^>]*>)?\\s*[(=:]`,
+    ].join("|"),
+  );
+  const sides: DiffSide[] =
+    file.type === "deleted" ? ["deletions"] : opts.deletionsFallback ? ["additions", "deletions"] : ["additions"];
+  const cited = a.cited.line;
+  for (const side of sides) {
+    const hits: { line: number; text: string; definition: boolean; distance: number }[] = [];
+    for (const range of visibleRanges(file, side)) {
+      for (let line = range.start; line <= range.end; line++) {
+        const text = lineText(file, side, range, line);
+        if (text === undefined || !word.test(text)) continue;
+        hits.push({ line, text, definition: definition.test(text), distance: cited > 0 ? Math.abs(line - cited) : line });
+      }
+    }
+    if (!hits.length) continue;
+    const byDistance = (x: (typeof hits)[number], y: (typeof hits)[number]) => x.distance - y.distance;
+    const near = cited > 0 ? hits.filter((h) => h.distance <= USAGE_NEAR).sort(byDistance)[0] : undefined;
+    const best = near ?? hits.filter((h) => h.definition).sort(byDistance)[0] ?? hits.sort(byDistance)[0];
+    if (!best) continue;
+    return { file: a.file, side, kind: "line", line: best.line, cited: a.cited, text: best.text };
+  }
+  return a;
+}
