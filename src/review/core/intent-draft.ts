@@ -13,7 +13,7 @@ import path from "node:path";
 import { ARTIFACTS, EFFORT_AUX, INTENT_BUDGET, MODEL_INTENT, OUT } from "./config.ts";
 import { compactForIntent } from "./lib/hunks.ts";
 import { exists, readJson, writeJson } from "./lib/io.ts";
-import { INTENT_DRAFT_SYSTEM, intentDraftPrompt, type IntentDraft } from "./prompts.ts";
+import { INTENT_DRAFT_SYSTEM, intentDraftPrompt, type IntentDraft, type StatedIntent } from "./prompts.ts";
 import { agent } from "./runner.ts";
 
 /** About 65K tokens: room for every file of a large change at under a cent on the smallest tier. */
@@ -61,7 +61,7 @@ export async function draftIntent(o: {
   /** Names the cache file; the same key on a later run reuses the draft when the input is unchanged. */
   cacheKey: string;
   branch?: string | undefined;
-  intent: { title: string; body: string; commits: string };
+  intent: StatedIntent;
   diffstat: string;
   /** `git diff` of the code files. */
   diff: string;

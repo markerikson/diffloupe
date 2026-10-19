@@ -130,7 +130,7 @@ diffloupe runs
 |--------|-------------|
 | `-C, --repo <path>` | Repository to review (default: current directory) |
 | `--base <ref>` | For `staged`/`worktree`: diff against `merge-base(<ref>, HEAD)` instead of HEAD |
-| `-i, --intent <text>` | Describe the intent of the changes |
+| `-i, --intent <text>` | What the change should do. Every reviewer sees it labelled as yours, next to the PR description |
 | `--intent-file <path>` | Read the intent from a file |
 | `--model <stage=id>` | Model for a stage: `review`, `coordinator`, `walkthrough`, `intent` (repeatable) |
 | `--effort <level>` | Reasoning effort: `low`, `medium`, `high` |

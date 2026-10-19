@@ -56,12 +56,30 @@ function repoInstructions(instructions: string | undefined): string {
  * description)" alone led the walkthrough to list the missing description as
  * a gap in the change, which tells the reader nothing about the code.
  */
-function description(intent: { body: string; commits: string }, limit: number): string {
+function description(intent: StatedIntent, limit: number): string {
   const body = intent.body?.slice(0, limit);
   if (body) return body;
+  if (intent.stated) {
+    return "(No description was written. Treat the requester's statement below as the statement of intent, and do not report the missing description as a gap.)";
+  }
   return intent.commits
     ? "(No description was written. Treat the commit messages below as the statement of intent, and do not report the missing description as a gap.)"
     : "(No description and no commit messages: infer the intent from the diff alone, and do not report the missing description as a gap.)";
+}
+
+/** The pull request's own description and commits, plus what the person who asked for the review said. */
+export interface StatedIntent {
+  title: string;
+  body: string;
+  commits: string;
+  /** Given with `--intent`: the requester's own statement of what the change should do. */
+  stated?: string | undefined;
+}
+
+/** The requester's statement as its own block, or nothing without one. */
+function statedBlock(intent: StatedIntent, limit: number): string {
+  const stated = intent.stated?.trim().slice(0, limit);
+  return stated ? `\n\nStated by the requester:\n${stated}` : "";
 }
 
 /** What a smaller model, shown the whole diff, thinks the change is for. */
@@ -95,7 +113,7 @@ You have no tools except writing your answer. Everything you need is in the mess
 
 export function intentDraftPrompt(o: {
   branch?: string | undefined;
-  intent: { title: string; body: string; commits: string };
+  intent: StatedIntent;
   diffstat: string;
   diff: string;
   /** Changed files that are not code, listed by name only. */
@@ -109,7 +127,7 @@ export function intentDraftPrompt(o: {
   return `${branch}## Pull request description
 Title: ${o.intent.title || "(none)"}
 
-${o.intent.body.slice(0, 4000) || "(none)"}
+${o.intent.body.slice(0, 4000) || "(none)"}${statedBlock(o.intent, 4000)}
 
 ## Commit messages (oldest last)
 ${o.intent.commits.slice(0, 6000) || "(none)"}
@@ -136,7 +154,7 @@ Write a single JSON object to \`${o.outFile}\` with the write tool, and do nothi
 export function slicePrompt(o: {
   unit: ReviewUnit;
   diff: string;
-  intent: { title: string; body: string; commits: string };
+  intent: StatedIntent;
   draft?: IntentDraft | undefined;
   registry: string;
   prior: string;
@@ -169,7 +187,7 @@ Other changed files in this pull request are being reviewed separately; do not c
 ## Pull request intent (as stated by the author)
 Title: ${o.intent.title}
 
-${description(o.intent, 4000)}
+${description(o.intent, 4000)}${statedBlock(o.intent, 4000)}
 
 Commit messages:
 ${o.intent.commits.slice(0, 3000) || "(none)"}
@@ -185,7 +203,7 @@ Write your findings as JSON to \`${o.outFile}\`. Write the file even if you have
 
 export function mergePrompt(o: {
   findings: Finding[];
-  intent: { title: string; body: string; commits: string };
+  intent: StatedIntent;
   draft?: IntentDraft | undefined;
   files: string[];
   prior: string;
@@ -213,7 +231,7 @@ ${o.files.map((f) => `- ${f}`).join("\n")}
 ## Pull request intent (as stated by the author)
 Title: ${o.intent.title}
 
-${description(o.intent, 4000)}
+${description(o.intent, 4000)}${statedBlock(o.intent, 4000)}
 
 Commit messages:
 ${o.intent.commits.slice(0, 3000) || "(none)"}
@@ -278,7 +296,7 @@ function shortHash(text: string): string {
  * hash the same in every repository.
  */
 export function promptVersion(systemPrompt: string): string {
-  const intent = { title: "t", body: "b", commits: "c" };
+  const intent = { title: "t", body: "b", commits: "c", stated: "s" };
   const unit: ReviewUnit = { id: "u", title: "u", files: ["f"] };
   const rendered = [
     systemPrompt,
@@ -462,7 +480,7 @@ export interface Walkthrough {
 export function partitionPrompt(o: {
   diffstat: string;
   outline: string;
-  intent: { title: string; body: string; commits: string };
+  intent: StatedIntent;
   codeFiles: string[];
   registry: string;
   outFile: string;
@@ -474,7 +492,7 @@ Work from the outline below. **Do not read files from the repository** — you d
 ## Stated intent
 Title: ${o.intent.title}
 
-${o.intent.body?.slice(0, 2000) || "(no description)"}
+${o.intent.body?.slice(0, 2000) || "(no description)"}${statedBlock(o.intent, 2000)}
 
 ## Files changed
 ${o.diffstat}
@@ -512,7 +530,7 @@ export function groupNamingPrompt(o: {
   groups: CodeGroup[];
   links: Link[];
   outline: string;
-  intent: { title: string; body: string; commits: string };
+  intent: StatedIntent;
   registry: string;
   outFile: string;
 }) {
@@ -536,7 +554,7 @@ Work from what is below. **Do not read files from the repository.**
 ## Stated intent
 Title: ${o.intent.title}
 
-${o.intent.body?.slice(0, 2000) || "(no description)"}
+${o.intent.body?.slice(0, 2000) || "(no description)"}${statedBlock(o.intent, 2000)}
 ${o.registry ? `\n${o.registry}\n` : ""}
 ## Groups
 ${blocks.join("\n\n")}
@@ -596,7 +614,7 @@ export function groupByDir(files: string[]): string {
 export function walkthroughPrompt(o: {
   diffstat: string;
   diff: string;
-  intent: { title: string; body: string; commits: string };
+  intent: StatedIntent;
   draft?: IntentDraft | undefined;
   /** Undefined for a diff run, where no review happened and the agent has no file tools. */
   findingIndex?: string;
@@ -617,7 +635,7 @@ export function walkthroughPrompt(o: {
 ## Stated description (what the author says it does)
 Title: ${o.intent.title}
 
-${description(o.intent, 4000)}
+${description(o.intent, 4000)}${statedBlock(o.intent, 4000)}
 
 Commit messages:
 ${o.intent.commits.slice(0, 3000) || "(none)"}

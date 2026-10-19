@@ -115,8 +115,7 @@ async function diffMain(options: RunDiffOptions): Promise<RunDiffResult> {
   await ensureDir(path.join(ARTIFACTS, "prompts"));
   await ensureDir(path.join(ARTIFACTS, "logs"));
   await writeText(path.join(ARTIFACTS, ".gitignore"), "*\n");
-  const intent = await gatherIntent(slug, pr, base, head);
-  if (options.intent) intent.body = intent.body ? `${intent.body}\n\n${options.intent}` : options.intent;
+  const intent = await gatherIntent(slug, pr, base, head, options.intent);
 
   const walkTag = `${options.tag}-walk`;
   const walkOut = path.join(OUT, `${walkTag}.json`);

@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { resetRunState, setRunState } from "./config.ts";
 import {
+  groupNamingPrompt,
   instructionsHash,
   intentDraftPrompt,
   mergePrompt,
+  partitionPrompt,
   promptVersion,
   SINCE_LAST_FOCUS,
   slicePrompt,
@@ -164,6 +166,34 @@ describe("intent draft", () => {
     expect(prompt).toContain("README.md");
     expect(prompt).toContain("/o/intent.json");
     expect(prompt).toContain("expected_changes");
+  });
+});
+
+describe("stated intent", () => {
+  const stated = { title: "Add retries", body: "Retries uploads.", commits: "c", stated: "Must not retry 4xx responses." };
+  const unit = { id: "u", title: "Unit", files: ["a.ts"] };
+  const block = "Stated by the requester:\nMust not retry 4xx responses.";
+
+  test("every prompt shows it as its own block, after the description", () => {
+    const prompts = [
+      slicePrompt({ unit, diff: "", intent: stated, registry: "", prior: "", mapNote: "", outFile: "/o" }),
+      mergePrompt({ findings: [], intent: stated, files: ["a.ts"], prior: "", outFile: "/o" }),
+      walkthroughPrompt({ diffstat: "", diff: "", intent: stated, unitSummary: "", crossLinks: [], docsFiles: [], sketches: [], registry: "", outFile: "/o" }),
+      partitionPrompt({ diffstat: "", outline: "", intent: stated, codeFiles: ["a.ts"], registry: "", outFile: "/o" }),
+      groupNamingPrompt({ groups: [], links: [], outline: "", intent: stated, registry: "", outFile: "/o" }),
+      intentDraftPrompt({ intent: stated, diffstat: "", diff: "", otherFiles: [], outFile: "/o" }),
+    ];
+    for (const prompt of prompts) {
+      expect(prompt).toContain(block);
+      expect(prompt.indexOf("Retries uploads.")).toBeLessThan(prompt.indexOf(block));
+    }
+    expect(slice()).not.toContain("Stated by the requester");
+  });
+
+  test("with no description, the statement stands in for it", () => {
+    const prompt = slicePrompt({ unit, diff: "", intent: { ...stated, body: "" }, registry: "", prior: "", mapNote: "", outFile: "/o" });
+    expect(prompt).toContain("Treat the requester's statement below as the statement of intent");
+    expect(prompt).toContain(block);
   });
 });
 

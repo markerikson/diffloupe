@@ -2,6 +2,7 @@ import { text } from "./lib/proc.ts";
 import { readJson } from "./lib/io.ts";
 import { findMarker, isOwnComment, readMarkers, settledIds } from "./lib/marker.ts";
 import { SUBJECT } from "./config.ts";
+import type { StatedIntent } from "./prompts.ts";
 
 // ---------------------------------------------------------------- context
 
@@ -24,8 +25,18 @@ export async function diffOutline(base: string, head: string, files: string[]): 
     .join("\n");
 }
 
-/** PR description plus commit subjects: the author's stated intent. */
-export async function gatherIntent(slug: string, pr: string | undefined, base: string, head: string) {
+/**
+ * PR description plus commit subjects: the author's stated intent. `stated` is
+ * what the person asking for the review said, kept apart from the description
+ * so the prompts can say who wrote which.
+ */
+export async function gatherIntent(
+  slug: string,
+  pr: string | undefined,
+  base: string,
+  head: string,
+  stated?: string,
+): Promise<StatedIntent> {
   let title = "";
   let body = "";
   // A bare commit range has no description, so the commit subjects are the only
@@ -43,7 +54,7 @@ export async function gatherIntent(slug: string, pr: string | undefined, base: s
     }
   }
   const log = await gitText(["log", "--format=%s%n%b%n---", `${base}..${head}`]);
-  return { title, body, commits: log.trim() };
+  return { title, body, commits: log.trim(), ...(stated?.trim() ? { stated: stated.trim() } : {}) };
 }
 
 export interface PriorComment {

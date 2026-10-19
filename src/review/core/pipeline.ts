@@ -75,7 +75,7 @@ export interface RunReviewOptions {
   /** The local clone that supplies the git object store. */
   repo: string;
   target: Target;
-  /** Extra statement of intent: the body when there is no PR, appended to the PR body otherwise. */
+  /** The requester's statement of intent, shown to every prompt as its own block beside the PR description. */
   intent?: string;
   /** Repo-specific review instructions from the settings file, given to every reviewer and the coordinator. */
   instructions?: string;
@@ -232,8 +232,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
 
   // ---- context, shared by every slice
   setRunState({ repoName: slug });
-  const intent = await gatherIntent(slug, pr, base, head);
-  if (options.intent) intent.body = intent.body ? `${intent.body}\n\n${options.intent}` : options.intent;
+  const intent = await gatherIntent(slug, pr, base, head, options.intent);
   const prior = [...(await gatherPriorComments(slug, pr)), ...(options.prior ?? [])];
   const priorMd = renderPriorComments(prior, intent.body);
 
