@@ -224,6 +224,11 @@ export async function prepareRun(
         `run diffloupe review from a clone of it`,
     );
   }
+  for (const flag of ["github", "head"] as const) {
+    if (req[flag] && (isDiff || from || parseTargetSpec(req.target).kind !== "pr")) {
+      throw new TargetError(`--${flag} needs a review of a pull request target`);
+    }
+  }
   checkTools(fromSpec ? (fromSpec.kind === "pr" ? `#${fromSpec.pr}` : "") : req.target, { kind, walkthrough });
   if (!isDiff || walkthrough) await checkOpenCodeVersion();
   const localRepo = path.resolve(req.repo ?? defaultRepo);

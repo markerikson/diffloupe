@@ -425,7 +425,11 @@ async function ensureCommit(repo: string, sha: string, refs: string[]): Promise<
  * `--head`: review the pull request as of the commit a CI job was started for,
  * not whatever was pushed since. The commit must be in the branch's history.
  */
-export async function pinPullRequestHead(repo: string, pr: number, liveHead: string, pinned: string): Promise<string> {
+export async function pinPullRequestHead(repo: string, pr: number, liveHead: string, head: string): Promise<string> {
+  // Checked here as well as on the command line: the value reaches `git fetch`
+  // as an argument, and server requests skip the CLI's check.
+  if (!/^[0-9a-f]{40}$/i.test(head)) throw new TargetError(`--head must be a full 40-character commit SHA, not "${head}"`);
+  const pinned = head.toLowerCase();
   if (pinned === liveHead) return liveHead;
   await ensureCommit(repo, pinned, [`refs/pull/${pr}/head`, pinned]);
   const onBranch = await run("git", ["-C", repo, "merge-base", "--is-ancestor", pinned, liveHead], { allowFail: true });

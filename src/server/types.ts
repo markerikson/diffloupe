@@ -41,7 +41,7 @@ export const StartRunRequestSchema = type({
   /** Pull requests only: write GitHub payloads with markers, and read prior state only from GitHub. */
   "github?": "boolean",
   /** Pull requests only: the PR commit to review, instead of its current head. */
-  "head?": "string",
+  "head?": /^[0-9a-fA-F]{40}$/,
 });
 export type StartRunRequest = typeof StartRunRequestSchema.infer;
 

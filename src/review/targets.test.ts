@@ -223,6 +223,15 @@ describe("resolveTarget", () => {
     const parent = (await git("rev-parse", "HEAD^")).trim();
     expect(await pinPullRequestHead(repo, 7, head, parent)).toBe(parent);
     expect(await pinPullRequestHead(repo, 7, head, head)).toBe(head);
+    expect(await pinPullRequestHead(repo, 7, head, parent.toUpperCase())).toBe(parent);
+    expect(await pinPullRequestHead(repo, 7, head, head.toUpperCase())).toBe(head);
+  });
+
+  // Server requests skip the CLI's check, and the value reaches `git fetch`.
+  it("rejects a --head that is not a full SHA before running git", async () => {
+    const head = (await git("rev-parse", "HEAD")).trim();
+    await expect(pinPullRequestHead(repo, 7, head, "--upload-pack=touch /tmp/x")).rejects.toThrow(/40-character/);
+    await expect(pinPullRequestHead(repo, 7, head, head.slice(0, 12))).rejects.toThrow(/40-character/);
   });
 
   // A force-push can leave the commit CI was started for off the branch. Reviewing
