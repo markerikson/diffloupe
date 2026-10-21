@@ -94,7 +94,7 @@ export type Invocation = {
   unsetEnv: string[];
   /** Extension for the raw stdout capture, since one runner streams NDJSON. */
   rawExt: string;
-  parse(stdout: string): { costUsd: number; numTurns: number; usage: unknown };
+  parse(stdout: string): { costUsd: number; numTurns: number; usage: AgentUsage | null };
   /** What the agent did with its tools. Only the streaming runner reports calls. */
   tools?(stdout: string): ToolSummary;
 };
@@ -126,6 +126,20 @@ export type StreamEvent = {
 };
 
 /**
+ * Token totals for one agent invocation. `first_step` is the first request of
+ * the session alone, which shows whether the shared prompt prefix hit the
+ * provider's prompt cache.
+ */
+export type AgentUsage = {
+  input_tokens: number;
+  output_tokens: number;
+  reasoning_tokens: number;
+  cache_read_input_tokens: number;
+  cache_creation_input_tokens: number;
+  first_step?: { input_tokens: number; cache_read_input_tokens: number; cache_creation_input_tokens: number };
+};
+
+/**
  * Cost and token accounting from an `opencode run --format json` stream.
  *
  * The other runner reports one total for the whole invocation. This one reports
@@ -133,20 +147,10 @@ export type StreamEvent = {
  * were. Anything unparseable is skipped rather than throwing: the accounting is
  * for the run record, and losing a line of it must not cost a paid review.
  */
-export function sumOpenCodeStream(stdout: string): {
-  costUsd: number;
-  numTurns: number;
-  usage: {
-    input_tokens: number;
-    output_tokens: number;
-    reasoning_tokens: number;
-    cache_read_input_tokens: number;
-    cache_creation_input_tokens: number;
-  };
-} {
+export function sumOpenCodeStream(stdout: string): { costUsd: number; numTurns: number; usage: AgentUsage } {
   let costUsd = 0;
   let numTurns = 0;
-  const usage = {
+  const usage: AgentUsage = {
     input_tokens: 0,
     output_tokens: 0,
     reasoning_tokens: 0,
@@ -169,6 +173,13 @@ export function sumOpenCodeStream(stdout: string): {
       part?.type === "step-finish" || part?.type === "step_finish" || event.type === "step_finish";
     if (!isStep || !part) continue;
     numTurns += 1;
+    if (numTurns === 1) {
+      usage.first_step = {
+        input_tokens: part.tokens?.input ?? 0,
+        cache_read_input_tokens: part.tokens?.cache?.read ?? 0,
+        cache_creation_input_tokens: part.tokens?.cache?.write ?? 0,
+      };
+    }
     costUsd += part.cost ?? 0;
     usage.input_tokens += part.tokens?.input ?? 0;
     usage.output_tokens += part.tokens?.output ?? 0;

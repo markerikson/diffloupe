@@ -1,6 +1,7 @@
 import type { FindingSeverity, ReviewRun, RunUserState } from "../types/review-run.ts";
 import { formatTarget } from "./format-run.ts";
 import { targetKey } from "./run-store.ts";
+import { cacheShare, emptyUsageTotals, formatUsage, runUsageTotals, type UsageTotals } from "./usage.ts";
 
 export interface StatsInput {
   run: ReviewRun;
@@ -21,6 +22,8 @@ export interface RoundStats {
   costUsd: number;
   scope?: "full" | "incremental";
   promptVersion?: string;
+  /** Share of this run's prompt tokens read from the cache, when it recorded tokens. */
+  cacheShare?: number;
 }
 
 export type SeverityCounts = Record<FindingSeverity, number>;
@@ -39,6 +42,8 @@ export interface ChainStats {
   /** Findings still listed on the last run and not dismissed. Whether they were fixed is unknown. */
   open: number;
   costUsd: number;
+  /** Tokens over the rounds that recorded them. */
+  usage: UsageTotals;
   lastAt: string;
 }
 
@@ -63,6 +68,7 @@ export interface StatsTotals {
   /** Fixed over raised, for findings on the change only. Null when nothing was raised. */
   resolutionRate: number | null;
   costUsd: number;
+  usage: UsageTotals;
 }
 
 const UNRECORDED = "unrecorded";
@@ -106,7 +112,11 @@ function summarizeChain(members: StatsInput[], byId: Map<string, StatsInput>): C
   let fixed = 0;
   let fixedPreexisting = 0;
   const dismissed = new Set<string>();
+  const usage = emptyUsageTotals();
   const rounds = members.map(({ run, state }, index): RoundStats => {
+    const own = runUsageTotals(run);
+    runUsageTotals(run, usage);
+    const share = own.calls ? cacheShare(own) : null;
     const fresh = run.findings.filter((f) => !f.carriedFrom);
     for (const f of fresh) {
       if (f.preexisting) raisedPreexisting++;
@@ -130,6 +140,7 @@ function summarizeChain(members: StatsInput[], byId: Map<string, StatsInput>): C
       costUsd: run.meta.costUsd,
       ...(run.meta.reviewScope ? { scope: run.meta.reviewScope } : {}),
       ...(run.meta.promptVersion ? { promptVersion: run.meta.promptVersion } : {}),
+      ...(share !== null ? { cacheShare: share } : {}),
     };
   });
   const lastDismissed = new Set(
@@ -147,6 +158,7 @@ function summarizeChain(members: StatsInput[], byId: Map<string, StatsInput>): C
     dismissed: dismissed.size,
     open: last.run.findings.filter((f) => !lastDismissed.has(f.id)).length,
     costUsd: rounds.reduce((n, r) => n + r.costUsd, 0),
+    usage,
     lastAt: last.run.createdAt,
   };
 }
@@ -163,6 +175,16 @@ export function statsTotals(chains: ChainStats[]): StatsTotals {
     fixed: chains.reduce((n, c) => n + c.fixed, 0),
     resolutionRate: raised ? fixedOnChange / raised : null,
     costUsd: chains.reduce((n, c) => n + c.costUsd, 0),
+    usage: chains.reduce((sum, c) => {
+      sum.input += c.usage.input;
+      sum.output += c.usage.output;
+      sum.reasoning += c.usage.reasoning;
+      sum.cacheRead += c.usage.cacheRead;
+      sum.cacheWrite += c.usage.cacheWrite;
+      sum.calls += c.usage.calls;
+      sum.firstStepShares.push(...c.usage.firstStepShares);
+      return sum;
+    }, emptyUsageTotals()),
   };
 }
 
@@ -226,8 +248,13 @@ export function formatStats(chains: ChainStats[], versions?: VersionStats[]): st
     for (const r of c.rounds) {
       const pre = r.newPreexisting ? ` (${r.newPreexisting} pre-existing)` : "";
       const scope = r.scope === "incremental" ? ", changes only" : "";
-      lines.push(`  round ${r.round}  ${r.id}  ${r.new} new${pre}, ${r.carried} carried, ${r.resolved} fixed${scope}, ${usd(r.costUsd)}`);
+      const cache = r.cacheShare === undefined ? "" : `, ${percent(r.cacheShare)} cached`;
+      lines.push(
+        `  round ${r.round}  ${r.id}  ${r.new} new${pre}, ${r.carried} carried, ${r.resolved} fixed${scope}, ${usd(r.costUsd)}${cache}`,
+      );
     }
+    const usage = formatUsage(c.usage);
+    if (usage) lines.push(`  tokens: ${usage}`);
     const perFixed = c.fixed ? `, ${usd(c.costUsd / c.fixed)} per fixed finding` : "";
     lines.push(`  raised: ${severityLine(c.raised)}${c.raisedPreexisting ? `; ${c.raisedPreexisting} pre-existing` : ""}`);
     lines.push(`  fixed ${c.fixed}, dismissed ${c.dismissed}, still open at last run ${c.open}${perFixed}`);
@@ -238,6 +265,8 @@ export function formatStats(chains: ChainStats[], versions?: VersionStats[]): st
     `${t.chains} chain${t.chains === 1 ? "" : "s"}, ${t.meanRounds.toFixed(1)} rounds on average, ${percent(t.pastThreeRounds)} past three rounds`,
     `${t.raised} raised on the change, ${t.fixed} fixed, resolution rate ${percent(t.resolutionRate)}, ${usd(t.costUsd)} total`,
   );
+  const usage = formatUsage(t.usage);
+  if (usage) lines.push(`tokens over ${t.usage.calls} agent calls: ${usage}`);
   if (versions) {
     lines.push("", "By prompt version / instructions:");
     for (const v of versions) {

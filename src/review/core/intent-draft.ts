@@ -14,7 +14,7 @@ import { ARTIFACTS, EFFORT_AUX, INTENT_BUDGET, MODEL_INTENT, OUT } from "./confi
 import { compactForIntent } from "./lib/hunks.ts";
 import { exists, readJson, writeJson } from "./lib/io.ts";
 import { INTENT_DRAFT_SYSTEM, intentDraftPrompt, type IntentDraft, type StatedIntent } from "./prompts.ts";
-import { agent } from "./runner.ts";
+import { agent, type AgentUsage } from "./runner.ts";
 
 /** About 65K tokens: room for every file of a large change at under a cent on the smallest tier. */
 export const INTENT_DIFF_CHARS = 160_000;
@@ -25,6 +25,7 @@ export interface IntentDraftRecord {
   model: string;
   costUsd: number;
   wallMs: number;
+  usage?: AgentUsage;
   /** True when the draft came from an earlier run on the same head. */
   cached: boolean;
   /** Why there is no draft. */
@@ -100,7 +101,7 @@ export async function draftIntent(o: {
     tools: "none",
     system: { name: "intent", text: INTENT_DRAFT_SYSTEM },
   });
-  const spent = { costUsd: res.costUsd, wallMs: res.wallMs, cached: false };
+  const spent = { costUsd: res.costUsd, wallMs: res.wallMs, cached: false, ...(res.usage ? { usage: res.usage } : {}) };
   const draft = parseIntentDraft(res.payload);
   if (!draft) {
     const failure = res.failure?.message ?? "the draft has no title or goal";

@@ -1271,6 +1271,22 @@ describe("sumOpenCodeStream", () => {
     expect(out.usage.cache_creation_input_tokens).toBe(40);
   });
 
+  it("records the first step's prompt tokens on their own, to show whether the shared prefix hit the cache", () => {
+    const out = sumOpenCodeStream(
+      [
+        step(0.1, { input: 7, cache: { read: 300, write: 50 } }),
+        step(0.1, { input: 2, cache: { read: 900, write: 0 } }),
+      ].join("\n"),
+    );
+    expect(out.usage.first_step).toEqual({
+      input_tokens: 7,
+      cache_read_input_tokens: 300,
+      cache_creation_input_tokens: 50,
+    });
+    expect(out.usage.cache_read_input_tokens).toBe(1200);
+    expect(sumOpenCodeStream("").usage.first_step).toBeUndefined();
+  });
+
   it("counts a step whichever separator the stream used in its name", () => {
     expect(sumOpenCodeStream(step(1, {}, "step_finish")).numTurns).toBe(1);
     expect(sumOpenCodeStream(step(1, {}, "step-finish")).numTurns).toBe(1);

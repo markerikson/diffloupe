@@ -8,6 +8,7 @@ import {
   type RunFinding,
   type RunHeader,
 } from "../types/review-run.ts";
+import { formatUsage, runUsageTotals } from "./usage.ts";
 
 export function formatTarget(target: ReviewTarget): string {
   if (target.kind === "pr") return `PR #${target.number} ${target.title}`;
@@ -127,6 +128,8 @@ export function formatRun(run: ReviewRun): string {
     `${run.findings.length} findings, ${run.files.length} files, $${run.meta.costUsd.toFixed(2)}, ${Math.round(run.meta.wallMs / 1000)}s`,
     `anchors: ${describeAnchors(run)}`,
   );
+  const usage = formatUsage(runUsageTotals(run));
+  if (usage) out.push(`tokens: ${usage}`);
   return out.join("\n");
 }
 

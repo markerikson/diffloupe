@@ -104,6 +104,26 @@ describe.each(FIXTURES)("buildReviewRun: %s", (name) => {
 });
 
 describe("buildReviewRun details", () => {
+  test("copies slice and stage token usage from the core record", () => {
+    const fx = loadFixture("large-pr");
+    const record = fx.input.result.record as Record<string, unknown>;
+    const tokens = { input_tokens: 5, output_tokens: 2, cache_read_input_tokens: 90, cache_creation_input_tokens: 0 };
+    const run = buildReviewRun({
+      ...fx.input,
+      result: {
+        ...fx.input.result,
+        record: {
+          ...record,
+          sliceRuns: (record.sliceRuns as Record<string, unknown>[]).map((s) => ({ ...s, usage: tokens })),
+          merge: { costUsd: 0.2, wallMs: 100, usage: tokens },
+        },
+      },
+    });
+    expect(run.meta.slices[0]!.usage).toEqual({ input: 5, output: 2, reasoning: 0, cacheRead: 90, cacheWrite: 0 });
+    expect(run.meta.stages).toEqual({ coordinator: { costUsd: 0.2, wallMs: 100, usage: run.meta.slices[0]!.usage! } });
+    expect(ReviewRunSchema(run)).not.toBeInstanceOf(type.errors);
+  });
+
   test("large PR: chapters, supporting units, trailing groups and intent", () => {
     const fx = loadFixture("large-pr");
     const run = fx.build();

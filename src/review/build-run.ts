@@ -26,6 +26,7 @@ import { classifySurface } from "./core/surface.ts";
 import type { RunReviewResult } from "./core/pipeline.ts";
 import type { ReviewUnit, Walkthrough } from "./core/prompts.ts";
 import { fingerprintOf, mapLine, type LineHunk } from "./prior-run.ts";
+import { stagesFromRecord, toRunUsage } from "./usage.ts";
 
 /** The parts of the core's run record this module reads. */
 interface CoreRecord {
@@ -41,6 +42,7 @@ interface CoreRecord {
     ok: boolean;
     costUsd?: number;
     wallMs?: number;
+    usage?: unknown;
   }[];
   walkthrough?: Walkthrough | null;
   verifiedFindings?: Finding[];
@@ -505,14 +507,19 @@ export function buildReviewRun(input: BuildReviewRunInput): ReviewRun {
     ...(missing.length ? { missing } : {}),
   };
 
-  const slices: RunSlice[] = (record?.sliceRuns ?? []).map((s) => ({
-    unit: s.unit,
-    part: s.part,
-    parts: s.parts,
-    status: s.ok ? "ok" : "failed",
-    costUsd: s.costUsd ?? 0,
-    wallMs: s.wallMs ?? 0,
-  }));
+  const slices: RunSlice[] = (record?.sliceRuns ?? []).map((s) => {
+    const usage = toRunUsage(s.usage);
+    return {
+      unit: s.unit,
+      part: s.part,
+      parts: s.parts,
+      status: s.ok ? "ok" : "failed",
+      costUsd: s.costUsd ?? 0,
+      wallMs: s.wallMs ?? 0,
+      ...(usage ? { usage } : {}),
+    };
+  });
+  const stages = stagesFromRecord(input.result.record);
   const mergeMode = record?.mergeMode;
 
   return {
@@ -545,6 +552,7 @@ export function buildReviewRun(input: BuildReviewRunInput): ReviewRun {
       wallMs: record?.wallMs ?? input.result.wallMs,
       costUsd: record?.totalCostUsd ?? input.result.costUsd,
       slices,
+      ...(stages ? { stages } : {}),
       rejectedCount: record?.rejected?.length ?? 0,
       coreSource: input.coreSource,
       ...(mergeMode && MERGE_MODES.has(mergeMode)

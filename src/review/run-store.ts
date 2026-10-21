@@ -7,6 +7,7 @@ import path from "node:path";
 import { appendFile, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { run as runProcess, text } from "./core/lib/proc.ts";
 import { type } from "arktype";
+import { hasUsage, withRecordUsage } from "./usage.ts";
 import {
   ReviewRunSchema,
   ReviewTargetSchema,
@@ -84,6 +85,20 @@ export async function loadRun(id: string): Promise<ReviewRun> {
   const run = ReviewRunSchema(raw);
   if (run instanceof type.errors) throw new InvalidRunError(id, run.summary, raw);
   return run;
+}
+
+/**
+ * `loadRun`, with token usage filled from `raw/record.json` for runs saved
+ * before `run.json` carried it.
+ */
+export async function loadRunWithUsage(id: string): Promise<ReviewRun> {
+  const run = await loadRun(id);
+  if (hasUsage(run)) return run;
+  try {
+    return withRecordUsage(run, JSON.parse(await readFile(path.join(runDir(id), "raw", "record.json"), "utf8")));
+  } catch {
+    return run;
+  }
 }
 
 export async function loadState(id: string): Promise<RunUserState> {

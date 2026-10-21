@@ -145,6 +145,21 @@ export const RunFindingSchema = type({
 });
 export type RunFinding = typeof RunFindingSchema.infer;
 
+/**
+ * Tokens one agent call used. `input` excludes cached tokens: the prompt is
+ * `input + cacheRead + cacheWrite`. `firstStep` is the session's first request
+ * alone, which shows whether the shared prompt prefix hit the prompt cache.
+ */
+export const RunUsageSchema = type({
+  input: "number",
+  output: "number",
+  reasoning: "number",
+  cacheRead: "number",
+  cacheWrite: "number",
+  "firstStep?": { input: "number", cacheRead: "number", cacheWrite: "number" },
+});
+export type RunUsage = typeof RunUsageSchema.infer;
+
 export const RunSliceSchema = type({
   unit: "string",
   part: "number",
@@ -152,8 +167,14 @@ export const RunSliceSchema = type({
   status: "'ok' | 'failed'",
   costUsd: "number",
   wallMs: "number",
+  "usage?": RunUsageSchema,
 });
 export type RunSlice = typeof RunSliceSchema.infer;
+
+/** Cost, time and tokens of a single-call stage. */
+export const RunStageCostSchema = type({ costUsd: "number", wallMs: "number", "usage?": RunUsageSchema });
+export type RunStageCost = typeof RunStageCostSchema.infer;
+
 
 /** `remote`: `root` is DiffLoupe's partial copy of the GitHub repository, not the user's clone. */
 export const RunRepoSchema = type({ root: "string", "slug?": "string", "remote?": "boolean" });
@@ -178,6 +199,7 @@ export function runKind(run: { meta: { kind?: RunKind | undefined } }): RunKind 
  *   the reviewers read, `meta.scopeReason` says why a re-review went full.
  * - `meta.promptVersion`, `meta.instructionsHash`: short hashes of the review
  *   prompts and the repo's review instructions, to compare runs across versions.
+ * - `meta.slices[].usage`, `meta.stages`: tokens per agent call, when recorded.
  * - `round`: 1 for a first review, one more than the prior run's otherwise.
  * - `untrackedSkipped`: untracked files left out of a working-tree snapshot
  *   because of their size.
@@ -230,6 +252,12 @@ export const ReviewRunSchema = type({
     wallMs: "number",
     costUsd: "number",
     slices: RunSliceSchema.array(),
+    /** The single-call stages; a stage that did not run is absent. */
+    "stages?": {
+      "coordinator?": RunStageCostSchema,
+      "walkthrough?": RunStageCostSchema,
+      "intent?": RunStageCostSchema,
+    },
     rejectedCount: "number",
     coreSource: "string",
     "mergeMode?": "'coordinator' | 'nothing-to-merge' | 'deterministic-fallback'",

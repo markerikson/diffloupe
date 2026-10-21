@@ -3,7 +3,11 @@ import { loadFixture } from "./__fixtures__/load.ts";
 import { chainStats, formatStats, statsByVersion, statsTotals, type StatsInput } from "./run-stats.ts";
 import type { ReviewRun, RunFinding } from "../types/review-run.ts";
 
-const base = loadFixture("small-commit").build();
+const built = loadFixture("small-commit").build();
+const base: ReviewRun = {
+  ...built,
+  meta: { ...built.meta, slices: built.meta.slices.map(({ usage: _usage, ...s }) => s) },
+};
 const template = base.findings[0]!;
 
 const finding = (id: string, extra: Partial<RunFinding> = {}): RunFinding => ({ ...template, id, ...extra });
@@ -99,6 +103,24 @@ describe("formatStats", () => {
     expect(text).toContain("fixed 3, dismissed 1, still open at last run 0, $1.00 per fixed finding");
     expect(text).toContain("resolution rate 50%");
     expect(text).toContain("By prompt version / instructions:");
+  });
+
+  test("adds token lines only for runs that recorded usage", () => {
+    expect(formatStats(chainStats(inputs))).not.toContain("tokens");
+    const usage = { input: 10, output: 5, reasoning: 0, cacheRead: 30, cacheWrite: 0, firstStep: { input: 10, cacheRead: 30, cacheWrite: 0 } };
+    const withUsage = run("u", "2026-10-05T00:00:00Z", {
+      findings: [finding("u1")],
+      meta: { ...base.meta, slices: base.meta.slices.map((s) => ({ ...s, usage })) },
+    });
+    const chains = chainStats([input(withUsage)]);
+    const n = base.meta.slices.length;
+    expect(chains[0]!.rounds[0]!.cacheShare).toBe(0.75);
+    expect(chains[0]!.usage.calls).toBe(n);
+    expect(statsTotals(chains).usage.cacheRead).toBe(30 * n);
+    const text = formatStats(chains);
+    expect(text).toContain("75% cached");
+    expect(text).toContain("first requests 75% from cache");
+    expect(text).toContain(`tokens over ${n} agent calls`);
   });
 
   test("says so when nothing matches", () => {

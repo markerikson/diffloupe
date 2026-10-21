@@ -453,6 +453,10 @@ async function setup(ctx: GovernorContext) {
       reasoning_tokens: 0,
       cache_read_input_tokens: 0,
       cache_creation_input_tokens: 0,
+      /** The session's first request alone: whether the shared prompt prefix hit the cache. */
+      first_step: undefined as
+        | { input_tokens: number; cache_read_input_tokens: number; cache_creation_input_tokens: number }
+        | undefined,
     },
   };
   /**
@@ -506,6 +510,11 @@ async function setup(ctx: GovernorContext) {
     spent += cost;
     usage.costUsd += cost;
     usage.numTurns += 1;
+    usage.usage.first_step ??= {
+      input_tokens: step.tokens?.input ?? 0,
+      cache_read_input_tokens: step.tokens?.cache?.read ?? 0,
+      cache_creation_input_tokens: step.tokens?.cache?.write ?? 0,
+    };
     usage.usage.input_tokens += step.tokens?.input ?? 0;
     usage.usage.output_tokens += step.tokens?.output ?? 0;
     usage.usage.reasoning_tokens += step.tokens?.reasoning ?? 0;

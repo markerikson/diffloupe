@@ -5,12 +5,20 @@ import pc from "picocolors";
 import { runMarkdown } from "../review/export.js";
 import { formatRun, formatRunList } from "../review/format-run.js";
 import { chainStats, formatStats, statsByVersion, statsTotals } from "../review/run-stats.js";
-import { deleteRun, listRuns, loadRun, loadState, orphanScratch, pruneCandidates } from "../review/run-store.js";
+import {
+  deleteRun,
+  listRuns,
+  loadRun,
+  loadRunWithUsage,
+  loadState,
+  orphanScratch,
+  pruneCandidates,
+} from "../review/run-store.js";
 import type { ReviewRun, RunHeader, RunKind } from "../types/review-run.js";
 
-async function loadOrExit(id: string): Promise<ReviewRun> {
+async function loadOrExit(id: string, load: (id: string) => Promise<ReviewRun> = loadRun): Promise<ReviewRun> {
   try {
-    return await loadRun(id);
+    return await load(id);
   } catch (error) {
     console.error(pc.red(`No run.json for ${id}: ${error instanceof Error ? error.message : String(error)}`));
     process.exit(1);
@@ -36,7 +44,7 @@ export function createRunsCommand(): Command {
     .option("--markdown", "Print the findings as markdown, as the web UI's Copy all does", false)
     .option("--over-cap", "With --markdown, include findings over the posting cap", false)
     .action(async (id: string, options: { json: boolean; markdown: boolean; overCap: boolean }) => {
-      const run = await loadOrExit(id);
+      const run = await loadOrExit(id, options.json || options.markdown ? loadRun : loadRunWithUsage);
       if (options.markdown) {
         process.stdout.write(runMarkdown(run, { includeOverCap: options.overCap }));
         return;
@@ -66,7 +74,7 @@ export function createRunsCommand(): Command {
           (options.repo === undefined || h.repo.root === repoPath || h.repo.slug === options.repo),
       );
       const inputs = await Promise.all(
-        headers.map(async (h) => ({ run: await loadRun(h.id), state: await loadState(h.id) })),
+        headers.map(async (h) => ({ run: await loadRunWithUsage(h.id), state: await loadState(h.id) })),
       );
       const cutoff = sinceMs === undefined ? undefined : new Date(Date.now() - sinceMs).toISOString();
       const chains = chainStats(inputs).filter((c) => cutoff === undefined || c.lastAt >= cutoff);
