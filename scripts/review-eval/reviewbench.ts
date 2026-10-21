@@ -4,6 +4,7 @@
 //
 // Outputs go to <eval dir>/reviewbench. RB_DIR points at an existing ReviewBench checkout
 // (with `npm ci` done); otherwise `fetch` clones one into <eval dir>/reviewbench/bench.
+// DIFFLOUPE_SRC=<checkout> makes `run` review with another DiffLoupe checkout.
 //   bun scripts/review-eval/reviewbench.ts fetch [--set test|full] [--pr <key>...]
 //   bun scripts/review-eval/reviewbench.ts run --label <name> [--pr <key>...] [-- <diffloupe review args>]
 //   bun scripts/review-eval/reviewbench.ts convert --label <name>
@@ -17,7 +18,8 @@ import type { RunFinding, ReviewRun } from "../../src/types/review-run.ts";
 import { EVAL_DIR, git } from "./env.ts";
 
 const ROOT = path.join(EVAL_DIR, "reviewbench");
-const WORKTREE = path.resolve(import.meta.dir, "../..");
+// DIFFLOUPE_SRC runs the reviews from another checkout, to score a branch with this harness.
+const WORKTREE = path.resolve(process.env.DIFFLOUPE_SRC ?? path.join(import.meta.dir, "../.."));
 const NODE_BIN = path.join(process.env.HOME ?? "", ".local/share/fnm/node-versions/v25.8.1/installation/bin");
 const REVIEW_TIMEOUT_MS = 30 * 60_000;
 const CLAUDE_PRODUCERS = ["llm_review:claude-", "ccr:claude-"];
@@ -44,6 +46,7 @@ interface RunRecord {
   costUsd?: number;
   wallMs: number;
   args: string[];
+  src?: string;
 }
 
 interface CandidateFinding {
@@ -223,6 +226,7 @@ async function reviewOne(key: string, p: BenchPr): Promise<RunRecord> {
     exit,
     wallMs: Date.now() - start,
     args: passthrough,
+    src: WORKTREE,
   };
   if (saved) rec.runId = path.basename(saved[2]!);
   const run = loadRun(rec);
@@ -306,6 +310,27 @@ function toCandidate(f: RunFinding, producer: string, mappers: Map<string, (line
   return { file: a.file, start_line: Math.max(start, 1), end_line: Math.max(end, start, 1), message, producer };
 }
 
+type SiteRef = { file: string; line?: number };
+
+/**
+ * One candidate per extra location of a finding (`alsoAt`, from DiffLoupe builds that report
+ * repeated defects once). Lines are head-side, as the reviewer wrote them.
+ */
+function siteCandidates(f: RunFinding & { alsoAt?: SiteRef[] }, producer: string): CandidateFinding[] {
+  const message = [f.title, f.explanation, f.impact].filter(Boolean).join("\n\n");
+  return (f.alsoAt ?? []).map((s) => ({
+    file: s.file,
+    start_line: Math.max(s.line ?? 1, 1),
+    end_line: Math.max(s.line ?? 1, 1),
+    message: `Same problem as the finding at ${f.file}:\n\n${message}`,
+    producer,
+  }));
+}
+
+function candidatesFor(f: RunFinding, producer: string, mappers: Map<string, (line: number) => number>): CandidateFinding[] {
+  return [toCandidate(f, producer, mappers), ...siteCandidates(f, `${producer}:also-at`)];
+}
+
 function cmdConvert(): void {
   const corpus = loadCorpus("full");
   for (const rec of Object.values(loadRuns())) {
@@ -316,8 +341,8 @@ function cmdConvert(): void {
       continue;
     }
     const mappers = oldToNewMappers(repoDir(rec.key), p.base, p.head);
-    const posted = run.findings.map((f) => toCandidate(f, "diffloupe", mappers));
-    const overCap = (run.overCapFindings ?? []).map((f) => toCandidate(f, "diffloupe:over-cap", mappers));
+    const posted = run.findings.flatMap((f) => candidatesFor(f, "diffloupe", mappers));
+    const overCap = (run.overCapFindings ?? []).flatMap((f) => candidatesFor(f, "diffloupe:over-cap", mappers));
     const identity = { repo: p.repo, pr_number: p.pr_number, base: p.base, head: p.head };
     const usage = { cost_usd: run.meta?.costUsd ?? rec.costUsd ?? 0, time_in_ms: run.meta?.wallMs ?? rec.wallMs };
     writeJson(path.join(labelDir(), "posted", `${rec.key}.json`), { pr: identity, agent: "diffloupe", findings: posted, usage });
@@ -327,13 +352,22 @@ function cmdConvert(): void {
       findings: [...posted, ...overCap],
       usage,
     });
-    console.log(`${rec.key}: ${posted.length} posted, ${overCap.length} over cap`);
+    const sites = [...posted, ...overCap].filter((c) => c.producer.endsWith(":also-at")).length;
+    console.log(`${rec.key}: ${posted.length} posted, ${overCap.length} over cap (${sites} from alsoAt)`);
   }
 }
 
 // --- scan ------------------------------------------------------------------------------------
 
-const SHELL_LEAKS = [/github\.com/i, /\bgh\s/, /\bcurl\b/, /\bwget\b/, /\bgit\s+(fetch|pull|clone|ls-remote)\b/];
+// Commands that reach the network. A URL alone is not a hit: reviewers grep for "github.com"
+// in the checkout, which reads nothing about the PR.
+const SHELL_LEAKS = [
+  /\bcurl\b/,
+  /\bwget\b/,
+  /(^|[\s;&|("'`])gh\s+(pr|api|issue|repo|run|search|browse|release)\b/,
+  /\bgit\s+(fetch|pull|clone|ls-remote)\b/,
+  /\b(urllib|requests\.(get|post)|http\.get|fetch\(|Invoke-WebRequest)/,
+];
 
 interface ScanHit {
   file: string;
@@ -620,7 +654,7 @@ function cmdReport(): void {
     const usage = sumUsage(path.join(labelDir(), name, "usage.jsonl"));
     const judged = results.per_pr.length;
     console.log(`\n${name}: ${judged} PRs judged, judge $${usage.cost.toFixed(2)} total ($${(usage.cost / Math.max(judged, 1)).toFixed(2)}/PR)`);
-    console.log("  split       PRs  findings/PR  grounded P  grounded R  augmented P  high+med R (golden)");
+    console.log("  split       PRs  high+med R (golden)  grounded P  augmented P  candidates/PR  grounded R");
     const groups: Array<[string, Stratified[]]> = [["all", results.per_pr.map((r) => r.metrics)]];
     const js = results.per_pr.filter((r) => corpus.has(r.pr_key) && isJsPr(r.pr_key, corpus.get(r.pr_key)!));
     const other = results.per_pr.filter((r) => !js.includes(r));
@@ -628,7 +662,7 @@ function cmdReport(): void {
     for (const [g, rows] of groups) {
       const m = pooled(rows);
       console.log(
-        `  ${g.padEnd(10)} ${String(m.prs).padStart(4)}  ${(m.candidates / Math.max(m.prs, 1)).toFixed(1).padStart(11)}  ${pct(m.groundedP).padStart(10)}  ${pct(m.groundedR).padStart(10)}  ${pct(m.augmentedP).padStart(11)}  ${pct(m.hmRecall)} (${m.hmGolden})`,
+        `  ${g.padEnd(10)} ${String(m.prs).padStart(4)}  ${`${pct(m.hmRecall)} (${m.hmGolden})`.padEnd(19)}  ${pct(m.groundedP).padStart(10)}  ${pct(m.augmentedP).padStart(11)}  ${(m.candidates / Math.max(m.prs, 1)).toFixed(1).padStart(13)}  ${pct(m.groundedR).padStart(10)}`,
       );
     }
   }
