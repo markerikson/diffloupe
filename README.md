@@ -141,6 +141,11 @@ diffloupe runs
 | `--full` | On a re-review, review every changed file instead of only the files changed since the last run |
 | `--headless` | Run without a server and print a summary to stdout |
 | `--markdown` | With `--headless`, print the full review markdown instead of the summary |
+| `--github` | PR targets only. Review for posting to GitHub: see [Running in CI](#running-in-ci) |
+| `--head <sha>` | PR targets only. Review this commit instead of the PR's current head. It must be a full 40-character SHA in the PR's history |
+| `--out <dir>` | With `--headless`, copy the review output and `result.json` into this directory |
+| `--json` | With `--headless`, print only the `result.json` object to stdout |
+| `--fail-on <severity>` | With `--headless`, exit 3 if a posted finding is at this severity or above: `blocker`, `should-fix`, `nice-to-have`, `question` |
 
 Untracked files over 1 MB are skipped and listed in the run.
 
@@ -186,7 +191,92 @@ Runs are stored under `$XDG_DATA_HOME/diffloupe/runs/<id>/` (`~/.local/share/dif
 
 ### `diffloupe doctor`
 
-Checks Bun, git, OpenCode, tilth and `gh`; prints the model for each stage and where it came from, and the source of each provider credential; and shows how much disk the data directory uses. Exits non-zero if a review could not run. `--config <file>` includes a per-repo settings file in the model lookup.
+Checks Bun, git, OpenCode, tilth and `gh`; prints the model for each stage and where it came from, and the source of each provider credential; and shows how much disk the data directory uses. Exits non-zero if a review could not run. `--config <file>` includes a per-repo settings file in the model lookup. `--strict` also exits non-zero on warnings, such as `gh` not being logged in or a model with no known cost. `--json` prints the checks as a JSON array of `{ name, status, detail }`.
+
+## Running in CI
+
+`diffloupe review '#<n>' --headless --github --head <sha> --out <dir>` reviews a pull request for a bot that posts the result. DiffLoupe itself does not post anything: it writes the GitHub API payloads, and a later step sends them.
+
+`--github` changes how a re-review finds the earlier rounds:
+
+- Earlier rounds come only from the PR's comments on GitHub, through `gh`. Runs saved on the CI machine are not used for carried-over findings, so a cached data directory cannot make the bot reply to comments that are not on the PR.
+- A `gh` failure while reading the PR description or its comments fails the run instead of reviewing without them.
+- The run writes `payloads.json` with the summary comment, the inline review and the replies.
+- The summary comment gets a "Copy all findings as Markdown" fold. If it would push the comment over GitHub's size limit, the comment links to the `findings.md` file in the run's artifact instead.
+
+`--head` pins the review to the commit the workflow was triggered for, so a push during the run does not change what gets reviewed.
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | The review finished, or was skipped because the change has no code files |
+| 1 | The run failed, including a `gh` failure under `--github` |
+| 2 | The run could not start: a bad flag, target, model or credential |
+| 3 | `--fail-on` was given and a posted finding is at or above that severity |
+| 130 | The run was cancelled |
+
+### `result.json`
+
+Written to `--out` for every finished, failed, cancelled or skipped run, and printed by `--json`:
+
+```json
+{
+  "id": "backend-pr42-0123abcdef45-20261021183000",
+  "status": "complete",
+  "reviewed": true,
+  "skipReason": null,
+  "pr": 42,
+  "base": "<sha>",
+  "head": "<sha>",
+  "runDir": "/home/runner/.local/share/diffloupe/runs/backend-pr42-0123abcdef45-20261021183000",
+  "outDir": "review-out",
+  "payloads": "review-out/payloads.json",
+  "artifactName": "ai-code-review-42-0123abcde",
+  "costUsd": 1.62,
+  "wallMs": 412000,
+  "budgetStopped": false,
+  "skippedSlices": 0,
+  "findings": {
+    "total": 7,
+    "posted": 6,
+    "bySeverity": { "blocker": 0, "should-fix": 2, "nice-to-have": 3, "question": 1 }
+  },
+  "round": 2,
+  "incremental": true,
+  "version": "0.4.0"
+}
+```
+
+`status` is `complete`, `failed`, `cancelled` or `skipped`. `skipReason` is `no-code-files` for a skipped run. `payloads` is `null` when there is nothing to post. `findings.posted` counts the findings in the comments; `total` adds the ones over the comment cap, and `bySeverity` counts only posted findings. `artifactName` is the name the summary comment links to, so upload `--out` under that name.
+
+`--out` also holds `review.md`, `payloads.json`, `findings.md`, `record.json`, `units.json`, `byClass.json`, `run.json` and the detail report `<run id>.detail.md`. Files a run did not produce are left out.
+
+### Failing the check on findings
+
+Use a separate gate job instead of `--fail-on` when the comments are posted by a later job. The review job then fails only when the review breaks, and the gate job, which is the required check, fails only on findings:
+
+```yaml
+gate:
+  needs: [review, post]
+  if: ${{ !cancelled() }}
+  runs-on: ubuntu-latest
+  steps:
+    - uses: actions/download-artifact@v4
+      if: ${{ needs.review.outputs.artifact != '' }}
+      with:
+        name: ${{ needs.review.outputs.artifact }}
+        path: review
+    - run: |
+        [ "${{ needs.review.result }}" = "success" ] || exit 0
+        [ -f review/result.json ] || exit 0
+        blockers=$(jq '.findings.bySeverity.blocker // 0' review/result.json)
+        [ "$blockers" -eq 0 ] || { echo "::error::$blockers blocker finding(s)"; exit 1; }
+```
+
+This passes when the review job fails, so an outage does not block merges; change the first `exit 0` to `exit 1` for the opposite. Gate on `blocker` only: findings vary between runs, and a lower threshold blocks merges on false positives. `--fail-on` suits a single job or a local script. It exits 3 after writing `--out`, and ignores findings over the comment cap.
+
+Run `diffloupe doctor --strict` before the review to fail fast on a missing tool or credential.
 
 ## Configuration
 
