@@ -63,6 +63,12 @@ test("linkDetailArtifact swaps the run link for the artifact", () => {
   expect(linkDetailArtifact(body, " ")).toBe(body);
 });
 
+test("linkDetailArtifact keeps the run link when the artifact link would pass the comment limit", () => {
+  const link = "📄 **[Full review detail](https://github.com/a/b/actions/runs/1)** — download";
+  const body = link + "x".repeat(65536 - link.length);
+  expect(linkDetailArtifact(body, "https://github.com/a/b/actions/runs/1/artifacts/9")).toBe(body);
+});
+
 describe("postPayloads", () => {
   const target = { slug: SLUG, pr: "7", head: HEAD, artifactUrl: "https://x/artifacts/9" };
 

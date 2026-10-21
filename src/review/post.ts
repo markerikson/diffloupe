@@ -120,11 +120,19 @@ export function checkedEndpoints(payloads: Payloads, slug: string, pr: string): 
   return { summary, review, replies };
 }
 
-/** Points the summary's detail link at the uploaded artifact instead of the run page. */
+/** GitHub's comment size limit, the same value as `COMMENT_LIMIT` in core/render.ts. */
+const COMMENT_LIMIT = 65536;
+
+/**
+ * Points the summary's detail link at the uploaded artifact instead of the run
+ * page. The review sized the body to GitHub's limit with the shorter run URL
+ * in it, so the link stays as it is when the swap would go over.
+ */
 export function linkDetailArtifact(body: string, artifactUrl?: string): string {
   const url = artifactUrl?.trim();
   if (!url) return body;
-  return body.replace(/(\[Full review detail\]\()[^)]*(\))/, `$1${url}$2`);
+  const linked = body.replace(/(\[Full review detail\]\()[^)]*(\))/, `$1${url}$2`);
+  return linked.length <= COMMENT_LIMIT ? linked : body;
 }
 
 /**
