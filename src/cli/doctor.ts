@@ -4,7 +4,7 @@ import { Command } from "commander";
 import pc from "picocolors";
 import { run } from "../review/core/lib/proc.ts";
 import { describeSource, MODEL_STAGES } from "../review/models.ts";
-import { INSTALL_HINTS } from "../review/run-driver.ts";
+import { INSTALL_HINTS, supportedOpenCode } from "../review/run-driver.ts";
 import { artifactsDir, dataDir, runsDir, scratchDir } from "../review/run-store.ts";
 import { loadReviewSettings, type ReviewSettings } from "../review/settings.ts";
 import { resolveRunSetup, type RunSetup } from "../review/setup.ts";
@@ -91,7 +91,7 @@ export async function runDoctorChecks(deps: DoctorDeps): Promise<Check[]> {
   checks.push(await toolCheck(deps, "git", "fail"));
   checks.push(
     await toolCheck(deps, "opencode", "fail", (v) =>
-      v && v.startsWith("2.")
+      supportedOpenCode(v)
         ? { status: "ok" }
         : { status: "fail", note: "needs OpenCode 2.x (https://opencode.ai/v2/docs/)" },
     ),

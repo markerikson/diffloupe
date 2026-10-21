@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { text } from "./core/lib/proc.ts";
-import { executeRun, prepareRun } from "./run-driver.ts";
+import { executeRun, parseOpenCodeVersion, prepareRun, supportedOpenCode } from "./run-driver.ts";
 import { deleteRun, listRuns } from "./run-store.ts";
 
 describe("diff runs", () => {
@@ -104,5 +104,29 @@ describe("diff runs", () => {
     await expect(prepareRun({ kind: "diff", repo, target: "HEAD", walkthrough: true }, repo, () => {})).rejects.toThrow(
       /opencode/,
     );
+  });
+
+  it("refuses to start a walkthrough with an OpenCode older than 2.x", async () => {
+    const fake = path.join(tmp, "bin", "opencode");
+    await writeFile(fake, "#!/bin/sh\necho 1.18.26+local.dba0415e16\n", { mode: 0o755 });
+    await expect(prepareRun({ kind: "diff", repo, target: "HEAD", walkthrough: true }, repo, () => {})).rejects.toThrow(
+      `needs OpenCode 2.x, but the opencode on PATH (${fake}) is 1.18.26`,
+    );
+    expect(await listRuns()).toEqual([]);
+  });
+});
+
+describe("OpenCode version", () => {
+  it("reads the version from either release line's output", () => {
+    expect(parseOpenCodeVersion("opencode v2.0.32\n")).toBe("2.0.32");
+    expect(parseOpenCodeVersion("1.18.26+local.dba0415e16\n")).toBe("1.18.26");
+    expect(parseOpenCodeVersion("usage: opencode")).toBeNull();
+  });
+
+  it("accepts only 2.x", () => {
+    expect(supportedOpenCode("2.0.32")).toBe(true);
+    expect(supportedOpenCode("1.19.3")).toBe(false);
+    expect(supportedOpenCode("12.0.0")).toBe(false);
+    expect(supportedOpenCode(null)).toBe(false);
   });
 });

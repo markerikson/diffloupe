@@ -44,7 +44,7 @@ Findings about code the change did not add or modify are tagged **pre-existing**
 |------|-------|
 | [Bun](https://bun.sh) 1.3 or later | Runs the CLI and the server. |
 | `git` | |
-| [OpenCode](https://opencode.ai) 2.x | Runs every agent (`npm i -g opencode-ai`). Tested with 2.0.26. DiffLoupe writes its own OpenCode config for each run, so your agents, plugins and MCP servers are not used. Your default model and your `providers` block are. |
+| [OpenCode](https://opencode.ai) 2.x | Runs every agent (`npm i -g @opencode/cli`; the older `opencode-ai` package is 1.x). Tested with 2.0.26. DiffLoupe writes its own OpenCode config for each run, so your agents, plugins and MCP servers are not used. Your default model and your `providers` block are. |
 | [tilth](https://github.com/jahala/tilth) | Code reading tools for the reviewers (`cargo install tilth`). Tested with 0.9.0. |
 | [`gh`](https://cli.github.com) | Only for pull requests. Run `gh auth login` first. |
 | A model provider credential | See [Credentials](#credentials). |

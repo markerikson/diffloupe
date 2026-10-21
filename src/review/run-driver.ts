@@ -11,7 +11,7 @@ import { loadConfig } from "../services/config.ts";
 import type { RunEvent, StartRunRequest } from "../server/types.ts";
 import type { ReviewRun, ReviewTarget, RunKind } from "../types/review-run.ts";
 import type { ReviewConfig } from "./core/config.ts";
-import { text } from "./core/lib/proc.ts";
+import { run, text } from "./core/lib/proc.ts";
 import type { Target } from "./core/lib/target.ts";
 import { runReview, type ReviewEvent } from "./core/pipeline.ts";
 import { runDiff, type RunDiffResult } from "./diff-run.ts";
@@ -48,7 +48,7 @@ import {
 
 export const INSTALL_HINTS: Record<string, string> = {
   git: "https://git-scm.com/downloads",
-  opencode: "https://opencode.ai/docs/ (npm i -g opencode-ai)",
+  opencode: "https://opencode.ai/v2/docs/ (npm i -g @opencode/cli)",
   tilth: "https://github.com/jahala/tilth (cargo install tilth)",
   gh: "https://cli.github.com/ (then `gh auth login`)",
 };
@@ -135,6 +135,33 @@ export function checkTools(
   }
 }
 
+/** True for the OpenCode versions the runner's command line is written for. */
+export function supportedOpenCode(version: string | null): boolean {
+  return version !== null && /^2\./.test(version);
+}
+
+/** The dotted version in `opencode --version` output, or null when there is none. */
+export function parseOpenCodeVersion(output: string): string | null {
+  return /\d+\.\d+(?:\.\d+)?/.exec(output)?.[0] ?? null;
+}
+
+/**
+ * Throws a TargetError when the `opencode` on PATH is not 2.x. An older one
+ * rejects the runner's flags and every agent exits before reaching a model,
+ * so the run would fail slice by slice with nothing reviewed.
+ */
+export async function checkOpenCodeVersion(): Promise<void> {
+  const bin = Bun.which("opencode", { PATH: process.env.PATH ?? "" });
+  if (!bin) return;
+  const res = await run(bin, ["--version"], { allowFail: true }).catch(() => null);
+  const version = res && res.code === 0 ? parseOpenCodeVersion(res.stdout) : null;
+  if (supportedOpenCode(version)) return;
+  throw new TargetError(
+    `DiffLoupe needs OpenCode 2.x, but the opencode on PATH (${bin}) is ${version ?? "an unknown version"}.\n` +
+      `  Install: ${INSTALL_HINTS.opencode}`,
+  );
+}
+
 export interface PreparedRun {
   id: string;
   kind: RunKind;
@@ -191,6 +218,7 @@ export async function prepareRun(
     );
   }
   checkTools(fromSpec ? (fromSpec.kind === "pr" ? `#${fromSpec.pr}` : "") : req.target, { kind, walkthrough });
+  if (!isDiff || walkthrough) await checkOpenCodeVersion();
   const localRepo = path.resolve(req.repo ?? defaultRepo);
   const spec = from ? undefined : parseTargetSpec(req.target);
   // A pull request in a repository with no clone here is diffed from a remote copy.
