@@ -17,9 +17,11 @@ import {
   PROVIDERS,
   CHILD_ENV,
   AUTH_IMPORT,
+  SUBSCRIPTION_HOME,
   repoName,
 } from "./config.ts";
 import { run } from "./lib/proc.ts";
+import { subscriptionCommand, subscriptionEnv } from "../subscription.ts";
 
 // ---------------------------------------------------------------- cancellation
 
@@ -430,6 +432,9 @@ export async function openCodeInvocation(
   // so on, whose meaning the model catalog defines.
   const variant = opts.effort;
   const model = qualifiedModel(opts.model);
+  const subscription = SUBSCRIPTION_HOME && model.startsWith("openai/")
+    ? subscriptionEnv(SUBSCRIPTION_HOME)
+    : undefined;
   const args = [
     "run",
     "--standalone",
@@ -442,8 +447,7 @@ export async function openCodeInvocation(
   ];
 
   return {
-    command: "opencode",
-    args,
+    ...(subscription ? subscriptionCommand(SUBSCRIPTION_HOME, args, "review") : { command: "opencode", args }),
     cwd: SUBJECT,
     env: {
       // OpenCode reads $PWD rather than the process's actual working directory
@@ -462,7 +466,9 @@ export async function openCodeInvocation(
       // deterministic merging. A private directory costs about a second of
       // startup; the install that made sharing worth doing is in the config
       // directory, which is still shared.
-      XDG_DATA_HOME: path.join(home, "data", opts.tag),
+      // Subscription calls hold the profile lock for their entire lifetime;
+      // OpenCode owns and persists token refresh in this dedicated database.
+      XDG_DATA_HOME: subscription?.XDG_DATA_HOME ?? path.join(home, "data", opts.tag),
       XDG_STATE_HOME: path.join(home, "state", opts.tag),
       XDG_CACHE_HOME: path.join(home, "cache"),
       OPENCODE_CONFIG_DIR: configDir,
@@ -483,7 +489,10 @@ export async function openCodeInvocation(
       // guidance pointing at a missing one is advice the model cannot follow.
       REVIEW_GOVERNOR_EXPECT_TOOLS: [...new Set(guidance.match(/\btilth_tilth_\w+/g) ?? [])].join(","),
     },
-    unsetEnv: ["OPENCODE_CONFIG", "OPENCODE_CONFIG_CONTENT", "OPENCODE_CLI_CONFIG_CONTENT"],
+    unsetEnv: [
+      "OPENCODE_DB", "OPENCODE_CONFIG", "OPENCODE_CONFIG_CONTENT", "OPENCODE_CLI_CONFIG_CONTENT",
+      ...(subscription ? ["OPENAI_API_KEY"] : []),
+    ],
     rawExt: "stdout.ndjson",
     parse: (stdout) => readOpenCodeUsage(usageFile) ?? sumOpenCodeStream(stdout),
     tools: (stdout) => summarizeOpenCodeTools(stdout, SUBJECT),
@@ -694,13 +703,18 @@ export async function agent(
   const spec: Invocation = await openCodeInvocation(system, { ...opts, model, effort, systemName: opts.system?.name });
   const env: Record<string, string | undefined> = { ...process.env, ...CHILD_ENV, ...spec.env };
   for (const key of spec.unsetEnv) delete env[key];
-  const privateDirs = [spec.env.XDG_DATA_HOME, spec.env.XDG_STATE_HOME].filter((d) => d !== undefined);
+  const subscription = SUBSCRIPTION_HOME && qualifiedModel(model).startsWith("openai/");
+  const privateDirs = [subscription ? undefined : spec.env.XDG_DATA_HOME, spec.env.XDG_STATE_HOME]
+    .filter((d) => d !== undefined);
   try {
-    return await runAgent(prompt, opts, spec, env);
+    if (SIGNAL?.aborted) throw new CancelledError();
+    if (!subscription) await importCredentials(env, spec.env.XDG_DATA_HOME);
+    const result = await runAgent(prompt, opts, spec, env);
+    if (SIGNAL?.aborted) throw new CancelledError();
+    return result;
   } finally {
-    // The private data directory holds the session database and any imported
-    // API key. Nothing reads it after the process exits: usage and governor
-    // logs are written under ARTIFACTS.
+    // Keep subscription credentials and their refreshed tokens. Ordinary
+    // session data and imported API keys can be removed after each call.
     if (process.env.DIFFLOUPE_KEEP_SCRATCH !== "1") {
       await Promise.all(privateDirs.map((d) => rm(d, { recursive: true, force: true }).catch(() => {})));
     }
@@ -720,7 +734,7 @@ async function importCredentials(env: Record<string, string | undefined>, dataDi
     timeoutMs: 60_000,
   });
   if (res.code !== 0) {
-    throw new Error(`opencode auth import failed (exit ${res.code}): ${res.stderr.trim().slice(0, 500)}`);
+    throw new Error(`opencode auth import failed (exit ${res.code}). Run diffloupe doctor to check credentials.`);
   }
 }
 
@@ -730,8 +744,6 @@ async function runAgent(
   spec: Invocation,
   env: Record<string, string | undefined>,
 ) {
-  if (SIGNAL?.aborted) throw new CancelledError();
-  await importCredentials(env, spec.env.XDG_DATA_HOME);
   if (SIGNAL?.aborted) throw new CancelledError();
   if (!exitHookInstalled) {
     exitHookInstalled = true;
@@ -758,7 +770,13 @@ async function runAgent(
       liveAgents.delete(child);
       markClosed();
     };
-    child.stdin.on("error", reject);
+    // A child can close stdin while it is still running. Wait for close before
+    // releasing resources or letting another subscription call use its DB.
+    let inputError: Error | undefined;
+    child.stdin.on("error", (error) => {
+      inputError = error;
+      signalGroup(child, "SIGKILL");
+    });
     child.stdin.end(prompt);
     const out: Buffer[] = [];
     const err: Buffer[] = [];
@@ -773,7 +791,9 @@ async function runAgent(
       resolve({
         stdout: Buffer.concat(out).toString("utf8"),
         stderr: Buffer.concat(err).toString("utf8"),
-        exitCode: code ?? (sig ? 128 : 0),
+        // Preserve OpenCode's diagnostic (for example, a changed login) when
+        // it exits before reading the whole prompt instead of masking it with EPIPE.
+        exitCode: code || (sig ? 128 : inputError ? 1 : 0),
       });
     });
   });

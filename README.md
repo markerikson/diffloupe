@@ -414,13 +414,46 @@ Every field is optional.
 
 ### Credentials
 
-Each review agent runs OpenCode with its own data directory, so DiffLoupe has to hand it a credential for every provider the chosen models use. For each provider, the first of these that exists is used:
+DiffLoupe supports API keys and ChatGPT subscriptions through OpenCode 2.x. For each provider the chosen models use, the first available credential source is used:
 
 1. The provider's environment variable, such as `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`. A `providers.<id>.env` list in your OpenCode config is honored.
 2. `apiKeys.<provider>` in `~/.config/diffloupe/config.json`. It is passed to the OpenCode processes only, not to DiffLoupe's own environment.
-3. An API key you saved with `opencode auth login`. DiffLoupe reads it with `opencode auth export` and imports it into each agent's data directory, which is deleted when the agent exits.
+3. For OpenAI, a ChatGPT subscription saved with `diffloupe auth login`.
+4. An API key you saved with `opencode auth login`. DiffLoupe reads it with `opencode auth export` and imports it into each agent's data directory, which is deleted when the agent exits.
 
-OAuth logins (such as a Claude or ChatGPT subscription) are not shared with the agents; use an API key for those providers. Providers that authenticate from the machine, such as Amazon Bedrock, Google Vertex, Ollama and LM Studio, are not checked. If a provider has no credential, the review stops before it starts and names the provider, the stage, and the ways to add one.
+To use your ChatGPT subscription, sign in and select a ChatGPT subscription method from OpenCode's prompts:
+
+```bash
+diffloupe auth login
+```
+
+This saves a separate login for DiffLoupe. Existing OAuth logins from your ordinary OpenCode profile are not copied; sign in again through DiffLoupe even if you already use ChatGPT in OpenCode. OpenCode manages sign-in and token refresh. Subscription reviews use OpenCode's native OpenAI provider settings; `providers.openai` overrides from your ordinary OpenCode config are not copied into subscription reviews.
+
+Choose OpenAI models for your review stages in `~/.config/diffloupe/config.json`, replacing `<model-id>` with a model available to your subscription in OpenCode:
+
+```json
+{
+  "provider": "openai",
+  "models": {
+    "review": "openai/<model-id>",
+    "coordinator": "openai/<model-id>",
+    "walkthrough": "openai/<model-id>",
+    "intent": "openai/<model-id>"
+  }
+}
+```
+
+You can also inherit an OpenAI default model from your global OpenCode config. Setting `provider` alone only changes how bare model IDs are resolved; it does not replace the built-in Claude models. Environment variables and explicit stage model settings still take precedence over the OpenCode default.
+
+```bash
+diffloupe auth status  # List the accounts in DiffLoupe's subscription profile
+diffloupe doctor      # Check which credential and model each stage will use
+diffloupe auth logout # Remove a DiffLoupe subscription login
+```
+
+Explicit API keys take precedence over a subscription. Unset `OPENAI_API_KEY` and remove any `apiKeys.openai` if you want subscription access instead. A DiffLoupe subscription login takes precedence over API keys saved in your ordinary OpenCode profile. Subscription agents share one persistent profile and run one at a time, including across simultaneous DiffLoupe processes, so OpenCode can safely refresh the login. API-key agents keep their separate data directories and run in parallel. Subscription usage has no dollar cost reported to DiffLoupe, so `--max-cost` cannot enforce a dollar limit for it; your subscription's usage limits still apply.
+
+Subscriptions for other providers, including Claude, are not supported. Providers that authenticate from the machine, such as Amazon Bedrock, Google Vertex, Ollama and LM Studio, are not checked. If a provider has no credential, the review stops before it starts and names the provider, the stage, and the ways to add one.
 
 The `diffloupe` command does not load `.env` files, so a `.env` in the repo you review cannot supply or override a key. `diffloupe doctor` shows which source each provider's credential comes from.
 

@@ -4,7 +4,8 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises
 import os from "node:os";
 import path from "node:path";
 import { applyConfig, resetRunState, setRunState } from "./config.ts";
-import { agent, answerFromText, lastReplyText, parseAgentJson, resetOpenCodeConfig } from "./runner.ts";
+import { agent, answerFromText, killAgents, lastReplyText, liveAgentCount, parseAgentJson, resetOpenCodeConfig } from "./runner.ts";
+import { withSubscriptionProfile } from "../subscription.ts";
 
 describe("parseAgentJson", () => {
   test("escapes raw tabs and newlines inside string values", () => {
@@ -42,13 +43,33 @@ const savedPath = process.env.PATH;
 // fails `auth import` when FAKE_IMPORT_FAIL is set, and writes an empty answer.
 const FAKE = `#!/bin/sh
 if [ "$1" = "auth" ]; then
+  if [ "$2" = "list" ]; then
+    echo '[{"id":"openai","connections":[{"type":"credential","id":"synthetic","method":"oauth"}]}]'
+    exit 0
+  fi
   cat > /dev/null
   [ -n "$FAKE_IMPORT_FAIL" ] && { echo "import broke" >&2; exit 1; }
   touch "$XDG_DATA_HOME/opencode.db"
   exit 0
 fi
+if [ -n "$FAKE_CLOSE_INPUT" ]; then
+  exec 0<&-
+  sleep 5
+  exit 1
+fi
 cat > /dev/null
 mkdir -p "$XDG_DATA_HOME" "$XDG_STATE_HOME"
+if [ -n "$FAKE_PROFILE" ] && [ "$XDG_DATA_HOME" = "$FAKE_PROFILE/data" ]; then
+  mkdir "$XDG_DATA_HOME/busy" || exit 1
+  [ -z "$OPENCODE_DB" ] || exit 2
+  [ -z "$OPENAI_API_KEY" ] || exit 3
+  n=0
+  [ -f "$XDG_DATA_HOME/refreshed" ] && n=$(cat "$XDG_DATA_HOME/refreshed")
+  n=$((n + 1))
+  echo "$n" > "$XDG_DATA_HOME/refreshed"
+  sleep 0.05
+  rmdir "$XDG_DATA_HOME/busy"
+fi
 echo "$XDG_DATA_HOME" > "$FAKE_RECORD"
 echo "$XDG_STATE_HOME" >> "$FAKE_RECORD"
 if [ -n "$FAKE_REPLY" ]; then
@@ -68,7 +89,7 @@ beforeAll(async () => {
   process.env.FAKE_RECORD = path.join(tmp, "record");
   await mkdir(path.join(tmp, "artifacts", "logs"), { recursive: true });
   await mkdir(path.join(tmp, "artifacts", "raw"), { recursive: true });
-  applyConfig({ out: path.join(tmp, "out"), artifacts: path.join(tmp, "artifacts"), authImport: "[]" });
+  applyConfig({ out: path.join(tmp, "out"), artifacts: path.join(tmp, "artifacts"), authImport: "[]", subscriptionHome: "" });
   setRunState({ subject: tmp });
 });
 
@@ -76,7 +97,7 @@ afterAll(async () => {
   process.env.PATH = savedPath;
   delete process.env.FAKE_RECORD;
   delete process.env.FAKE_IMPORT_FAIL;
-  applyConfig({ authImport: "" });
+  applyConfig({ authImport: "", subscriptionHome: "" });
   resetRunState();
   resetOpenCodeConfig();
   await rm(tmp, { recursive: true, force: true });
@@ -140,6 +161,82 @@ describe("agent", () => {
       expect(res.failure?.kind).toBe("no-output");
     } finally {
       delete process.env.FAKE_REPLY;
+    }
+  });
+
+  test("subscription calls serialize, retain refreshed credentials, and never import keys into the profile", async () => {
+    const home = path.join(tmp, "subscription");
+    const originalDB = process.env.OPENCODE_DB;
+    const originalKey = process.env.OPENAI_API_KEY;
+    applyConfig({ subscriptionHome: home });
+    process.env.FAKE_PROFILE = home;
+    process.env.FAKE_IMPORT_FAIL = "1";
+    process.env.OPENCODE_DB = "unrelated-user-database";
+    process.env.OPENAI_API_KEY = "ambient-key";
+    try {
+      const results = await Promise.all([
+        agent("first", { model: "openai/test", budget: 1, outFile: path.join(tmp, "sub-1.json"), tag: "sub-1" }),
+        agent("second", { model: "openai/test", budget: 1, outFile: path.join(tmp, "sub-2.json"), tag: "sub-2" }),
+      ]);
+      expect(results.map((r) => r.payload)).toEqual([{}, {}]);
+      expect(await readFile(path.join(home, "data", "refreshed"), "utf8")).toBe("2\n");
+      expect(existsSync(path.join(tmp, "out", "oc", "shared", "state", "sub-1"))).toBe(false);
+      expect(existsSync(path.join(tmp, "out", "oc", "shared", "state", "sub-2"))).toBe(false);
+      delete process.env.FAKE_IMPORT_FAIL;
+      await agent("api key", { model: "anthropic/test", budget: 1, outFile: path.join(tmp, "mixed.json"), tag: "mixed" });
+      const [data] = (await readFile(process.env.FAKE_RECORD!, "utf8")).trim().split("\n");
+      expect(data).not.toBe(path.join(home, "data"));
+      expect(existsSync(data!)).toBe(false);
+      expect(await readFile(path.join(home, "data", "refreshed"), "utf8")).toBe("2\n");
+    } finally {
+      applyConfig({ subscriptionHome: "" });
+      delete process.env.FAKE_PROFILE;
+      delete process.env.FAKE_IMPORT_FAIL;
+      if (originalDB === undefined) delete process.env.OPENCODE_DB;
+      else process.env.OPENCODE_DB = originalDB;
+      if (originalKey === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = originalKey;
+    }
+  });
+
+  test("an early stdin failure waits for OpenCode to exit before returning its failure", async () => {
+    process.env.FAKE_CLOSE_INPUT = "1";
+    try {
+      const result = await agent("x".repeat(1_000_000), {
+        model: "anthropic/test", budget: 1, outFile: path.join(tmp, "closed-stdin.json"), tag: "closed-stdin",
+      });
+      expect(result.exitCode).not.toBe(0);
+      expect(result.payload).toBeNull();
+      expect(result.failure).toBeDefined();
+      expect(liveAgentCount()).toBe(0);
+    } finally {
+      delete process.env.FAKE_CLOSE_INPUT;
+      await killAgents(100);
+    }
+  });
+
+  test("a cancelled subscription waiter does not start OpenCode or remove the profile", async () => {
+    const home = path.join(tmp, "cancelled-subscription");
+    const controller = new AbortController();
+    controller.signal.addEventListener("abort", () => { void killAgents(100); }, { once: true });
+    applyConfig({ subscriptionHome: home });
+    setRunState({ signal: controller.signal });
+    try {
+      await withSubscriptionProfile(home, async () => {
+        const waiting = agent("cancel", { model: "openai/test", budget: 1, outFile: path.join(tmp, "cancel.json"), tag: "cancel" });
+        const timer = setTimeout(() => controller.abort(), 50);
+        try {
+          await expect(waiting).rejects.toThrow("review cancelled");
+        } finally {
+          clearTimeout(timer);
+        }
+      });
+      expect(existsSync(path.join(tmp, "cancel.json"))).toBe(false);
+      expect(existsSync(path.join(home, "data"))).toBe(true);
+    } finally {
+      applyConfig({ subscriptionHome: "" });
+      resetRunState();
+      setRunState({ subject: tmp });
     }
   });
 });

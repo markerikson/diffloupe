@@ -224,6 +224,8 @@ export let CHILD_ENV: Record<string, string> = {};
  * imports nothing. Holds API keys, so it is never written anywhere but stdin.
  */
 export let AUTH_IMPORT = "";
+/** Dedicated persistent OpenCode profile for OpenAI subscription calls. */
+export let SUBSCRIPTION_HOME = "";
 
 export interface ReviewConfig {
   provider: string;
@@ -254,6 +256,7 @@ export interface ReviewConfig {
   providers: Record<string, unknown>;
   childEnv: Record<string, string>;
   authImport: string;
+  subscriptionHome: string;
 }
 
 /**
@@ -299,6 +302,7 @@ export function applyConfig(o: Partial<ReviewConfig>): void {
   if (o.providers !== undefined) PROVIDERS = o.providers;
   if (o.childEnv !== undefined) CHILD_ENV = o.childEnv;
   if (o.authImport !== undefined) AUTH_IMPORT = o.authImport;
+  if (o.subscriptionHome !== undefined) SUBSCRIPTION_HOME = o.subscriptionHome;
 }
 
 /** Aborted when the run is cancelled. Assigned by runReview(). */
