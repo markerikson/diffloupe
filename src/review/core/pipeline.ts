@@ -232,8 +232,10 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
 
   // ---- context, shared by every slice
   setRunState({ repoName: slug });
-  const intent = await gatherIntent(slug, pr, base, head, options.intent);
-  const prior = [...(await gatherPriorComments(slug, pr)), ...(options.prior ?? [])];
+  // Comments are posted from a GitHub run, and posting without the earlier ones repeats them.
+  const strict = !options.local;
+  const intent = await gatherIntent(slug, pr, base, head, options.intent, { strict });
+  const prior = [...(await gatherPriorComments(slug, pr, { strict })), ...(options.prior ?? [])];
   const priorMd = renderPriorComments(prior, intent.body);
 
   // Counted for the run record.

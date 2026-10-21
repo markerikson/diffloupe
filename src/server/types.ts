@@ -38,6 +38,10 @@ export const StartRunRequestSchema = type({
   "fromRun?": "string",
   /** A re-review normally looks only at what changed since the prior run; this reviews everything. */
   "full?": "boolean",
+  /** Pull requests only: write GitHub payloads with markers, and read prior state only from GitHub. */
+  "github?": "boolean",
+  /** Pull requests only: the PR commit to review, instead of its current head. */
+  "head?": "string",
 });
 export type StartRunRequest = typeof StartRunRequestSchema.infer;
 

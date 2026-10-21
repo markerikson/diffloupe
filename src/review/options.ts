@@ -26,6 +26,16 @@ export interface ReviewCommandOptions {
   headless?: boolean;
   /** Print the review markdown to stdout instead of the terminal summary. */
   markdown?: boolean;
+  /** Pull requests only: keep the GitHub markers and write `payloads.json` for posting. */
+  github?: boolean;
+  /** Pull requests only: review this commit of the PR instead of its current head. */
+  head?: string;
+  /** Headless only: copy the run's output files and `result.json` into this directory. */
+  out?: string;
+  /** Headless only: print `result.json` on stdout and nothing else. */
+  json?: boolean;
+  /** Headless only: exit 3 when a posted finding is at or above this severity. */
+  failOn?: "blocker" | "should-fix" | "nice-to-have" | "question";
   host?: string;
   port?: number;
   open?: boolean;

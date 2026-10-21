@@ -10,6 +10,22 @@ export async function gitText(args: string[]): Promise<string> {
   return await text("git", ["-C", SUBJECT, "-c", "diff.renames=true", ...args]);
 }
 
+export type GhText = (args: string[]) => Promise<string>;
+
+const ghText: GhText = (args) => text("gh", args);
+
+export interface GatherOptions {
+  /**
+   * Throw when `gh` fails instead of carrying on without the pull request's
+   * description or comments. Posting without them repeats earlier comments.
+   */
+  strict?: boolean;
+  gh?: GhText;
+}
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
 
 /**
  * Every hunk header in the diff, with no hunk bodies. Git puts the enclosing
@@ -36,20 +52,23 @@ export async function gatherIntent(
   base: string,
   head: string,
   stated?: string,
+  opts: GatherOptions = {},
 ): Promise<StatedIntent> {
+  const gh = opts.gh ?? ghText;
   let title = "";
   let body = "";
   // A bare commit range has no description, so the commit subjects are the only
   // statement of intent there is.
   if (pr) {
     try {
-      const meta = JSON.parse(await text("gh", ["api", `repos/${slug}/pulls/${pr}`])) as {
+      const meta = JSON.parse(await gh(["api", `repos/${slug}/pulls/${pr}`])) as {
         title?: string;
         body?: string;
       };
       title = meta.title ?? "";
       body = meta.body ?? "";
-    } catch {
+    } catch (err) {
+      if (opts.strict) throw new Error(`reading the pull request description: ${errorText(err)}`, { cause: err });
       /* offline / no access: intent section degrades to commits only */
     }
   }
@@ -95,10 +114,7 @@ export interface PriorComment {
   summaryClaims?: { fp: string; file: string; line: string }[];
   /**
    * GitHub's account of the author's standing in this repository: `OWNER`,
-   * `MEMBER`, `COLLABORATOR`, `CONTRIBUTOR`, `NONE` and so on. Carried because
-   * `/ai-review resume` raises the review budget, and the workflow's gate on
-   * who may say that only governs which comments start a run — the count is
-   * recomputed here from every comment on the pull request.
+   * `MEMBER`, `COLLABORATOR`, `CONTRIBUTOR`, `NONE` and so on.
    */
   association?: string;
 }
@@ -116,8 +132,8 @@ export interface GhComment {
   author_association?: string;
 }
 
-export async function ghComments(endpoint: string): Promise<GhComment[]> {
-  return JSON.parse(await text("gh", ["api", "--paginate", endpoint])) as GhComment[];
+export async function ghComments(endpoint: string, gh: GhText = ghText): Promise<GhComment[]> {
+  return JSON.parse(await gh(["api", "--paginate", endpoint])) as GhComment[];
 }
 
 /**
@@ -156,14 +172,19 @@ export function condenseOwnSummary(body: string): string {
  * comment carries the summary — including findings that could not be anchored
  * to a diff line and therefore exist nowhere else.
  */
-export async function gatherPriorComments(slug: string, pr: string | undefined): Promise<PriorComment[]> {
+export async function gatherPriorComments(
+  slug: string,
+  pr: string | undefined,
+  opts: GatherOptions = {},
+): Promise<PriorComment[]> {
   const fixture = process.env.PRIOR_FIXTURE;
   if (fixture) return await readJson<PriorComment[]>(fixture);
   // A bare commit range has no comment threads to reconcile against.
   if (!pr) return [];
+  const gh = opts.gh ?? ghText;
   const out: PriorComment[] = [];
   try {
-    const raw = await ghComments(`repos/${slug}/pulls/${pr}/comments`);
+    const raw = await ghComments(`repos/${slug}/pulls/${pr}/comments`, gh);
     // A reply the bot wrote saying a point is fixed settles the comment it
     // replies to. GitHub's own thread resolution is GraphQL-only and everything
     // here goes through REST, so the state lives in the comment body. The rule
@@ -191,11 +212,12 @@ export async function gatherPriorComments(slug: string, pr: string | undefined):
           ...(c.in_reply_to_id ? { inReplyTo: c.in_reply_to_id } : {}),
         });
     }
-  } catch {
+  } catch (err) {
+    if (opts.strict) throw new Error(`reading the pull request's review comments: ${errorText(err)}`, { cause: err });
     /* offline / no access: the review proceeds without reconciliation */
   }
   try {
-    for (const c of await ghComments(`repos/${slug}/issues/${pr}/comments`)) {
+    for (const c of await ghComments(`repos/${slug}/issues/${pr}/comments`, gh)) {
       const mine = isOwnComment(c.body ?? "", c.user?.type, "summary");
       // Another workflow's status comment is not review context.
       if (!mine && c.user?.type === "Bot") continue;
@@ -222,7 +244,8 @@ export async function gatherPriorComments(slug: string, pr: string | undefined):
         ...(summaryClaims.length ? { summaryClaims } : {}),
       });
     }
-  } catch {
+  } catch (err) {
+    if (opts.strict) throw new Error(`reading the pull request's comments: ${errorText(err)}`, { cause: err });
     /* as above */
   }
   return out;

@@ -13,7 +13,10 @@ import type { ReviewRun, ReviewTarget, RunKind } from "../types/review-run.ts";
 import type { ReviewConfig } from "./core/config.ts";
 import { run, text } from "./core/lib/proc.ts";
 import type { Target } from "./core/lib/target.ts";
-import { runReview, type ReviewEvent } from "./core/pipeline.ts";
+import { runReview, type ReviewEvent, type RunReviewOptions } from "./core/pipeline.ts";
+import { artifactName, FINDINGS_FILE, insertCopyBlock } from "./core/render.ts";
+import { runMarkdown } from "./export.ts";
+import { VERSION } from "../version.ts";
 import { runDiff, type RunDiffResult } from "./diff-run.ts";
 import { describeAnchors } from "./anchors.ts";
 import type { ReviewCommandOptions, ReviewModelStage } from "./options.ts";
@@ -99,6 +102,8 @@ export async function requestFromOptions(opts: ReviewCommandOptions): Promise<St
     ...(opts.maxCost !== undefined ? { maxCostUsd: opts.maxCost } : {}),
     ...(opts.config ? { settingsFile: path.resolve(opts.config) } : {}),
     ...(opts.full ? { full: true } : {}),
+    ...(opts.github ? { github: true } : {}),
+    ...(opts.head ? { head: opts.head } : {}),
   };
 }
 
@@ -183,6 +188,8 @@ export interface PreparedRun {
   round?: number;
   /** Review everything even when there is a prior run. */
   full: boolean;
+  /** GitHub mode: keep markers and payloads, and take prior state only from the pull request. */
+  github: boolean;
   untrackedSkipped: string[];
   coreSource: string;
   models?: NonNullable<ReviewRun["meta"]["models"]>;
@@ -260,7 +267,11 @@ export async function prepareRun(
       ? await pinnedTarget(repo, fromSpec, from.base, from.head, { isTaken })
       : remotePr
         ? await resolveRemotePullRequest(repo, remotePr, { isTaken })
-        : await resolveTarget(repo, req.target, { ...(req.base ? { base: req.base } : {}), isTaken });
+        : await resolveTarget(repo, req.target, {
+            ...(req.base ? { base: req.base } : {}),
+            ...(req.head ? { head: req.head } : {}),
+            isTaken,
+          });
   const { target, changes, tag } = resolved;
   const pr = resolved.pullRequest;
   const verb = isDiff ? "Diff of" : "Reviewing";
@@ -311,6 +322,7 @@ export async function prepareRun(
     log(`  ${previous.run.findings.length} finding(s) from prior run ${previous.run.id}`);
   }
   const full = req.full === true;
+  const github = req.github === true;
   const round = isDiff ? undefined : previous ? (await roundOf(previous.run)) + 1 : 1;
   if (round !== undefined && round > 1) {
     log(
@@ -318,7 +330,8 @@ export async function prepareRun(
         ? `  round ${round}, full review (--full)`
         : `  round ${round}: reviewing what changed since ${previous?.run.head.slice(0, 12) ?? "the last review"} (--full to review everything)`,
     );
-    if (round > ROUND_WARNING) {
+    // GitHub counts rounds from the summary marker instead.
+    if (round > ROUND_WARNING && !github) {
       log(`  warning: this change has been reviewed ${round - 1} times; later rounds mostly find smaller problems`);
     }
   }
@@ -362,6 +375,7 @@ export async function prepareRun(
     ...(previous ? { previous } : {}),
     ...(round !== undefined ? { round } : {}),
     full,
+    github,
     untrackedSkipped,
     coreSource: source,
     ...(models ? { models } : {}),
@@ -426,13 +440,11 @@ export async function executeRun(prep: PreparedRun, opts: ExecuteRunOptions): Pr
             target: prep.target,
             tag: id,
             config: prep.config,
-            local: true,
             signal: opts.signal,
             ...(prep.maxCostUsd !== undefined ? { maxCostUsd: prep.maxCostUsd } : {}),
             ...(prep.intent ? { intent: prep.intent } : {}),
             ...(prep.instructions ? { instructions: prep.instructions } : {}),
-            ...(prep.previous ? { prior: priorComments(prep.previous.run) } : {}),
-            ...(prep.previous && !prep.full ? { priorHead: prep.previous.run.head } : {}),
+            ...priorOptions(prep),
             onProgress,
           });
   } catch (err) {
@@ -472,8 +484,37 @@ export async function executeRun(prep: PreparedRun, opts: ExecuteRunOptions): Pr
     throw new Error(message, { cause: err });
   }
   await writeRun(run);
+  const reviewed = prep.kind === "diff" || result.record !== null;
   if (prep.kind === "review") opts.log(`  anchors: ${describeAnchors(run)}`);
-  return { run, reviewed: prep.kind === "diff" || result.record !== null };
+  if (prep.github && prep.kind === "review" && reviewed) await addCopyBlock(dir, run);
+  return { run, reviewed };
+}
+
+/**
+ * GitHub mode: saves every finding as Markdown beside the payloads and, when
+ * there are any, puts a copy of it into the summary comment, in both
+ * `payloads.json` and the preview.
+ */
+export async function addCopyBlock(dir: string, run: ReviewRun): Promise<void> {
+  const markdown = runMarkdown(run, { includeOverCap: true, github: true });
+  await writeFile(path.join(dir, "raw", FINDINGS_FILE), markdown);
+  if (run.findings.length + run.overCapFindings.length === 0) return;
+  const payloadsPath = path.join(dir, "raw", "payloads.json");
+  let payloads: { summary?: { body?: { body?: unknown } } };
+  try {
+    payloads = JSON.parse(await readFile(payloadsPath, "utf8")) as typeof payloads;
+  } catch {
+    return;
+  }
+  const summary = payloads.summary?.body?.body;
+  if (typeof summary !== "string" || !payloads.summary?.body) return;
+  const artifact = run.target.kind === "pr" ? artifactName(run.target.number, run.head) : undefined;
+  const withBlock = insertCopyBlock(summary, markdown, { artifact });
+  payloads.summary.body.body = withBlock;
+  await writeFile(payloadsPath, `${JSON.stringify(payloads, null, 2)}\n`);
+  const previewPath = path.join(dir, "raw", "review.md");
+  const preview = await readFile(previewPath, "utf8").catch(() => undefined);
+  if (preview?.includes(summary)) await writeFile(previewPath, preview.replace(summary, () => withBlock));
 }
 
 function pendingInput(prep: PreparedRun): BuildPendingRunInput {
@@ -492,6 +533,21 @@ function pendingInput(prep: PreparedRun): BuildPendingRunInput {
     ...(prep.round !== undefined ? { round: prep.round } : {}),
     ...(prep.models ? { models: prep.models } : {}),
     ...(prep.kind === "diff" ? { kind: prep.kind } : {}),
+  };
+}
+
+/**
+ * How the core sees earlier reviews. Locally, the prior run's findings stand
+ * in for comments. In GitHub mode they are left out: prior state comes only
+ * from the pull request's real comments, whose ids replies can target.
+ */
+export function priorOptions(
+  prep: Pick<PreparedRun, "github" | "full" | "previous">,
+): Pick<RunReviewOptions, "local" | "prior" | "priorHead"> {
+  return {
+    local: !prep.github,
+    ...(prep.previous && !prep.github ? { prior: priorComments(prep.previous.run) } : {}),
+    ...(prep.previous && !prep.full ? { priorHead: prep.previous.run.head } : {}),
   };
 }
 
@@ -558,16 +614,25 @@ async function copyIfPresent(from: string, to: string): Promise<void> {
 
 let cachedCoreSource: string | undefined;
 
-/** The DiffLoupe commit the review ran from, when running from a checkout. */
+/**
+ * The DiffLoupe version the review ran from, plus the commit when running
+ * from a checkout. An installed copy sits under node_modules, where git would
+ * report the enclosing project's commit instead.
+ */
 async function coreSource(): Promise<string> {
   if (cachedCoreSource) return cachedCoreSource;
-  try {
-    const sha = (await text("git", ["-C", import.meta.dir, "rev-parse", "--short=12", "HEAD"])).trim();
-    cachedCoreSource = `diffloupe@${sha}`;
-  } catch {
-    cachedCoreSource = "diffloupe";
-  }
+  cachedCoreSource = await describeCoreSource(import.meta.dir);
   return cachedCoreSource;
+}
+
+export async function describeCoreSource(dir: string, version = VERSION): Promise<string> {
+  if (dir.split(/[\\/]/).includes("node_modules")) return `diffloupe@${version}`;
+  try {
+    const sha = (await text("git", ["-C", dir, "rev-parse", "--short=12", "HEAD"])).trim();
+    return `diffloupe@${version}+${sha}`;
+  } catch {
+    return `diffloupe@${version}`;
+  }
 }
 
 const isTaken = (tag: string) => existsSync(runDir(tag));

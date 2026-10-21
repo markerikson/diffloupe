@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { loadFixture } from "./__fixtures__/load.ts";
-import { requestFromOptions, roundOf } from "./run-driver.ts";
+import { addCopyBlock, describeCoreSource, priorOptions, requestFromOptions, roundOf } from "./run-driver.ts";
 import type { ReviewRun } from "../types/review-run.ts";
 
 const base = loadFixture("small-commit").build();
@@ -12,6 +15,43 @@ function store(runs: Record<string, Partial<ReviewRun>>) {
     return { ...base, id, ...over };
   };
 }
+
+describe("addCopyBlock", () => {
+  const summary = "### Review\n\n<details><summary>Review details</summary>\n\n</details>\n\n<!-- ai-review kind=summary pr=1 -->";
+
+  async function runDir(): Promise<string> {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "diffloupe-copy-"));
+    await mkdir(path.join(dir, "raw"));
+    await writeFile(path.join(dir, "raw", "payloads.json"), JSON.stringify({ summary: { body: { body: summary } } }));
+    await writeFile(path.join(dir, "raw", "review.md"), `# Summary comment\n\n${summary}\n`);
+    return dir;
+  }
+
+  test("puts the findings into the payload and the preview", async () => {
+    const dir = await runDir();
+    try {
+      const run = loadFixture("large-pr").build();
+      await addCopyBlock(dir, run);
+      const payloads = JSON.parse(await readFile(path.join(dir, "raw", "payloads.json"), "utf8"));
+      expect(payloads.summary.body.body).toContain("Copy all findings as Markdown");
+      expect(await readFile(path.join(dir, "raw", "review.md"), "utf8")).toContain("Copy all findings as Markdown");
+      expect(await readFile(path.join(dir, "raw", "findings.md"), "utf8")).toContain(run.findings[0]!.title);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("leaves the comment alone when there are no findings", async () => {
+    const dir = await runDir();
+    try {
+      await addCopyBlock(dir, { ...base, findings: [], overCapFindings: [] });
+      const payloads = JSON.parse(await readFile(path.join(dir, "raw", "payloads.json"), "utf8"));
+      expect(payloads.summary.body.body).toBe(summary);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("roundOf", () => {
   test("uses the recorded round", async () => {
@@ -41,5 +81,58 @@ describe("requestFromOptions", () => {
   test("passes --full through only when set", async () => {
     expect((await requestFromOptions({ full: true })).full).toBe(true);
     expect("full" in (await requestFromOptions({}))).toBe(false);
+  });
+
+  test("passes --github and --head through only when set", async () => {
+    const head = "a".repeat(40);
+    const req = await requestFromOptions({ target: "#12", github: true, head });
+    expect(req.github).toBe(true);
+    expect(req.head).toBe(head);
+    const plain = await requestFromOptions({ target: "#12" });
+    expect("github" in plain).toBe(false);
+    expect("head" in plain).toBe(false);
+  });
+});
+
+describe("priorOptions", () => {
+  const previous = { run: { ...base, head: "b".repeat(40) }, dismissed: [], lineMap: new Map() };
+
+  test("a local re-review feeds the prior run in as comments", () => {
+    const o = priorOptions({ github: false, full: false, previous });
+    expect(o.local).toBe(true);
+    expect(o.prior).toBeDefined();
+    expect(o.priorHead).toBe(previous.run.head);
+  });
+
+  // In GitHub mode the pull request's own comments are the prior state. A
+  // local run's findings have no comment ids, so the core would write replies
+  // to threads that do not exist.
+  test("GitHub mode leaves the local prior run out", () => {
+    const o = priorOptions({ github: true, full: false, previous });
+    expect(o.local).toBe(false);
+    expect("prior" in o).toBe(false);
+    expect(o.priorHead).toBe(previous.run.head);
+  });
+
+  test("--full reviews everything again", () => {
+    expect("priorHead" in priorOptions({ github: false, full: true, previous })).toBe(false);
+  });
+
+  test("a first review has no prior", () => {
+    expect(priorOptions({ github: true, full: false })).toEqual({ local: false });
+  });
+});
+
+describe("describeCoreSource", () => {
+  test("an installed copy reports only the version", async () => {
+    expect(await describeCoreSource("/proj/node_modules/@acemarke/diffloupe/dist", "1.2.3")).toBe("diffloupe@1.2.3");
+  });
+
+  test("a checkout adds its commit", async () => {
+    expect(await describeCoreSource(import.meta.dir, "1.2.3")).toMatch(/^diffloupe@1\.2\.3\+[0-9a-f]{12}$/);
+  });
+
+  test("outside git it falls back to the version", async () => {
+    expect(await describeCoreSource("/nonexistent-diffloupe-dir", "1.2.3")).toBe("diffloupe@1.2.3");
   });
 });

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { text } from "./core/lib/proc.ts";
 import { parseModelOverrides } from "./run-driver.ts";
-import { MAX_UNTRACKED_BYTES, makeTag, parseTargetSpec, resolveTarget } from "./targets.ts";
+import { MAX_UNTRACKED_BYTES, makeTag, parseTargetSpec, pinPullRequestHead, resolveTarget } from "./targets.ts";
 
 describe("parseTargetSpec", () => {
   it("defaults to the working tree", () => {
@@ -216,6 +216,25 @@ describe("resolveTarget", () => {
 
   it("refuses an empty snapshot", async () => {
     await expect(resolveTarget(repo, "staged")).rejects.toThrow(/no changes/);
+  });
+
+  it("pins a pull request to an earlier commit of its branch", async () => {
+    const head = (await git("rev-parse", "HEAD")).trim();
+    const parent = (await git("rev-parse", "HEAD^")).trim();
+    expect(await pinPullRequestHead(repo, 7, head, parent)).toBe(parent);
+    expect(await pinPullRequestHead(repo, 7, head, head)).toBe(head);
+  });
+
+  // A force-push can leave the commit CI was started for off the branch. Reviewing
+  // it anyway would post comments against lines the pull request no longer has.
+  it("rejects a --head that is not in the branch's history", async () => {
+    const parent = (await git("rev-parse", "HEAD^")).trim();
+    await git("checkout", "-q", "-b", "other", parent);
+    await writeFile(path.join(repo, "a.ts"), "export const a = 9;\n");
+    await git("commit", "-q", "-am", "elsewhere");
+    const stray = (await git("rev-parse", "HEAD")).trim();
+    const main = (await git("rev-parse", "main")).trim();
+    await expect(pinPullRequestHead(repo, 7, main, stray)).rejects.toThrow(/not in the history of pull request #7/);
   });
 
   it("diffs a snapshot against merge-base with --base", async () => {

@@ -1,11 +1,14 @@
 import path from "node:path";
 import { Command, InvalidArgumentError } from "commander";
 import pc from "picocolors";
+import { SEVERITY_ORDER } from "../review/export.ts";
 import { formatEvent } from "../review/format-event.ts";
 import { runHeadlessReview, stopOnSignal } from "../review/headless.ts";
 import type { ReviewCommandOptions } from "../review/options.ts";
 import { requestFromOptions } from "../review/run-driver.ts";
 import { listRuns } from "../review/run-store.ts";
+import { parseTargetSpec } from "../review/targets.ts";
+import type { FindingSeverity } from "../types/review-run.ts";
 import { run } from "../review/core/lib/proc.ts";
 import { openBrowser } from "../server/browser.ts";
 import { DEFAULT_HOST, DEFAULT_PORT, startServer, type StartedServer } from "../server/index.ts";
@@ -30,6 +33,13 @@ function parseCost(value: string): number {
   const n = Number(value);
   if (!Number.isFinite(n) || n <= 0) throw new InvalidArgumentError("must be a positive number of US dollars");
   return n;
+}
+
+function parseSeverity(value: string): FindingSeverity {
+  if (!(SEVERITY_ORDER as readonly string[]).includes(value)) {
+    throw new InvalidArgumentError(`must be one of ${SEVERITY_ORDER.join(", ")}`);
+  }
+  return value as FindingSeverity;
 }
 
 interface ServeOptions {
@@ -140,8 +150,37 @@ async function reviewInProcess(opts: ReviewCommandOptions): Promise<number> {
   return new Promise<number>(() => {});
 }
 
+/** Flag combinations rejected before any work starts. Returns the error message, or null. */
+export function checkReviewFlags(opts: ReviewCommandOptions): string | null {
+  if (opts.github || opts.head) {
+    let isPr = false;
+    try {
+      isPr = parseTargetSpec(opts.target).kind === "pr";
+    } catch {
+      isPr = false;
+    }
+    if (!isPr) return `${opts.github ? "--github" : "--head"} needs a pull request target (#<n>, pr:<n>, or a PR URL)`;
+  }
+  if (opts.head && !/^[0-9a-f]{40}$/i.test(opts.head)) return "--head must be a full 40-character commit SHA";
+  if (!opts.headless) {
+    for (const [flag, set] of [
+      ["--out", opts.out],
+      ["--json", opts.json],
+      ["--fail-on", opts.failOn],
+    ] as const) {
+      if (set) return `${flag} needs --headless`;
+    }
+  }
+  return null;
+}
+
 async function runReviewCommand(target: string | undefined, options: Omit<ReviewCommandOptions, "target">) {
   const opts: ReviewCommandOptions = { ...options, ...(target ? { target } : {}) };
+  const flagError = checkReviewFlags(opts);
+  if (flagError) {
+    log(pc.red(`Error: ${flagError}`));
+    process.exit(2);
+  }
   if (opts.headless) process.exit(await runHeadlessReview(opts));
 
   const { port } = await bindSettings(opts);
@@ -189,6 +228,22 @@ export function createReviewCommand(): Command {
     .option("--open", "Open the run in a browser", false)
     .option("--headless", "Run in the terminal without a server and print a summary to stdout", false)
     .option("--markdown", "With --headless: print the full review markdown instead of the summary", false)
+    .option(
+      "--github",
+      "For a PR target: render for posting to GitHub (prior comments come from the PR, payloads.json is written, " +
+        "and failing to read the PR is an error)",
+    )
+    .option("--head <sha>", "For a PR target: review this 40-character commit instead of the PR's current head")
+    .option("--out <dir>", "With --headless: copy the run's files and result.json into <dir>")
+    .option("--json", "With --headless: print only the result object as JSON on stdout")
+    .option(
+      "--fail-on <severity>",
+      "With --headless: exit 3 when a posted finding is at or above this severity (blocker, should-fix, " +
+        "nice-to-have, question)",
+      parseSeverity,
+    )
+    // Usage errors exit 2, the same as other failures to start, so CI can tell them from a failed review.
+    .exitOverride((err) => process.exit(err.exitCode === 0 ? 0 : 2))
     .action(runReviewCommand);
 }
 
