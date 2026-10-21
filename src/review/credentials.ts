@@ -124,6 +124,21 @@ export function needsSavedCredentials(inputs: Omit<CredentialInputs, "saved">): 
   return false;
 }
 
+/** Providers with usable credentials, not every provider OpenCode can list. */
+export function configuredProviders(inputs: Omit<CredentialInputs, "providers">): string[] {
+  const candidates = new Set([
+    ...Object.keys(PROVIDER_ENV),
+    ...Object.keys(inputs.apiKeys ?? {}),
+    ...Object.keys(inputs.userProviders ?? {}),
+    ...(inputs.saved ?? []).map((credential) => credential.integrationID),
+  ]);
+  const plan = planCredentials({
+    ...inputs,
+    providers: new Map([...candidates].map((provider) => [provider, []])),
+  });
+  return plan.coverage.filter((entry) => entry.source !== "none").map((entry) => entry.provider);
+}
+
 function missingMessage(provider: string, stages: ReviewModelStage[], envNames: string[]): string {
   const used = stages.map((s) => STAGE_SETTING[s]).join(", ");
   const envHint = envNames[0] ? `set ${envNames[0]}, ` : "";

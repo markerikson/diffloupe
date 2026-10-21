@@ -7,14 +7,15 @@ import type { DiffLoupeConfig } from "../services/config.ts";
 import type { ReviewRun } from "../types/review-run.ts";
 import type { ReviewConfig } from "./core/config.ts";
 import {
+  configuredProviders,
   exportSavedCredentials,
   needsSavedCredentials,
   planCredentials,
   type CredentialPlan,
   type SavedCredential,
 } from "./credentials.ts";
-import { checkModels, readModelCatalog, type CatalogCheck, type CatalogModel } from "./model-catalog.ts";
-import { MODEL_STAGES, providersInUse, resolveModels, resolveProvider, type ResolvedModels } from "./models.ts";
+import { checkModels, readModelCatalog, readProviderDefault, type CatalogCheck, type CatalogModel } from "./model-catalog.ts";
+import { configuredProvider, DEFAULT_PROVIDER, MODEL_STAGES, providersInUse, resolveModels, resolveProvider, type ModelInputs, type ResolvedModels } from "./models.ts";
 import { readOpenCodeUserConfig, type OpenCodeUserConfig } from "./opencode-user.ts";
 import type { ReviewModelStage } from "./options.ts";
 import type { ReviewSettings } from "./settings.ts";
@@ -43,6 +44,8 @@ export interface RunSetupOptions {
   readSubscription?: () => Promise<{ home?: string; error?: string }>;
   /** Replaces asking OpenCode for its model catalog; return undefined to skip the check. */
   readCatalog?: () => Promise<CatalogModel[] | undefined>;
+  /** Replaces asking the selected profile for an available model. */
+  readProviderDefault?: typeof readProviderDefault;
   /** The stages that will run; credentials and the catalog are checked only for these. Default: all. */
   stages?: readonly ReviewModelStage[];
 }
@@ -51,24 +54,65 @@ export async function resolveRunSetup(opts: RunSetupOptions): Promise<RunSetup> 
   const env = opts.env ?? process.env;
   const openCodeUser = opts.openCodeUser ?? readOpenCodeUserConfig(env);
   const settings = opts.settings ?? {};
-  const inputs = {
+  const inputs: ModelInputs = {
     env,
     ...(opts.cli ? { cli: opts.cli } : {}),
     settings,
     config: opts.userConfig,
     ...(openCodeUser.model ? { openCodeModel: openCodeUser.model } : {}),
   };
-  const models = resolveModels(inputs);
-  const credentialInputs = {
-    providers: providersInUse(models, opts.stages),
+  let models = resolveModels(inputs);
+  const credentialSources = {
     env,
     ...(opts.userConfig.apiKeys ? { apiKeys: opts.userConfig.apiKeys } : {}),
     ...(openCodeUser.providers ? { userProviders: openCodeUser.providers } : {}),
   };
+  let subscriptionLookup: Promise<{ home?: string; error?: string }> | undefined;
+  const getSubscription = () => subscriptionLookup ??= (opts.readSubscription ?? (() => readSubscriptionProfile(env)))();
+  let savedLookup: Promise<SavedCredential[] | undefined> | undefined;
+  const getSaved = () => savedLookup ??= (opts.exportCredentials ?? (() => exportSavedCredentials(env)))();
+  const openaiInputs = { ...credentialSources, providers: new Map([["openai", [] as ReviewModelStage[]]]) };
+  const stages = opts.stages ?? MODEL_STAGES;
+  const needsDefault = stages.some((stage) => models[stage].source === "default" &&
+    // An explicitly chosen Anthropic walkthrough intentionally uses Haiku for
+    // intent; it must not trigger unrelated provider discovery.
+    (stage !== "intent" || models.walkthrough.source === "default"));
+  const explicitProvider = configuredProvider(inputs);
+  if (needsDefault && explicitProvider !== DEFAULT_PROVIDER) {
+    const subscription = (!explicitProvider || explicitProvider === "openai") && needsSavedCredentials(openaiInputs)
+      ? await getSubscription() : {};
+    if (subscription.error) throw new Error(subscription.error);
+    const sources = {
+      ...credentialSources,
+      ...(subscription.home ? { subscriptionHome: subscription.home } : {}),
+    };
+    // Discover saved providers only when needed to disambiguate the fallback,
+    // or to authenticate an explicitly selected provider.
+    const saved = !explicitProvider || needsSavedCredentials({ ...sources, providers: new Map([[explicitProvider, []]]) })
+      ? await getSaved() : undefined;
+    const available = configuredProviders({ ...sources, ...(saved ? { saved } : {}) });
+    const provider = explicitProvider ?? (available.length === 1 ? available[0] : undefined);
+    if (!provider && available.length > 1 && !available.includes(DEFAULT_PROVIDER)) {
+      throw new Error(`Multiple providers are configured (${available.join(", ")}). Set \`provider\` in ~/.config/diffloupe/config.json or choose models with --model stage=<provider/model>.`);
+    }
+    if (provider && provider !== DEFAULT_PROVIDER) {
+      const credentials = planCredentials({ ...sources, ...(saved ? { saved } : {}), providers: new Map([[provider, []]]) });
+      if (credentials.errors.length) throw new Error(credentials.errors.join("\n"));
+      const model = await (opts.readProviderDefault ?? readProviderDefault)(provider, {
+        env: { ...env, ...credentials.childEnv },
+        ...(credentials.subscriptionHome ? { subscriptionHome: credentials.subscriptionHome } : {}),
+      });
+      if (!model) {
+        throw new Error(`Could not find an available model for provider \`${provider}\`. Check its OpenCode login, or set \`models\` in ~/.config/diffloupe/config.json or pass --model stage=<provider/model>.`);
+      }
+      inputs.fallback = { provider, model };
+      models = resolveModels(inputs);
+    }
+  }
+  const credentialInputs = { ...credentialSources, providers: providersInUse(models, opts.stages) };
   // Explicit API keys still win. Do not start a profile server for API-only runs.
-  const openaiInputs = { ...credentialInputs, providers: new Map([["openai", [] as ReviewModelStage[]]]) };
   const subscription = credentialInputs.providers.has("openai") && needsSavedCredentials(openaiInputs)
-    ? await (opts.readSubscription ?? (() => readSubscriptionProfile(env)))()
+    ? await getSubscription()
     : {};
   const withSubscription = {
     ...credentialInputs,
@@ -76,7 +120,7 @@ export async function resolveRunSetup(opts: RunSetupOptions): Promise<RunSetup> 
     ...(subscription.error ? { subscriptionError: subscription.error } : {}),
   };
   const saved = needsSavedCredentials(withSubscription)
-    ? await (opts.exportCredentials ?? (() => exportSavedCredentials(env)))()
+    ? await getSaved()
     : undefined;
   const credentials = planCredentials({ ...withSubscription, ...(saved ? { saved } : {}) });
   const catalogModels = await (opts.readCatalog ?? (() => readModelCatalog()))();

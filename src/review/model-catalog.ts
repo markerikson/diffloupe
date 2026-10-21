@@ -1,8 +1,8 @@
 /**
  * A best-effort check of the resolved models against OpenCode's catalog.
  *
- * `opencode models --standalone` returns before the catalog loads, so this
- * asks the user's background service instead. That service only lists models
+ * Older OpenCode versions return from `models --standalone` before the catalog
+ * loads, so validation asks the user's background service. That service lists models
  * for providers it has credentials for, so a provider missing from the list is
  * not an error here: the credential check covers it. Any failure to read the
  * catalog skips the check.
@@ -10,6 +10,7 @@
 import { run } from "./core/lib/proc.ts";
 import { MODEL_STAGES, STAGE_SETTING, type ResolvedModels } from "./models.ts";
 import type { ReviewModelStage } from "./options.ts";
+import { subscriptionCommand, subscriptionEnv } from "./subscription.ts";
 
 export interface CatalogModel {
   id: string;
@@ -27,6 +28,55 @@ export interface CatalogCheck {
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/**
+ * Choose the first review-capable model in OpenCode's native catalog order.
+ * Its global default may belong to an unrelated free provider, so filter the
+ * available list to the provider whose credentials DiffLoupe selected.
+ */
+export async function readProviderDefault(
+  provider: string,
+  options: { subscriptionHome?: string; env?: NodeJS.ProcessEnv } = {},
+): Promise<string | undefined> {
+  try {
+    const args = ["api", "model.list", "--standalone"];
+    const home = options.subscriptionHome;
+    const command = home ? subscriptionCommand(home, args, "probe") : { command: "opencode", args };
+    const env = home ? subscriptionEnv(home, options.env) : {
+      ...(options.env ?? process.env),
+      OPENCODE_DISABLE_PROJECT_CONFIG: "1",
+      OPENCODE_DISABLE_AUTOUPDATE: "1",
+    };
+    if (!home) {
+      // Reviews borrow only the global model/providers config. Repository and
+      // ambient overrides must not choose models that the runner cannot use.
+      for (const name of ["OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR", "OPENCODE_CONFIG_CONTENT", "OPENCODE_CLI_CONFIG_CONTENT"]) {
+        delete env[name];
+      }
+    }
+    const result = await run(command.command, command.args, {
+      allowFail: true,
+      env,
+      ...(home ? {} : { timeoutMs: 10_000 }),
+    });
+    if (result.code !== 0) return undefined;
+    const parsed: unknown = JSON.parse(result.stdout);
+    if (!isRecord(parsed) || !Array.isArray(parsed.data)) return undefined;
+    const model = parsed.data.find((entry: unknown): entry is CatalogModel => {
+      if (!isRecord(entry) || entry.providerID !== provider || typeof entry.id !== "string" || !entry.id ||
+        entry.enabled === false || entry.status === "deprecated" || !isRecord(entry.capabilities)) return false;
+      const { tools, input, output } = entry.capabilities;
+      const supportsText = (values: unknown) => Array.isArray(values) &&
+        values.some((value: unknown) => typeof value === "string" && value.startsWith("text"));
+      return tools === true && supportsText(input) && supportsText(output);
+    });
+    return model ? `${model.providerID}/${model.id}` : undefined;
+  } catch {
+    // Catalog responses and native failures can contain provider settings.
+    // Let setup explain the missing default without exposing those details.
+    return undefined;
+  }
 }
 
 export async function readModelCatalog(timeoutMs = 10_000): Promise<CatalogModel[] | undefined> {
