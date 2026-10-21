@@ -145,7 +145,7 @@ diffloupe runs
 | `--head <sha>` | PR targets only. Review this commit instead of the PR's current head. It must be a full 40-character SHA in the PR's history |
 | `--out <dir>` | With `--headless`, copy the review output and `result.json` into this directory |
 | `--json` | With `--headless`, print only the `result.json` object to stdout |
-| `--fail-on <severity>` | With `--headless`, exit 3 if a posted finding is at this severity or above: `blocker`, `should-fix`, `nice-to-have`, `question` |
+| `--fail-on <severity>` | With `--headless`, exit 3 if a finding posted in this round is at this severity or above: `blocker`, `should-fix`, `nice-to-have`, `question` |
 
 Untracked files over 1 MB are skipped and listed in the run.
 
@@ -213,7 +213,7 @@ Checks Bun, git, OpenCode, tilth and `gh`; prints the model for each stage and w
 | 0 | The review finished, or was skipped because the change has no code files |
 | 1 | The run failed, including a `gh` failure under `--github` |
 | 2 | The run could not start: a bad flag, target, model or credential |
-| 3 | `--fail-on` was given and a posted finding is at or above that severity |
+| 3 | `--fail-on` was given and a finding posted in this round is at or above that severity |
 | 130 | The run was cancelled |
 
 ### `result.json`
@@ -275,6 +275,8 @@ gate:
 ```
 
 This passes when the review job fails, so an outage does not block merges; change the first `exit 0` to `exit 1` for the opposite. Gate on `blocker` only: findings vary between runs, and a lower threshold blocks merges on false positives. `--fail-on` suits a single job or a local script. It exits 3 after writing `--out`, and ignores findings over the comment cap.
+
+Both the gate job and `--fail-on` count only the findings posted in this round. On a re-review, a finding already posted in an earlier round is not posted again, so a later push can pass the check while an earlier blocker is still unfixed. To block merges until every finding is dealt with, turn on "Require conversation resolution before merging" in the branch protection rules instead. It blocks on any unresolved inline comment, from the bot or a person, at any severity.
 
 Run `diffloupe doctor --strict` before the review to fail fast on a missing tool or credential.
 
