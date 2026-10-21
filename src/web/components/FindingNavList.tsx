@@ -54,7 +54,12 @@ export function FindingNavList({ findings, overCap, dismissed }: FindingNavListP
     if (container && row) keepInView(container, row);
   }, [current]);
 
-  if (findings.length === 0) return <p className={styles.empty}>No findings in the changed files.</p>;
+  if (findings.length === 0)
+    return (
+      <p className={styles.empty}>
+        {dismissed.size > 0 ? "Every finding has been dismissed." : "No findings in the changed files."}
+      </p>
+    );
 
   return (
     <ol ref={listRef} className={styles.files}>

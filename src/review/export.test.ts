@@ -176,6 +176,21 @@ describe("runMarkdown", () => {
     expect(runMarkdown(run, { state, includeDismissed: true })).toContain("### [should-fix] dropped (dismissed)");
   });
 
+  test("dismissed over-cap findings drop out of the over-cap count", () => {
+    const run = {
+      ...smallCommit,
+      findings: [finding({ id: "a", title: "kept" })],
+      overCapFindings: [finding({ id: "c", title: "capped" }), finding({ id: "d", title: "capped and dropped" })],
+    };
+    const state = { findingStatus: { d: "dismissed" as const } };
+    const md = runMarkdown(run, { state, includeOverCap: true });
+    expect(md.split("\n\n")[2]).toBe(
+      "1 finding: 1 should-fix. 1 more over the posting cap. 1 dismissed finding left out.",
+    );
+    expect(md).toContain("## Over the posting cap (1)");
+    expect(md).not.toContain("capped and dropped");
+  });
+
   test("snapshot", () => {
     expect(runMarkdown(largePr, { includeOverCap: true })).toMatchSnapshot();
   });

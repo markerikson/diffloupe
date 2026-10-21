@@ -116,11 +116,13 @@ export function SummaryBlock({ run }: { run: ReviewRun }) {
   const accepted = Object.values(state.findingStatus).filter((s) => s === "accepted").length;
   const reviewedCount = run.files.filter((f) => f.path in state.reviewedFiles).length;
   const keep = (f: RunFinding) => showDismissed || !dismissed.has(f.id);
-  const shown = { files: run.files, findings: run.findings.filter(keep) };
   const files = new Set(run.files.map((f) => f.path));
-  const summary = summarizeFindings(shown);
+  // The verdict and counts always leave dismissed findings out; the toggle only changes the lists.
+  const open = summarizeFindings({ files: run.files, findings: run.findings.filter((f) => !dismissed.has(f.id)) });
+  const summary = showDismissed ? summarizeFindings({ files: run.files, findings: run.findings.filter(keep) }) : open;
   const { intent, overview, meta } = run;
-  const reportedCount = summary.main.length + summary.other.length;
+  const reportedCount = open.main.length + open.other.length;
+  const reportedDismissed = run.findings.some((f) => dismissed.has(f.id) && !f.preexisting && f.repeatOf === undefined);
   const mainCount = summary.main.reduce((n, g) => n + g.findings.length, 0);
   const otherCount = summary.other.reduce((n, g) => n + g.findings.length, 0);
   const preexistingCount = summary.preexisting.reduce((n, g) => n + g.findings.length, 0);
@@ -153,17 +155,17 @@ export function SummaryBlock({ run }: { run: ReviewRun }) {
           {run.status === "running"
             ? "Reviewing the changed files. Findings appear here when the review finishes."
             : run.status === "complete"
-              ? dismissed.size > 0
+              ? reportedDismissed
                 ? "Every finding has been dismissed."
                 : "No new issues found in the changed files."
               : `The review ${run.status === "failed" ? "failed" : "was cancelled"} before reporting any findings.`}
         </p>
       ) : (
         <div className={styles.verdicts}>
-          <VerdictLine verdict={summary.merge} />
-          {summary.prod && <VerdictLine verdict={summary.prod} />}
+          <VerdictLine verdict={open.merge} />
+          {open.prod && <VerdictLine verdict={open.prod} />}
           <p className={styles.counts}>
-            {summary.counts.map(([severity, n], i) => (
+            {open.counts.map(([severity, n], i) => (
               <span key={severity}>
                 {i > 0 && <span className={styles.sep}> · </span>}
                 <span className={styles.dot} data-severity={severity} aria-hidden />

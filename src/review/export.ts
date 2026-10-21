@@ -111,10 +111,10 @@ export function sortFindings(findings: readonly RunFinding[]): RunFinding[] {
  * — the first thing a reader or agent needs. The severity tally covers only
  * findings on the change itself.
  */
-function countLine(run: ReviewRun, introduced: readonly RunFinding[], preexisting: readonly RunFinding[]): string {
+function countLine(introduced: readonly RunFinding[], preexisting: readonly RunFinding[], overCap: number): string {
   const tail =
     (preexisting.length ? ` ${preexisting.length} pre-existing.` : "") +
-    (run.overCapFindings.length ? ` ${run.overCapFindings.length} more over the posting cap.` : "");
+    (overCap ? ` ${overCap} more over the posting cap.` : "");
   if (introduced.length === 0) return `${preexisting.length ? "No issues found in this change." : "No issues found."}${tail}`;
   const bySeverity = SEVERITY_ORDER.map((s) => [s, introduced.filter((f) => f.severity === s).length] as const)
     .filter(([, n]) => n > 0)
@@ -139,12 +139,13 @@ export function runMarkdown(run: ReviewRun, opts: RunMarkdownOptions = {}): stri
   const { state } = opts;
   const shown = (f: RunFinding) => opts.includeDismissed || state?.findingStatus[f.id] !== "dismissed";
   const findings = run.findings.filter(shown);
-  const overCap = opts.includeOverCap ? run.overCapFindings.filter(shown) : [];
+  const overCapShown = run.overCapFindings.filter(shown);
+  const overCap = opts.includeOverCap ? overCapShown : [];
   const introduced = findings.filter((f) => !f.preexisting);
   const preexisting = findings.filter((f) => f.preexisting);
-  const hidden = run.findings.length - findings.length;
+  const hidden = run.findings.length - findings.length + run.overCapFindings.length - overCapShown.length;
   out.push(
-    countLine(run, introduced, preexisting) + (hidden ? ` ${hidden} dismissed finding${hidden === 1 ? "" : "s"} left out.` : ""),
+    countLine(introduced, preexisting, overCapShown.length) + (hidden ? ` ${hidden} dismissed finding${hidden === 1 ? "" : "s"} left out.` : ""),
   );
   for (const f of sortFindings(introduced)) out.push(findingMarkdown(f, state));
   if (preexisting.length) {

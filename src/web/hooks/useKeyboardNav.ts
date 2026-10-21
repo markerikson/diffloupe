@@ -42,13 +42,17 @@ interface KeyInput {
 
 interface EditableLike {
   tagName?: string;
+  type?: string;
   isContentEditable?: boolean;
 }
+
+const NON_TEXT_INPUTS = new Set(["checkbox", "radio", "button", "submit", "reset"]);
 
 export function isEditable(target: EventTarget | null): boolean {
   if (!target || typeof target !== "object") return false;
   const el = target as EditableLike;
-  return el.isContentEditable === true || el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT";
+  if (el.tagName === "INPUT") return !NON_TEXT_INPUTS.has(el.type ?? "text");
+  return el.isContentEditable === true || el.tagName === "TEXTAREA" || el.tagName === "SELECT";
 }
 
 /** The shortcut a keydown maps to, or null when it should pass through. */

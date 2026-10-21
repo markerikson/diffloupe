@@ -22,6 +22,7 @@ import { type GoToOptions, type RunNav, RunNavContext } from "../lib/run-nav.ts"
 import { useScrollSpy } from "../lib/scroll-spy.ts";
 import { useGetRunPatchQuery, useGetRunQuery } from "../store/api.ts";
 import {
+  dismissedToggled,
   fileFocused,
   findingFocused,
   overCapToggled,
@@ -136,8 +137,8 @@ export function RunPage() {
   const spy = useScrollSpy(virtualizer !== null, tree);
   const visible = useMemo(() => new Set(spy.groups), [spy.groups]);
 
-  const live = useRef({ folded, showOverCap, collapsedList });
-  live.current = { folded, showOverCap, collapsedList };
+  const live = useRef({ folded, showOverCap, showDismissed, dismissed, collapsedList });
+  live.current = { folded, showOverCap, showDismissed, dismissed, collapsedList };
 
   /** Expands the file (and its folded chapter), then scrolls to the card or the file. */
   const reveal = useCallback(
@@ -185,6 +186,7 @@ export function RunPage() {
         const f = index.findings.get(id);
         if (!f) return;
         if (index.overCap.has(id) && !live.current.showOverCap) dispatch(overCapToggled());
+        if (live.current.dismissed.has(id) && !live.current.showDismissed) dispatch(dismissedToggled());
         dispatch(findingFocused({ id, file: f.anchor.file }));
         record({ finding: id }, opts);
         if (opts?.scroll !== false) reveal(f.anchor.file, `finding-${id}`);
@@ -205,7 +207,8 @@ export function RunPage() {
       },
       setReviewed(path, reviewed) {
         const file = index.files.get(path);
-        if (!file) return;
+        // The server only accepts state changes once the run has finished.
+        if (!file || run?.status === "running") return;
         changeState({ op: "reviewed", paths: [path], value: reviewed });
         if (!reviewed) {
           dispatch(fileExpanded({ runId, path }));
@@ -217,7 +220,7 @@ export function RunPage() {
         scrollToFile(file.groupId, path, { focus: true });
       },
     };
-  }, [changeState, dispatch, index, navigate, reveal, run?.stops, runId]);
+  }, [changeState, dispatch, index, navigate, reveal, run?.status, run?.stops, runId]);
 
   useEffect(() => {
     if (!searchFile || !run || !virtualizer) return;
