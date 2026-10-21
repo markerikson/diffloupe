@@ -304,6 +304,21 @@ describe("usage accounting", () => {
       reasoning_tokens: 3,
       cache_read_input_tokens: 900,
       cache_creation_input_tokens: 40,
+      first_step: { input_tokens: 10, cache_read_input_tokens: 900, cache_creation_input_tokens: 40 },
+    });
+  });
+
+  it("keeps the first step's prompt tokens from the first step, not a later one", async () => {
+    const usageFile = path.join(mkdtempSync(path.join(os.tmpdir(), "gov-")), "usage.json");
+    const g = await setup({ budget: 0, usageFile });
+    await g.spend(0.1, { input: 4, cache: { read: 0, write: 600 } });
+    await g.spend(0.1, { input: 1, cache: { read: 600, write: 0 } });
+    await g.spend(0.1, { input: 2, cache: { read: 700, write: 0 } });
+    const totals = JSON.parse(readFileSync(usageFile, "utf8"));
+    expect(totals.usage.first_step).toEqual({
+      input_tokens: 4,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 600,
     });
   });
 });

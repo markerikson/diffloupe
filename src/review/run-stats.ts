@@ -1,10 +1,12 @@
-import type { FindingSeverity, ReviewRun, RunUserState } from "../types/review-run.ts";
+import type { DismissReason, FindingSeverity, ReviewRun, RunFinding, RunUserState } from "../types/review-run.ts";
 import { formatTarget } from "./format-run.ts";
+import { fingerprintOf } from "./prior-run.ts";
 import { targetKey } from "./run-store.ts";
+import { cacheShare, emptyUsageTotals, formatUsage, runUsageTotals, type UsageTotals } from "./usage.ts";
 
 export interface StatsInput {
   run: ReviewRun;
-  state: Pick<RunUserState, "findingStatus">;
+  state: Pick<RunUserState, "findingStatus" | "findingNotes">;
 }
 
 export interface RoundStats {
@@ -21,9 +23,26 @@ export interface RoundStats {
   costUsd: number;
   scope?: "full" | "incremental";
   promptVersion?: string;
+  /** Share of this run's prompt tokens read from the cache, when it recorded tokens. */
+  cacheShare?: number;
 }
 
 export type SeverityCounts = Record<FindingSeverity, number>;
+
+/** Prior findings whose lines a later run could check, and how many had their code edited. */
+export interface ActedCounts {
+  measured: number;
+  acted: number;
+  /** How many of the control spans, 35 lines away, were edited. */
+  control: number;
+}
+
+export interface ActedStats {
+  change: ActedCounts;
+  preexisting: ActedCounts;
+  /** Acted-on findings the next run still listed: edits that did not settle them. */
+  stillListed: number;
+}
 
 export interface ChainStats {
   key: string;
@@ -36,9 +55,14 @@ export interface ChainStats {
   fixed: number;
   fixedPreexisting: number;
   dismissed: number;
+  dismissedBy: DismissalCounts;
   /** Findings still listed on the last run and not dismissed. Whether they were fixed is unknown. */
   open: number;
   costUsd: number;
+  /** Tokens over the rounds that recorded them. */
+  usage: UsageTotals;
+  /** Over the rounds that recorded which prior findings had their code edited. */
+  acted: ActedStats;
   lastAt: string;
 }
 
@@ -51,7 +75,12 @@ export interface VersionStats {
   fixed: number;
   fixedPreexisting: number;
   costUsd: number;
+  acted: ActedStats;
 }
+
+/** Dismissals by reason; `unrecorded` for dismissals saved without one. */
+export type DismissalKey = DismissReason | "unrecorded";
+export type DismissalCounts = Partial<Record<DismissalKey, number>>;
 
 export interface StatsTotals {
   chains: number;
@@ -60,12 +89,84 @@ export interface StatsTotals {
   pastThreeRounds: number;
   raised: number;
   fixed: number;
+  dismissed: number;
+  dismissedBy: DismissalCounts;
   /** Fixed over raised, for findings on the change only. Null when nothing was raised. */
   resolutionRate: number | null;
   costUsd: number;
+  usage: UsageTotals;
+  acted: ActedStats;
 }
 
 const UNRECORDED = "unrecorded";
+
+const emptyActed = (): ActedStats => ({
+  change: { measured: 0, acted: 0, control: 0 },
+  preexisting: { measured: 0, acted: 0, control: 0 },
+  stillListed: 0,
+});
+
+interface ActedEntry {
+  acted: boolean;
+  control: boolean;
+  finding: RunFinding;
+  stillListed: boolean;
+}
+
+/** `run.priorActedOn` joined to the previous run's findings. */
+function actedEntries(run: ReviewRun, previous: ReviewRun | undefined): ActedEntry[] {
+  if (!previous || !run.priorActedOn) return [];
+  const listed = new Set(run.findings.map((f) => fingerprintOf(f.id)));
+  return run.priorActedOn.flatMap((e) => {
+    const finding = previous.findings.find((f) => f.id === e.id);
+    if (!finding) return [];
+    return [{ acted: e.acted, control: e.control, finding, stillListed: e.acted && listed.has(fingerprintOf(e.id)) }];
+  });
+}
+
+function addActed(into: ActedStats, e: ActedEntry): void {
+  const counts = e.finding.preexisting ? into.preexisting : into.change;
+  counts.measured++;
+  if (e.acted) counts.acted++;
+  if (e.control) counts.control++;
+  if (e.stillListed) into.stillListed++;
+}
+
+function sumActed(all: ActedStats[]): ActedStats {
+  const sum = emptyActed();
+  for (const a of all) {
+    for (const key of ["change", "preexisting"] as const) {
+      sum[key].measured += a[key].measured;
+      sum[key].acted += a[key].acted;
+      sum[key].control += a[key].control;
+    }
+    sum.stillListed += a.stillListed;
+  }
+  return sum;
+}
+
+function countDismissals(reasons: Iterable<DismissalKey>): DismissalCounts {
+  const counts: DismissalCounts = {};
+  for (const r of reasons) counts[r] = (counts[r] ?? 0) + 1;
+  return counts;
+}
+
+function sumDismissals(all: DismissalCounts[]): DismissalCounts {
+  const sum: DismissalCounts = {};
+  for (const counts of all) {
+    for (const [r, n] of Object.entries(counts) as [DismissalKey, number][]) sum[r] = (sum[r] ?? 0) + n;
+  }
+  return sum;
+}
+
+/** "2 wrong, 1 duplicate", most common first. Empty when nothing was dismissed. */
+export function formatDismissals(counts: DismissalCounts): string {
+  return (Object.entries(counts) as [DismissalKey, number][])
+    .filter(([, n]) => n > 0)
+    .sort((a, b) => b[1] - a[1])
+    .map(([r, n]) => `${n} ${r}`)
+    .join(", ");
+}
 
 const emptySeverities = (): SeverityCounts => ({ blocker: 0, "should-fix": 0, "nice-to-have": 0, question: 0 });
 
@@ -105,8 +206,13 @@ function summarizeChain(members: StatsInput[], byId: Map<string, StatsInput>): C
   let raisedPreexisting = 0;
   let fixed = 0;
   let fixedPreexisting = 0;
-  const dismissed = new Set<string>();
+  const dismissed = new Map<string, DismissalKey>();
+  const usage = emptyUsageTotals();
+  const acted = emptyActed();
   const rounds = members.map(({ run, state }, index): RoundStats => {
+    const own = runUsageTotals(run);
+    runUsageTotals(run, usage);
+    const share = own.calls ? cacheShare(own) : null;
     const fresh = run.findings.filter((f) => !f.carriedFrom);
     for (const f of fresh) {
       if (f.preexisting) raisedPreexisting++;
@@ -118,7 +224,10 @@ function summarizeChain(members: StatsInput[], byId: Map<string, StatsInput>): C
       fixed++;
       if (previous?.findings.find((f) => f.id === r.id)?.preexisting) fixedPreexisting++;
     }
-    for (const [id, status] of Object.entries(state.findingStatus)) if (status === "dismissed") dismissed.add(id);
+    for (const e of actedEntries(run, previous)) addActed(acted, e);
+    for (const [id, status] of Object.entries(state.findingStatus)) {
+      if (status === "dismissed") dismissed.set(id, state.findingNotes?.[id]?.reason ?? "unrecorded");
+    }
     return {
       id: run.id,
       round: run.round ?? index + 1,
@@ -130,6 +239,7 @@ function summarizeChain(members: StatsInput[], byId: Map<string, StatsInput>): C
       costUsd: run.meta.costUsd,
       ...(run.meta.reviewScope ? { scope: run.meta.reviewScope } : {}),
       ...(run.meta.promptVersion ? { promptVersion: run.meta.promptVersion } : {}),
+      ...(share !== null ? { cacheShare: share } : {}),
     };
   });
   const lastDismissed = new Set(
@@ -145,8 +255,11 @@ function summarizeChain(members: StatsInput[], byId: Map<string, StatsInput>): C
     fixed,
     fixedPreexisting,
     dismissed: dismissed.size,
+    dismissedBy: countDismissals(dismissed.values()),
     open: last.run.findings.filter((f) => !lastDismissed.has(f.id)).length,
     costUsd: rounds.reduce((n, r) => n + r.costUsd, 0),
+    usage,
+    acted,
     lastAt: last.run.createdAt,
   };
 }
@@ -161,8 +274,21 @@ export function statsTotals(chains: ChainStats[]): StatsTotals {
     pastThreeRounds: chains.length ? chains.filter((c) => c.rounds.length > 3).length / chains.length : 0,
     raised,
     fixed: chains.reduce((n, c) => n + c.fixed, 0),
+    dismissed: chains.reduce((n, c) => n + c.dismissed, 0),
+    dismissedBy: sumDismissals(chains.map((c) => c.dismissedBy)),
     resolutionRate: raised ? fixedOnChange / raised : null,
     costUsd: chains.reduce((n, c) => n + c.costUsd, 0),
+    usage: chains.reduce((sum, c) => {
+      sum.input += c.usage.input;
+      sum.output += c.usage.output;
+      sum.reasoning += c.usage.reasoning;
+      sum.cacheRead += c.usage.cacheRead;
+      sum.cacheWrite += c.usage.cacheWrite;
+      sum.calls += c.usage.calls;
+      sum.firstStepShares.push(...c.usage.firstStepShares);
+      return sum;
+    }, emptyUsageTotals()),
+    acted: sumActed(chains.map((c) => c.acted)),
   };
 }
 
@@ -182,7 +308,17 @@ export function statsByVersion(inputs: StatsInput[]): VersionStats[] {
     const key = `${promptVersion}/${instructionsHash}`;
     let group = groups.get(key);
     if (!group) {
-      group = { promptVersion, instructionsHash, runs: 0, raised: 0, raisedPreexisting: 0, fixed: 0, fixedPreexisting: 0, costUsd: 0 };
+      group = {
+        promptVersion,
+        instructionsHash,
+        runs: 0,
+        raised: 0,
+        raisedPreexisting: 0,
+        fixed: 0,
+        fixedPreexisting: 0,
+        costUsd: 0,
+        acted: emptyActed(),
+      };
       groups.set(key, group);
     }
     return group;
@@ -198,13 +334,14 @@ export function statsByVersion(inputs: StatsInput[]): VersionStats[] {
     }
     const previous = run.priorRunId ? byId.get(run.priorRunId) : undefined;
     if (!previous) continue;
+    const originOf = (finding: RunFinding | undefined) => byId.get(finding?.carriedFrom ?? previous.id) ?? previous;
     for (const r of run.resolved) {
       const finding = previous.findings.find((f) => f.id === r.id);
-      const origin = byId.get(finding?.carriedFrom ?? previous.id) ?? previous;
-      const originGroup = groupFor(origin);
+      const originGroup = groupFor(originOf(finding));
       if (finding?.preexisting) originGroup.fixedPreexisting++;
       else originGroup.fixed++;
     }
+    for (const e of actedEntries(run, previous)) addActed(groupFor(originOf(e.finding)).acted, e);
   }
   return [...groups.values()].sort((a, b) => b.runs - a.runs);
 }
@@ -217,6 +354,22 @@ function severityLine(counts: SeverityCounts): string {
   return parts.length ? parts.join(", ") : "none";
 }
 
+function ratesText(c: ActedCounts): string {
+  const acted = c.measured ? c.acted / c.measured : 0;
+  const control = c.measured ? c.control / c.measured : 0;
+  const points = Math.round((acted - control) * 100);
+  return `${c.acted} of ${c.measured} edited (${percent(acted)}), control ${percent(control)}, ${points >= 0 ? "+" : ""}${points} points`;
+}
+
+/** How often prior findings had their code edited, against the control spans. Null when nothing was measured. */
+export function formatActed(a: ActedStats): string | null {
+  if (!a.change.measured && !a.preexisting.measured) return null;
+  const parts = [a.change.measured ? ratesText(a.change) : "none on the change"];
+  if (a.preexisting.measured) parts.push(`pre-existing ${ratesText(a.preexisting)}`);
+  if (a.stillListed) parts.push(`${a.stillListed} edited but still listed`);
+  return parts.join("; ");
+}
+
 export function formatStats(chains: ChainStats[], versions?: VersionStats[]): string {
   if (chains.length === 0) return "No complete review runs match.";
   const lines: string[] = [];
@@ -226,11 +379,21 @@ export function formatStats(chains: ChainStats[], versions?: VersionStats[]): st
     for (const r of c.rounds) {
       const pre = r.newPreexisting ? ` (${r.newPreexisting} pre-existing)` : "";
       const scope = r.scope === "incremental" ? ", changes only" : "";
-      lines.push(`  round ${r.round}  ${r.id}  ${r.new} new${pre}, ${r.carried} carried, ${r.resolved} fixed${scope}, ${usd(r.costUsd)}`);
+      const cache = r.cacheShare === undefined ? "" : `, ${percent(r.cacheShare)} cached`;
+      lines.push(
+        `  round ${r.round}  ${r.id}  ${r.new} new${pre}, ${r.carried} carried, ${r.resolved} fixed${scope}, ${usd(r.costUsd)}${cache}`,
+      );
     }
+    const usage = formatUsage(c.usage);
+    if (usage) lines.push(`  tokens: ${usage}`);
     const perFixed = c.fixed ? `, ${usd(c.costUsd / c.fixed)} per fixed finding` : "";
     lines.push(`  raised: ${severityLine(c.raised)}${c.raisedPreexisting ? `; ${c.raisedPreexisting} pre-existing` : ""}`);
-    lines.push(`  fixed ${c.fixed}, dismissed ${c.dismissed}, still open at last run ${c.open}${perFixed}`);
+    const reasons = formatDismissals(c.dismissedBy);
+    lines.push(
+      `  fixed ${c.fixed}, dismissed ${c.dismissed}${reasons ? ` (${reasons})` : ""}, still open at last run ${c.open}${perFixed}`,
+    );
+    const acted = formatActed(c.acted);
+    if (acted) lines.push(`  acted on: ${acted}`);
     lines.push("");
   }
   const t = statsTotals(chains);
@@ -238,6 +401,11 @@ export function formatStats(chains: ChainStats[], versions?: VersionStats[]): st
     `${t.chains} chain${t.chains === 1 ? "" : "s"}, ${t.meanRounds.toFixed(1)} rounds on average, ${percent(t.pastThreeRounds)} past three rounds`,
     `${t.raised} raised on the change, ${t.fixed} fixed, resolution rate ${percent(t.resolutionRate)}, ${usd(t.costUsd)} total`,
   );
+  if (t.dismissed) lines.push(`${t.dismissed} dismissed: ${formatDismissals(t.dismissedBy)}`);
+  const usage = formatUsage(t.usage);
+  if (usage) lines.push(`tokens over ${t.usage.calls} agent calls: ${usage}`);
+  const acted = formatActed(t.acted);
+  if (acted) lines.push(`prior findings acted on: ${acted}`);
   if (versions) {
     lines.push("", "By prompt version / instructions:");
     for (const v of versions) {
@@ -245,6 +413,8 @@ export function formatStats(chains: ChainStats[], versions?: VersionStats[]): st
       lines.push(
         `  ${v.promptVersion} / ${v.instructionsHash}  ${v.runs} run${v.runs === 1 ? "" : "s"}, ${v.raised} raised (${v.raisedPreexisting} pre-existing), ${v.fixed} fixed, resolution rate ${rate}, ${usd(v.costUsd)}`,
       );
+      const vActed = formatActed(v.acted);
+      if (vActed) lines.push(`    acted on: ${vActed}`);
     }
   }
   return lines.join("\n");

@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { createApp } from "../index.ts";
 import { TargetError } from "../../review/targets.ts";
 import { FakeDriver, fakeContext, useTempDataDir } from "../test-helpers.ts";
+import { loadFixture } from "../../review/__fixtures__/load.ts";
+import type { RunUserState } from "../../types/review-run.ts";
 
 useTempDataDir();
 
@@ -9,6 +11,10 @@ function setup() {
   const driver = new FakeDriver();
   const ctx = fakeContext(driver);
   return { driver, ctx, app: createApp(ctx) };
+}
+
+function put(body: unknown): RequestInit {
+  return { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
 }
 
 function post(body?: unknown): RequestInit {
@@ -86,5 +92,43 @@ describe("runs routes", () => {
     const res = await app.request(`/api/runs/${id}/file?side=head&path=/etc/passwd`);
     expect(res.status).toBe(404);
     expect((await app.request(`/api/runs/${id}/file?side=sideways&path=x`)).status).toBe(400);
+  });
+
+  test("state routes record triage and reject unknown ids, paths, and active runs", async () => {
+    const { driver, ctx, app } = setup();
+    const { id, done } = await ctx.runs.start({});
+    const pendingState = await app.request(`/api/runs/${id}/state`);
+    expect(pendingState.status).toBe(200);
+    expect((await app.request(`/api/runs/${id}/state/files`, put({ path: "x", reviewed: true }))).status).toBe(409);
+
+    const { findings, files } = loadFixture("large-pr").build();
+    driver.finish({ ...ctx.runs.pendingRun(id)!, status: "complete", findings, files });
+    await done;
+    const finding = findings[0]!;
+    const file = files[0]!;
+
+    const dismissed = await app.request(
+      `/api/runs/${id}/state/findings/${finding.id}`,
+      put({ status: "dismissed", reason: "wrong", note: "not a bug" }),
+    );
+    expect(dismissed.status).toBe(200);
+    const state = (await dismissed.json()) as RunUserState;
+    expect(state.findingStatus[finding.id]).toBe("dismissed");
+    expect(state.findingNotes?.[finding.id]).toMatchObject({ reason: "wrong", note: "not a bug" });
+
+    const reviewed = await app.request(`/api/runs/${id}/state/files`, put({ path: file.path, reviewed: true }));
+    expect(reviewed.status).toBe(200);
+    expect(Object.keys(((await reviewed.json()) as RunUserState).reviewedFiles)).toEqual([file.path]);
+
+    const read = (await (await app.request(`/api/runs/${id}/state`)).json()) as RunUserState;
+    expect(read.findingStatus).toEqual({ [finding.id]: "dismissed" });
+
+    expect(
+      (await app.request(`/api/runs/${id}/state/findings/${finding.id}`, put({ status: "dismissed" }))).status,
+    ).toBe(400);
+    expect((await app.request(`/api/runs/${id}/state/findings/nope`, put({ status: "accepted" }))).status).toBe(400);
+    expect((await app.request(`/api/runs/${id}/state/files`, put({ path: "nope", reviewed: true }))).status).toBe(400);
+    expect((await app.request(`/api/runs/${id}/state/files`, put({ path: file.path }))).status).toBe(400);
+    expect((await app.request(`/api/runs/missing/state`)).status).toBe(404);
   });
 });

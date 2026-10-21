@@ -4,7 +4,7 @@
  * from the review core; `schema-drift.ts` checks the copies stay in sync.
  */
 import { type } from "arktype";
-import { RunGroupSchema, RunKindSchema } from "../types/review-run.ts";
+import { DismissReasonSchema, FindingStatusSchema, RunGroupSchema, RunKindSchema } from "../types/review-run.ts";
 
 /**
  * Body of `POST /api/runs`. Also what the CLI hands the run manager directly.
@@ -43,6 +43,18 @@ export type StartRunRequest = typeof StartRunRequestSchema.infer;
 
 export const StartRunResponseSchema = type({ id: "string", url: "string" });
 export type StartRunResponse = typeof StartRunResponseSchema.infer;
+
+/** Body of `PUT /api/runs/:id/state/findings/:fid`. Dismissing needs a reason. */
+export const FindingStateRequestSchema = type({
+  status: FindingStatusSchema,
+  "reason?": DismissReasonSchema,
+  "note?": "string",
+});
+export type FindingStateRequest = typeof FindingStateRequestSchema.infer;
+
+/** Body of `PUT /api/runs/:id/state/files`. */
+export const FileStateRequestSchema = type({ path: "string", reviewed: "boolean" });
+export type FileStateRequest = typeof FileStateRequestSchema.infer;
 
 export const ReviewStageSchema = type(
   "'resolving_target' | 'checking_registry' | 'building_map' | 'grouping' | 'reviewing' | 'coordinating' | 'walkthrough' | 'verifying' | 'writing'",

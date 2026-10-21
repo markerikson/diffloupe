@@ -5,12 +5,29 @@ import pc from "picocolors";
 import { runMarkdown } from "../review/export.js";
 import { formatRun, formatRunList } from "../review/format-run.js";
 import { chainStats, formatStats, statsByVersion, statsTotals } from "../review/run-stats.js";
-import { deleteRun, listRuns, loadRun, loadState, orphanScratch, pruneCandidates } from "../review/run-store.js";
-import type { ReviewRun, RunHeader, RunKind } from "../types/review-run.js";
+import {
+  deleteRun,
+  listRuns,
+  loadRun,
+  loadRunWithUsage,
+  loadState,
+  orphanScratch,
+  pruneCandidates,
+  setFindingStatus,
+  type FindingNoteInput,
+} from "../review/run-store.js";
+import {
+  DISMISS_REASONS,
+  type DismissReason,
+  type FindingStatus,
+  type ReviewRun,
+  type RunHeader,
+  type RunKind,
+} from "../types/review-run.js";
 
-async function loadOrExit(id: string): Promise<ReviewRun> {
+async function loadOrExit(id: string, load: (id: string) => Promise<ReviewRun> = loadRun): Promise<ReviewRun> {
   try {
-    return await loadRun(id);
+    return await load(id);
   } catch (error) {
     console.error(pc.red(`No run.json for ${id}: ${error instanceof Error ? error.message : String(error)}`));
     process.exit(1);
@@ -35,14 +52,48 @@ export function createRunsCommand(): Command {
     .option("--json", "Print run.json", false)
     .option("--markdown", "Print the findings as markdown, as the web UI's Copy all does", false)
     .option("--over-cap", "With --markdown, include findings over the posting cap", false)
-    .action(async (id: string, options: { json: boolean; markdown: boolean; overCap: boolean }) => {
-      const run = await loadOrExit(id);
+    .option("--dismissed", "With --markdown, include dismissed findings", false)
+    .action(async (id: string, options: { json: boolean; markdown: boolean; overCap: boolean; dismissed: boolean }) => {
+      const run = await loadOrExit(id, options.json || options.markdown ? loadRun : loadRunWithUsage);
+      const state = await loadState(id);
       if (options.markdown) {
-        process.stdout.write(runMarkdown(run, { includeOverCap: options.overCap }));
+        process.stdout.write(
+          runMarkdown(run, { includeOverCap: options.overCap, state, includeDismissed: options.dismissed }),
+        );
         return;
       }
-      console.log(options.json ? JSON.stringify(run, null, 2) : formatRun(run));
+      console.log(options.json ? JSON.stringify({ ...run, state }, null, 2) : formatRun(run, state));
     });
+
+  const triage = (name: string, description: string) =>
+    runs
+      .command(name)
+      .description(description)
+      .argument("<run>", "Run id")
+      .argument("<findings...>", "Finding ids, as runs show and the markdown export print them");
+  const setStatus = async (runId: string, ids: string[], status: FindingStatus, notes: FindingNoteInput = {}) => {
+    try {
+      await setFindingStatus(runId, ids, status, notes);
+    } catch (error) {
+      console.error(pc.red(error instanceof Error ? error.message : String(error)));
+      process.exit(1);
+    }
+    const verb = status === "open" ? "reopened" : status;
+    console.log(`${verb} ${ids.length} finding${ids.length === 1 ? "" : "s"} in ${runId}`);
+  };
+
+  triage("dismiss", "Dismiss findings, with the reason, so later rounds and stats know why")
+    .requiredOption("--reason <reason>", `Why: ${DISMISS_REASONS.join(", ")}`, parseReason)
+    .option("--note <text>", "A short explanation")
+    .action(async (runId: string, ids: string[], options: { reason: DismissReason; note?: string }) =>
+      setStatus(runId, ids, "dismissed", options),
+    );
+  triage("accept", "Mark findings accepted: real problems to fix").action(
+    async (runId: string, ids: string[]) => setStatus(runId, ids, "accepted"),
+  );
+  triage("reopen", "Clear the accepted or dismissed mark on findings").action(
+    async (runId: string, ids: string[]) => setStatus(runId, ids, "open"),
+  );
 
   runs
     .command("stats")
@@ -66,7 +117,7 @@ export function createRunsCommand(): Command {
           (options.repo === undefined || h.repo.root === repoPath || h.repo.slug === options.repo),
       );
       const inputs = await Promise.all(
-        headers.map(async (h) => ({ run: await loadRun(h.id), state: await loadState(h.id) })),
+        headers.map(async (h) => ({ run: await loadRunWithUsage(h.id), state: await loadState(h.id) })),
       );
       const cutoff = sinceMs === undefined ? undefined : new Date(Date.now() - sinceMs).toISOString();
       const chains = chainStats(inputs).filter((c) => cutoff === undefined || c.lastAt >= cutoff);
@@ -127,6 +178,12 @@ export function createRunsCommand(): Command {
     });
 
   return runs;
+}
+
+export function parseReason(value: string): DismissReason {
+  const reason = DISMISS_REASONS.find((r) => r === value);
+  if (!reason) throw new InvalidArgumentError(`must be one of ${DISMISS_REASONS.join(", ")}`);
+  return reason;
 }
 
 function parseKind(value: string): RunKind {

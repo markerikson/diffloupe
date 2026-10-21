@@ -31,15 +31,26 @@ export interface LineHunk {
   newCount: number;
 }
 
-/** Hunk headers of a `git diff -U0`, keyed by the new path. */
+/**
+ * Hunk headers of a `git diff -U0`, keyed by the new path. A deleted file,
+ * which is also how a rename shows when only the old path is in the pathspec,
+ * is keyed by its old path.
+ */
 export function parseZeroContextDiff(diff: string): Map<string, LineHunk[]> {
   const out = new Map<string, LineHunk[]>();
   let current: LineHunk[] | undefined;
+  let oldPath: string | undefined;
   for (const line of diff.split("\n")) {
+    const old = line.match(/^--- (?:a\/(.+)|\/dev\/null)$/);
+    if (old) {
+      oldPath = old[1];
+      continue;
+    }
     const file = line.match(/^\+\+\+ (?:b\/(.+)|\/dev\/null)$/);
     if (file) {
-      current = file[1] ? [] : undefined;
-      if (file[1] && current) out.set(file[1], current);
+      const path = file[1] ?? oldPath;
+      current = path ? [] : undefined;
+      if (path && current) out.set(path, current);
       continue;
     }
     const h = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);

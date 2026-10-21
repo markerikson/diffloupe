@@ -10,6 +10,8 @@ export type RunAnnotation = DiffLineAnnotation<AnnotationMeta>;
 
 export interface AnnotationOptions {
   showOverCap?: boolean;
+  /** Finding ids to leave out, such as dismissed ones. */
+  hidden?: ReadonlySet<string>;
 }
 
 type AnnotatedRun = Pick<ReviewRun, "findings" | "overCapFindings" | "stops">;
@@ -43,9 +45,11 @@ export function fileAnnotations(run: AnnotatedRun, opts: AnnotationOptions = {})
     if (list) list.push(entry);
     else out.set(a.file, [entry]);
   };
-  for (const finding of run.findings) add(finding.anchor, { kind: "finding", finding, overCap: false });
+  const shown = (f: RunFinding) => !opts.hidden?.has(f.id);
+  for (const finding of run.findings.filter(shown)) add(finding.anchor, { kind: "finding", finding, overCap: false });
   if (opts.showOverCap)
-    for (const finding of run.overCapFindings) add(finding.anchor, { kind: "finding", finding, overCap: true });
+    for (const finding of run.overCapFindings.filter(shown))
+      add(finding.anchor, { kind: "finding", finding, overCap: true });
   for (const stop of run.stops) stop.locations.forEach((loc, location) => add(loc, { kind: "stop", stop, location }));
   for (const list of out.values()) list.sort(compare);
   return out;

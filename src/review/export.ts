@@ -5,7 +5,7 @@
  */
 import { code, fence } from "./core/lib/markdown.ts";
 import { describeRound, formatTarget } from "./format-run.ts";
-import type { DiffAnchor, FindingSeverity, ReviewRun, RunFinding } from "../types/review-run.ts";
+import type { DiffAnchor, FindingSeverity, ReviewRun, RunFinding, RunUserState } from "../types/review-run.ts";
 
 export const SEVERITY_ORDER: readonly FindingSeverity[] = ["blocker", "should-fix", "nice-to-have", "question"];
 
@@ -63,8 +63,21 @@ export function anchorLocation(a: DiffAnchor): string {
   return `${a.file}:${range(a.line, a.endLine)}${side}`;
 }
 
-export function findingMarkdown(f: RunFinding): string {
-  const out = [`### [${f.severity}] ${f.title}`, code(anchorLocation(f.anchor))];
+function statusLabel(f: RunFinding, state: Pick<RunUserState, "findingStatus" | "findingNotes"> | undefined): string {
+  const status = state?.findingStatus[f.id];
+  if (status === "accepted") return " (accepted)";
+  if (status !== "dismissed") return "";
+  const reason = state?.findingNotes?.[f.id]?.reason;
+  return reason ? ` (dismissed: ${reason})` : " (dismissed)";
+}
+
+export function findingMarkdown(f: RunFinding, state?: Pick<RunUserState, "findingStatus" | "findingNotes">): string {
+  const out = [
+    `### [${f.severity}] ${f.title}${statusLabel(f, state)}`,
+    `${code(anchorLocation(f.anchor))} · id ${code(f.id)}`,
+  ];
+  const dismissNote = state?.findingStatus[f.id] === "dismissed" ? state.findingNotes?.[f.id]?.note?.trim() : undefined;
+  if (dismissNote) out.push(`> Dismissed: ${dismissNote}`);
   const notes = [
     f.carriedFrom && `Open since run ${f.carriedFrom}.`,
     f.repeatOf !== undefined && `Repeats PR comment #${f.repeatOf}.`,
@@ -98,10 +111,10 @@ export function sortFindings(findings: readonly RunFinding[]): RunFinding[] {
  * — the first thing a reader or agent needs. The severity tally covers only
  * findings on the change itself.
  */
-function countLine(run: ReviewRun, introduced: readonly RunFinding[], preexisting: readonly RunFinding[]): string {
+function countLine(introduced: readonly RunFinding[], preexisting: readonly RunFinding[], overCap: number): string {
   const tail =
     (preexisting.length ? ` ${preexisting.length} pre-existing.` : "") +
-    (run.overCapFindings.length ? ` ${run.overCapFindings.length} more over the posting cap.` : "");
+    (overCap ? ` ${overCap} more over the posting cap.` : "");
   if (introduced.length === 0) return `${preexisting.length ? "No issues found in this change." : "No issues found."}${tail}`;
   const bySeverity = SEVERITY_ORDER.map((s) => [s, introduced.filter((f) => f.severity === s).length] as const)
     .filter(([, n]) => n > 0)
@@ -112,6 +125,9 @@ function countLine(run: ReviewRun, introduced: readonly RunFinding[], preexistin
 
 export interface RunMarkdownOptions {
   includeOverCap?: boolean;
+  /** Reviewer state: accepted findings are marked, dismissed ones left out unless `includeDismissed`. */
+  state?: Pick<RunUserState, "findingStatus" | "findingNotes"> | undefined;
+  includeDismissed?: boolean;
 }
 
 export function runMarkdown(run: ReviewRun, opts: RunMarkdownOptions = {}): string {
@@ -120,17 +136,25 @@ export function runMarkdown(run: ReviewRun, opts: RunMarkdownOptions = {}): stri
     `# Review findings: ${formatTarget(run.target)}`,
     `Base ${code(run.base.slice(0, 12))}, head ${code(run.head.slice(0, 12))}${round ? `. ${round}.` : ""}`,
   ];
-  const introduced = run.findings.filter((f) => !f.preexisting);
-  const preexisting = run.findings.filter((f) => f.preexisting);
-  out.push(countLine(run, introduced, preexisting));
-  for (const f of sortFindings(introduced)) out.push(findingMarkdown(f));
+  const { state } = opts;
+  const shown = (f: RunFinding) => opts.includeDismissed || state?.findingStatus[f.id] !== "dismissed";
+  const findings = run.findings.filter(shown);
+  const overCapShown = run.overCapFindings.filter(shown);
+  const overCap = opts.includeOverCap ? overCapShown : [];
+  const introduced = findings.filter((f) => !f.preexisting);
+  const preexisting = findings.filter((f) => f.preexisting);
+  const hidden = run.findings.length - findings.length + run.overCapFindings.length - overCapShown.length;
+  out.push(
+    countLine(introduced, preexisting, overCapShown.length) + (hidden ? ` ${hidden} dismissed finding${hidden === 1 ? "" : "s"} left out.` : ""),
+  );
+  for (const f of sortFindings(introduced)) out.push(findingMarkdown(f, state));
   if (preexisting.length) {
     out.push(`## Pre-existing (not introduced by this change)`);
-    for (const f of sortFindings(preexisting)) out.push(findingMarkdown(f));
+    for (const f of sortFindings(preexisting)) out.push(findingMarkdown(f, state));
   }
-  if (opts.includeOverCap && run.overCapFindings.length) {
-    out.push(`## Over the posting cap (${run.overCapFindings.length})`);
-    for (const f of sortFindings(run.overCapFindings)) out.push(findingMarkdown(f));
+  if (overCap.length) {
+    out.push(`## Over the posting cap (${overCap.length})`);
+    for (const f of sortFindings(overCap)) out.push(findingMarkdown(f, state));
   }
   return `${out.join("\n\n")}\n`;
 }

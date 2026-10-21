@@ -29,7 +29,7 @@ describe("mapLine", () => {
   });
 });
 
-test("parseZeroContextDiff keys hunks by the new path and skips deleted files", () => {
+test("parseZeroContextDiff keys hunks by the new path, and a deleted file by its old one", () => {
   const diff = [
     "diff --git a/a.ts b/a.ts",
     "--- a/a.ts",
@@ -46,11 +46,12 @@ test("parseZeroContextDiff keys hunks by the new path and skips deleted files", 
     "@@ -1,2 +0,0 @@",
   ].join("\n");
   const map = parseZeroContextDiff(diff);
-  expect([...map.keys()]).toEqual(["a.ts"]);
+  expect([...map.keys()]).toEqual(["a.ts", "gone.ts"]);
   expect(map.get("a.ts")).toEqual([
     { oldStart: 3, oldCount: 1, newStart: 3, newCount: 2 },
     { oldStart: 10, oldCount: 0, newStart: 12, newCount: 1 },
   ]);
+  expect(map.get("gone.ts")).toEqual([{ oldStart: 1, oldCount: 2, newStart: 0, newCount: 0 }]);
 });
 
 describe("carrying findings from the prior run", () => {

@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { currentFileAtTop, scrollToFile } from "../lib/navigate.ts";
 import { type NavLists, neighbor } from "../lib/navigation.ts";
 import type { RunNav } from "../lib/run-nav.ts";
+import { api } from "../store/api.ts";
 import { helpSet } from "../store/focus.ts";
 import { useAppStore } from "../store/hooks.ts";
 import { fileCollapseToggled, selectCollapsedFiles } from "../store/view.ts";
@@ -14,6 +15,7 @@ export type KeyAction =
   | "nextStop"
   | "prevStop"
   | "toggleFile"
+  | "toggleReviewed"
   | "top"
   | "help";
 
@@ -25,6 +27,7 @@ const ACTIONS: Record<string, KeyAction> = {
   "]": "nextStop",
   "[": "prevStop",
   x: "toggleFile",
+  r: "toggleReviewed",
   t: "top",
   "?": "help",
 };
@@ -39,13 +42,17 @@ interface KeyInput {
 
 interface EditableLike {
   tagName?: string;
+  type?: string;
   isContentEditable?: boolean;
 }
+
+const NON_TEXT_INPUTS = new Set(["checkbox", "radio", "button", "submit", "reset"]);
 
 export function isEditable(target: EventTarget | null): boolean {
   if (!target || typeof target !== "object") return false;
   const el = target as EditableLike;
-  return el.isContentEditable === true || el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT";
+  if (el.tagName === "INPUT") return !NON_TEXT_INPUTS.has(el.type ?? "text");
+  return el.isContentEditable === true || el.tagName === "TEXTAREA" || el.tagName === "SELECT";
 }
 
 /** The shortcut a keydown maps to, or null when it should pass through. */
@@ -120,6 +127,13 @@ export function useKeyboardNav(lists: NavLists | null, nav: RunNav, runId: strin
           store.dispatch(fileCollapseToggled({ runId, path }));
           const groupId = top?.groupId ?? lists.files.find((f) => f.path === path)?.groupId;
           if (!wasCollapsed && groupId) scrollToFile(groupId, path, { focus: true });
+          return;
+        }
+        case "toggleReviewed": {
+          const path = top?.path ?? state.focus.file;
+          if (!path) return;
+          const reviewed = api.endpoints.getRunState.select(runId)(state).data?.reviewedFiles ?? {};
+          nav.setReviewed(path, !(path in reviewed));
           return;
         }
         case "top":

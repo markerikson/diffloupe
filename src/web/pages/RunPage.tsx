@@ -22,16 +22,19 @@ import { type GoToOptions, type RunNav, RunNavContext } from "../lib/run-nav.ts"
 import { useScrollSpy } from "../lib/scroll-spy.ts";
 import { useGetRunPatchQuery, useGetRunQuery } from "../store/api.ts";
 import {
+  dismissedToggled,
   fileFocused,
   findingFocused,
   overCapToggled,
   runEntered,
   selectFocusedFinding,
   selectFocusedStop,
+  selectShowDismissed,
   selectShowOverCap,
   selectStopLocation,
   stopFocused,
 } from "../store/focus.ts";
+import { useChangeRunState, useDismissedIds } from "../hooks/useRunState.ts";
 import { useAppDispatch, useAppSelector } from "../store/hooks.ts";
 import {
   fileExpanded,
@@ -85,6 +88,10 @@ export function RunPage() {
   const collapsed = useMemo(() => new Set(collapsedList), [collapsedList]);
   const folded = useMemo(() => new Set(foldedList), [foldedList]);
   const showOverCap = useAppSelector(selectShowOverCap);
+  const showDismissed = useAppSelector(selectShowDismissed);
+  const dismissed = useDismissedIds(runId);
+  const hidden = showDismissed ? NO_IDS : dismissed;
+  const changeState = useChangeRunState(runId);
   const focusedFinding = useAppSelector(selectFocusedFinding);
   const focusedStop = useAppSelector(selectFocusedStop);
   const stopLocation = useAppSelector(selectStopLocation);
@@ -114,16 +121,24 @@ export function RunPage() {
     };
   }, [run]);
   const annotations = useMemo(
-    () => (run ? fileAnnotations(run, { showOverCap }) : new Map<string, RunAnnotation[]>()),
-    [run, showOverCap],
+    () => (run ? fileAnnotations(run, { showOverCap, hidden }) : new Map<string, RunAnnotation[]>()),
+    [run, showOverCap, hidden],
   );
-  const lists = useMemo(() => (run && tree ? navLists(run, tree, { showOverCap }) : null), [run, tree, showOverCap]);
+  const lists = useMemo(
+    () => (run && tree ? navLists(run, tree, { showOverCap, hidden }) : null),
+    [run, tree, showOverCap, hidden],
+  );
+  // Dismissed findings stay out of n/p even while they are shown.
+  const keyLists = useMemo(
+    () => lists && { ...lists, findings: lists.findings.filter((f) => !dismissed.has(f.id)) },
+    [lists, dismissed],
+  );
 
   const spy = useScrollSpy(virtualizer !== null, tree);
   const visible = useMemo(() => new Set(spy.groups), [spy.groups]);
 
-  const live = useRef({ folded, showOverCap });
-  live.current = { folded, showOverCap };
+  const live = useRef({ folded, showOverCap, showDismissed, dismissed, collapsedList });
+  live.current = { folded, showOverCap, showDismissed, dismissed, collapsedList };
 
   /** Expands the file (and its folded chapter), then scrolls to the card or the file. */
   const reveal = useCallback(
@@ -171,6 +186,7 @@ export function RunPage() {
         const f = index.findings.get(id);
         if (!f) return;
         if (index.overCap.has(id) && !live.current.showOverCap) dispatch(overCapToggled());
+        if (live.current.dismissed.has(id) && !live.current.showDismissed) dispatch(dismissedToggled());
         dispatch(findingFocused({ id, file: f.anchor.file }));
         record({ finding: id }, opts);
         if (opts?.scroll !== false) reveal(f.anchor.file, `finding-${id}`);
@@ -189,8 +205,22 @@ export function RunPage() {
         if (!ok) setFallbackText(text);
         return ok;
       },
+      setReviewed(path, reviewed) {
+        const file = index.files.get(path);
+        // The server only accepts state changes once the run has finished.
+        if (!file || run?.status === "running") return;
+        changeState({ op: "reviewed", paths: [path], value: reviewed });
+        if (!reviewed) {
+          dispatch(fileExpanded({ runId, path }));
+          return;
+        }
+        const others = live.current.collapsedList.filter((p) => p !== path);
+        dispatch(filesCollapsedSet({ runId, paths: [...others, path] }));
+        // Keeps the collapsed header at the top, so the next file follows right below it.
+        scrollToFile(file.groupId, path, { focus: true });
+      },
     };
-  }, [dispatch, index, navigate, reveal, run?.stops, runId]);
+  }, [changeState, dispatch, index, navigate, reveal, run?.status, run?.stops, runId]);
 
   useEffect(() => {
     if (!searchFile || !run || !virtualizer) return;
@@ -219,7 +249,7 @@ export function RunPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, searchStop]);
 
-  useKeyboardNav(lists, nav, runId);
+  useKeyboardNav(keyLists, nav, runId);
 
   const selection = useMemo((): FileSelection | null => {
     if (focusedFinding) {
@@ -267,6 +297,7 @@ export function RunPage() {
                   onToggleFold={onToggleFold}
                   findings={lists?.findings ?? EMPTY_FINDINGS}
                   overCap={index.overCap}
+                  dismissed={dismissed}
                 />
               </div>
             </aside>
@@ -335,6 +366,7 @@ export function RunPage() {
 }
 
 const EMPTY_FILES: readonly RunFile[] = [];
+const NO_IDS: ReadonlySet<string> = new Set();
 const EMPTY_FINDINGS: readonly RunFinding[] = [];
 
 export function RunPageSkeleton() {

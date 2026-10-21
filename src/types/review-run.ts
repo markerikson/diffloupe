@@ -145,6 +145,21 @@ export const RunFindingSchema = type({
 });
 export type RunFinding = typeof RunFindingSchema.infer;
 
+/**
+ * Tokens one agent call used. `input` excludes cached tokens: the prompt is
+ * `input + cacheRead + cacheWrite`. `firstStep` is the session's first request
+ * alone, which shows whether the shared prompt prefix hit the prompt cache.
+ */
+export const RunUsageSchema = type({
+  input: "number",
+  output: "number",
+  reasoning: "number",
+  cacheRead: "number",
+  cacheWrite: "number",
+  "firstStep?": { input: "number", cacheRead: "number", cacheWrite: "number" },
+});
+export type RunUsage = typeof RunUsageSchema.infer;
+
 export const RunSliceSchema = type({
   unit: "string",
   part: "number",
@@ -152,8 +167,13 @@ export const RunSliceSchema = type({
   status: "'ok' | 'failed'",
   costUsd: "number",
   wallMs: "number",
+  "usage?": RunUsageSchema,
 });
 export type RunSlice = typeof RunSliceSchema.infer;
+
+/** Cost, time and tokens of a single-call stage. */
+export const RunStageCostSchema = type({ costUsd: "number", wallMs: "number", "usage?": RunUsageSchema });
+export type RunStageCost = typeof RunStageCostSchema.infer;
 
 /** `remote`: `root` is DiffLoupe's partial copy of the GitHub repository, not the user's clone. */
 export const RunRepoSchema = type({ root: "string", "slug?": "string", "remote?": "boolean" });
@@ -167,6 +187,13 @@ export function runKind(run: { meta: { kind?: RunKind | undefined } }): RunKind 
 }
 
 /**
+ * Per prior finding: whether the code at its lines changed before this run
+ * (`acted`), and whether the same span 35 lines away did (`control`).
+ */
+export const PriorActedOnSchema = type({ id: "string", acted: "boolean", control: "boolean" });
+export type PriorActedOn = typeof PriorActedOnSchema.infer;
+
+/**
  * - `groups`: parents come before their children; display order is array order.
  * - `overCapFindings`: findings the review stands behind but cut by the posting cap.
  * - `resolved`: findings from the prior run that this review found fixed.
@@ -178,7 +205,10 @@ export function runKind(run: { meta: { kind?: RunKind | undefined } }): RunKind 
  *   the reviewers read, `meta.scopeReason` says why a re-review went full.
  * - `meta.promptVersion`, `meta.instructionsHash`: short hashes of the review
  *   prompts and the repo's review instructions, to compare runs across versions.
+ * - `meta.slices[].usage`, `meta.stages`: tokens per agent call, when recorded.
  * - `round`: 1 for a first review, one more than the prior run's otherwise.
+ * - `priorActedOn`: set when the prior run reviewed a different head; one
+ *   entry per prior finding anchored to a line on the additions side.
  * - `untrackedSkipped`: untracked files left out of a working-tree snapshot
  *   because of their size.
  */
@@ -230,6 +260,12 @@ export const ReviewRunSchema = type({
     wallMs: "number",
     costUsd: "number",
     slices: RunSliceSchema.array(),
+    /** The single-call stages; a stage that did not run is absent. */
+    "stages?": {
+      "coordinator?": RunStageCostSchema,
+      "walkthrough?": RunStageCostSchema,
+      "intent?": RunStageCostSchema,
+    },
     rejectedCount: "number",
     coreSource: "string",
     "mergeMode?": "'coordinator' | 'nothing-to-merge' | 'deterministic-fallback'",
@@ -243,14 +279,39 @@ export const ReviewRunSchema = type({
   untrackedSkipped: "string[]",
   "priorRunId?": "string",
   "round?": "number",
+  "priorActedOn?": PriorActedOnSchema.array(),
   "error?": "string",
 });
 export type ReviewRun = typeof ReviewRunSchema.infer;
 
-/** Reviewer state kept beside a run. Phase 2 only creates it empty. */
+export const FindingStatusSchema = type("'open' | 'accepted' | 'dismissed'");
+export type FindingStatus = typeof FindingStatusSchema.infer;
+
+export const DismissReasonSchema = type("'wrong' | 'not-worth-fixing' | 'already-handled' | 'duplicate' | 'other'");
+export type DismissReason = typeof DismissReasonSchema.infer;
+export const DISMISS_REASONS: readonly DismissReason[] = [
+  "wrong",
+  "not-worth-fixing",
+  "already-handled",
+  "duplicate",
+  "other",
+];
+
+export const FindingNoteSchema = type({ reason: DismissReasonSchema, "note?": "string", at: "string" });
+export type FindingNote = typeof FindingNoteSchema.infer;
+
+/**
+ * Reviewer state kept beside a run in `state.json`.
+ *
+ * - `reviewedFiles`: path to the head blob id when the file was marked
+ *   reviewed, `''` for a removed file.
+ * - `findingStatus`: a finding with no entry is open.
+ * - `findingNotes`: why a dismissed finding was dismissed.
+ */
 export const RunUserStateSchema = type({
-  reviewedFiles: "string[]",
-  findingStatus: type.Record("string", "'open' | 'accepted' | 'dismissed'"),
+  reviewedFiles: type.Record("string", "string"),
+  findingStatus: type.Record("string", FindingStatusSchema),
+  "findingNotes?": type.Record("string", FindingNoteSchema),
   comments: type({
     id: "string",
     file: "string",

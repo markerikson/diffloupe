@@ -916,10 +916,12 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     mergeMode, preTrimmed, budgetStopped,
     sliceRuns,
     merge: {
-      wallMs: merged.wallMs, costUsd: merged.costUsd, numTurns: merged.numTurns,
+      wallMs: merged.wallMs, costUsd: merged.costUsd, numTurns: merged.numTurns, usage: merged.usage,
       tools: "tools" in merged ? merged.tools : undefined,
     },
-    walk: { model: MODEL_WALK, wallMs: walked.wallMs, costUsd: walked.costUsd, numTurns: walked.numTurns },
+    walk: {
+      model: MODEL_WALK, wallMs: walked.wallMs, costUsd: walked.costUsd, numTurns: walked.numTurns, usage: walked.usage,
+    },
     walkthrough: walkthrough ?? null,
     intentDraft,
     grouping: GROUPING,

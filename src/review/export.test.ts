@@ -27,10 +27,23 @@ describe("findingMarkdown", () => {
     expect(findingMarkdown(finding())).toBe(
       [
         "### [should-fix] Off by one",
-        "`src/a.ts:10`",
+        "`src/a.ts:10` · id `f1`",
         "The loop stops one early.",
         "**Evidence:** `i < n - 1`",
       ].join("\n\n"),
+    );
+  });
+
+  test("accepted and dismissed findings are labeled, with the dismissal note", () => {
+    const state = {
+      findingStatus: { f1: "dismissed" as const },
+      findingNotes: { f1: { reason: "wrong" as const, note: "Guarded upstream.", at: "t" } },
+    };
+    const md = findingMarkdown(finding(), state);
+    expect(md).toStartWith("### [should-fix] Off by one (dismissed: wrong)");
+    expect(md).toContain("> Dismissed: Guarded upstream.");
+    expect(findingMarkdown(finding(), { findingStatus: { f1: "accepted" } })).toStartWith(
+      "### [should-fix] Off by one (accepted)",
     );
   });
 
@@ -147,6 +160,35 @@ describe("runMarkdown", () => {
       overCapFindings: [],
     };
     expect(runMarkdown(run).split("\n\n")[2]).toBe("No issues found in this change. 1 pre-existing.");
+  });
+
+  test("dismissed findings are left out unless asked for", () => {
+    const run = {
+      ...smallCommit,
+      findings: [finding({ id: "a", title: "kept" }), finding({ id: "b", title: "dropped" })],
+      overCapFindings: [],
+    };
+    const state = { findingStatus: { a: "accepted" as const, b: "dismissed" as const } };
+    const md = runMarkdown(run, { state });
+    expect(md.split("\n\n")[2]).toBe("1 finding: 1 should-fix. 1 dismissed finding left out.");
+    expect(md).toContain("### [should-fix] kept (accepted)");
+    expect(md).not.toContain("dropped");
+    expect(runMarkdown(run, { state, includeDismissed: true })).toContain("### [should-fix] dropped (dismissed)");
+  });
+
+  test("dismissed over-cap findings drop out of the over-cap count", () => {
+    const run = {
+      ...smallCommit,
+      findings: [finding({ id: "a", title: "kept" })],
+      overCapFindings: [finding({ id: "c", title: "capped" }), finding({ id: "d", title: "capped and dropped" })],
+    };
+    const state = { findingStatus: { d: "dismissed" as const } };
+    const md = runMarkdown(run, { state, includeOverCap: true });
+    expect(md.split("\n\n")[2]).toBe(
+      "1 finding: 1 should-fix. 1 more over the posting cap. 1 dismissed finding left out.",
+    );
+    expect(md).toContain("## Over the posting cap (1)");
+    expect(md).not.toContain("capped and dropped");
   });
 
   test("snapshot", () => {

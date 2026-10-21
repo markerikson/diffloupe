@@ -3,7 +3,11 @@ import { loadFixture } from "./__fixtures__/load.ts";
 import { chainStats, formatStats, statsByVersion, statsTotals, type StatsInput } from "./run-stats.ts";
 import type { ReviewRun, RunFinding } from "../types/review-run.ts";
 
-const base = loadFixture("small-commit").build();
+const built = loadFixture("small-commit").build();
+const base: ReviewRun = {
+  ...built,
+  meta: { ...built.meta, slices: built.meta.slices.map(({ usage: _usage, ...s }) => s) },
+};
 const template = base.findings[0]!;
 
 const finding = (id: string, extra: Partial<RunFinding> = {}): RunFinding => ({ ...template, id, ...extra });
@@ -68,6 +72,21 @@ describe("chainStats", () => {
   test("findings still listed on the last run count as open unless dismissed", () => {
     expect(chains[1]!.open).toBe(1);
   });
+
+  test("splits dismissals by reason", () => {
+    const withReasons: StatsInput = {
+      run: r2,
+      state: {
+        findingStatus: { b: "dismissed", c: "dismissed" },
+        findingNotes: { b: { reason: "wrong", at: "t" } },
+      },
+    };
+    const [chain] = chainStats([input(r1), withReasons, input(r3)]);
+    expect(chain!.dismissedBy).toEqual({ wrong: 1, unrecorded: 1 });
+    const text = formatStats(chainStats([input(r1), withReasons, input(r3)]));
+    expect(text).toContain("dismissed 2 (1 wrong, 1 unrecorded)");
+    expect(text).toContain("2 dismissed: 1 wrong, 1 unrecorded");
+  });
 });
 
 describe("statsTotals", () => {
@@ -96,9 +115,57 @@ describe("formatStats", () => {
   test("prints a block per chain and the totals", () => {
     const text = formatStats(chainStats(inputs), statsByVersion(inputs));
     expect(text).toContain("round 2  r2  1 new, 1 carried, 2 fixed, changes only");
-    expect(text).toContain("fixed 3, dismissed 1, still open at last run 0, $1.00 per fixed finding");
+    expect(text).toContain("fixed 3, dismissed 1 (1 unrecorded), still open at last run 0, $1.00 per fixed finding");
     expect(text).toContain("resolution rate 50%");
     expect(text).toContain("By prompt version / instructions:");
+  });
+
+  test("adds token lines only for runs that recorded usage", () => {
+    expect(formatStats(chainStats(inputs))).not.toContain("tokens");
+    const usage = { input: 10, output: 5, reasoning: 0, cacheRead: 30, cacheWrite: 0, firstStep: { input: 10, cacheRead: 30, cacheWrite: 0 } };
+    const withUsage = run("u", "2026-10-05T00:00:00Z", {
+      findings: [finding("u1")],
+      meta: { ...base.meta, slices: base.meta.slices.map((s) => ({ ...s, usage })) },
+    });
+    const chains = chainStats([input(withUsage)]);
+    const n = base.meta.slices.length;
+    expect(chains[0]!.rounds[0]!.cacheShare).toBe(0.75);
+    expect(chains[0]!.usage.calls).toBe(n);
+    expect(statsTotals(chains).usage.cacheRead).toBe(30 * n);
+    const text = formatStats(chains);
+    expect(text).toContain("75% cached");
+    expect(text).toContain("first requests 75% from cache");
+    expect(text).toContain(`tokens over ${n} agent calls`);
+  });
+
+  test("adds acted-on rates against the control spans only when runs recorded them", () => {
+    expect(formatStats(chainStats(inputs), statsByVersion(inputs))).not.toContain("acted on");
+    // r2 edited a and p (fixed) and b (still listed); the control span moved for a only.
+    const r2Acted = {
+      ...r2,
+      priorActedOn: [
+        { id: "a", acted: true, control: true },
+        { id: "b", acted: true, control: false },
+        { id: "p", acted: true, control: false },
+      ],
+    };
+    // r3 left b alone.
+    const r3Acted = { ...r3, priorActedOn: [{ id: "b", acted: false, control: false }] };
+    const acted = [input(r1), input(r2Acted, ["c"]), input(r3Acted)];
+    const chain = chainStats(acted)[0]!;
+    expect(chain.acted).toEqual({
+      change: { measured: 3, acted: 2, control: 1 },
+      preexisting: { measured: 1, acted: 1, control: 0 },
+      stillListed: 1,
+    });
+    const versions = statsByVersion(acted);
+    // b was raised by r1, so r3's measurement of it counts toward v1 too.
+    expect(versions.find((v) => v.promptVersion === "v1")?.acted.change.measured).toBe(3);
+    expect(versions.find((v) => v.promptVersion === "v2")?.acted.change.measured).toBe(0);
+    expect(statsTotals(chainStats(acted)).acted.change.acted).toBe(2);
+    const text = formatStats(chainStats(acted), versions);
+    expect(text).toContain("acted on: 2 of 3 edited (67%), control 33%, +33 points; pre-existing 1 of 1 edited (100%), control 0%, +100 points; 1 edited but still listed");
+    expect(text).toContain("prior findings acted on: 2 of 3");
   });
 
   test("says so when nothing matches", () => {

@@ -127,6 +127,60 @@ a.badge:hover {
   font-size: 12px;
 }
 
+.card[data-status="dismissed"] {
+  --sev: var(--fg-mute);
+  opacity: 0.7;
+}
+
+.card[data-status="dismissed"] .title {
+  text-decoration: line-through;
+}
+
+.triage {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.6rem;
+  margin-top: 0.45rem;
+  font-size: 12px;
+  color: var(--fg-fade);
+}
+
+.triage button {
+  padding: 0.05rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--fg-fade);
+}
+
+.triage button:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+.triage button:disabled {
+  opacity: 0.5;
+}
+
+.triage select,
+.triage input {
+  padding: 0.05rem 0.3rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+}
+
+.triage input {
+  flex: 1 1 12rem;
+  min-width: 8rem;
+}
+
+.status {
+  font-weight: 600;
+}
+
 .more {
   margin-top: 0.35rem;
   color: var(--fg-fade);

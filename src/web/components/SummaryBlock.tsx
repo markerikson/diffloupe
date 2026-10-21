@@ -7,7 +7,8 @@ import { byFile, type FileFindings, summarizeFindings } from "../lib/finding-sum
 import { SEVERITY_LABEL, formatCost, formatDuration, plural } from "../lib/format.ts";
 import { intentSource } from "../lib/intent-source.ts";
 import { useRunNav } from "../lib/run-nav.ts";
-import { overCapToggled, selectShowOverCap } from "../store/focus.ts";
+import { useDismissedIds, useRunState } from "../hooks/useRunState.ts";
+import { dismissedToggled, overCapToggled, selectShowDismissed, selectShowOverCap } from "../store/focus.ts";
 import { useAppDispatch, useAppSelector } from "../store/hooks.ts";
 import { CopyButton } from "./CopyButton.tsx";
 import { Markdown } from "./Markdown.tsx";
@@ -109,14 +110,23 @@ function Labelled({ label, children }: { label: string; children: ReactNode }) {
 export function SummaryBlock({ run }: { run: ReviewRun }) {
   const dispatch = useAppDispatch();
   const showOverCap = useAppSelector(selectShowOverCap);
+  const showDismissed = useAppSelector(selectShowDismissed);
+  const state = useRunState(run.id);
+  const dismissed = useDismissedIds(run.id);
+  const accepted = Object.values(state.findingStatus).filter((s) => s === "accepted").length;
+  const reviewedCount = run.files.filter((f) => f.path in state.reviewedFiles).length;
+  const keep = (f: RunFinding) => showDismissed || !dismissed.has(f.id);
   const files = new Set(run.files.map((f) => f.path));
-  const summary = summarizeFindings(run);
+  // The verdict and counts always leave dismissed findings out; the toggle only changes the lists.
+  const open = summarizeFindings({ files: run.files, findings: run.findings.filter((f) => !dismissed.has(f.id)) });
+  const summary = showDismissed ? summarizeFindings({ files: run.files, findings: run.findings.filter(keep) }) : open;
   const { intent, overview, meta } = run;
-  const reportedCount = summary.main.length + summary.other.length;
+  const reportedCount = open.main.length + open.other.length;
+  const reportedDismissed = run.findings.some((f) => dismissed.has(f.id) && !f.preexisting && f.repeatOf === undefined);
   const mainCount = summary.main.reduce((n, g) => n + g.findings.length, 0);
   const otherCount = summary.other.reduce((n, g) => n + g.findings.length, 0);
   const preexistingCount = summary.preexisting.reduce((n, g) => n + g.findings.length, 0);
-  const overCap = run.overCapFindings;
+  const overCap = run.overCapFindings.filter(keep);
   // With nothing stated to compare against, only the inferred intent means anything.
   const source = intentSource(run);
   const alignment = source ? intent.alignment : undefined;
@@ -145,15 +155,17 @@ export function SummaryBlock({ run }: { run: ReviewRun }) {
           {run.status === "running"
             ? "Reviewing the changed files. Findings appear here when the review finishes."
             : run.status === "complete"
-              ? "No new issues found in the changed files."
+              ? reportedDismissed
+                ? "Every finding has been dismissed."
+                : "No new issues found in the changed files."
               : `The review ${run.status === "failed" ? "failed" : "was cancelled"} before reporting any findings.`}
         </p>
       ) : (
         <div className={styles.verdicts}>
-          <VerdictLine verdict={summary.merge} />
-          {summary.prod && <VerdictLine verdict={summary.prod} />}
+          <VerdictLine verdict={open.merge} />
+          {open.prod && <VerdictLine verdict={open.prod} />}
           <p className={styles.counts}>
-            {summary.counts.map(([severity, n], i) => (
+            {open.counts.map(([severity, n], i) => (
               <span key={severity}>
                 {i > 0 && <span className={styles.sep}> · </span>}
                 <span className={styles.dot} data-severity={severity} aria-hidden />
@@ -171,7 +183,7 @@ export function SummaryBlock({ run }: { run: ReviewRun }) {
               {summary.title} ({mainCount})
             </h3>
             <CopyButton
-              text={() => runMarkdown(run, { includeOverCap: showOverCap })}
+              text={() => runMarkdown(run, { includeOverCap: showOverCap, state, includeDismissed: showDismissed })}
               label="Copy all"
               title="Copy all findings as markdown"
             />
@@ -202,6 +214,26 @@ export function SummaryBlock({ run }: { run: ReviewRun }) {
           </label>
           {showOverCap && (
             <FindingList groups={byFile(overCap)} files={files} />
+          )}
+        </div>
+      )}
+
+      {(dismissed.size > 0 || accepted > 0 || reviewedCount > 0) && (
+        <div className={styles.section}>
+          <p className={styles.note}>
+            {[
+              accepted > 0 ? `${accepted} accepted` : "",
+              dismissed.size > 0 ? `${dismissed.size} dismissed` : "",
+              `${reviewedCount} of ${plural(run.files.length, "file")} reviewed`,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </p>
+          {dismissed.size > 0 && (
+            <label className={styles.overCap}>
+              <input type="checkbox" checked={showDismissed} onChange={() => dispatch(dismissedToggled())} />
+              Show dismissed findings here and in the diff.
+            </label>
           )}
         </div>
       )}

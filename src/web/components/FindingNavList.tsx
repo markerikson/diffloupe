@@ -37,10 +37,12 @@ interface FindingNavListProps {
   /** Findings in page order. */
   findings: readonly RunFinding[];
   overCap: ReadonlySet<string>;
+  /** Shown muted; only on the list while dismissed findings are shown. */
+  dismissed: ReadonlySet<string>;
 }
 
 /** Sidebar list of findings in page order; stays on screen while the diff scrolls. */
-export function FindingNavList({ findings, overCap }: FindingNavListProps) {
+export function FindingNavList({ findings, overCap, dismissed }: FindingNavListProps) {
   const nav = useRunNav();
   const current = useAppSelector(selectFocusedFinding);
   const listRef = useRef<HTMLOListElement>(null);
@@ -52,7 +54,12 @@ export function FindingNavList({ findings, overCap }: FindingNavListProps) {
     if (container && row) keepInView(container, row);
   }, [current]);
 
-  if (findings.length === 0) return <p className={styles.empty}>No findings in the changed files.</p>;
+  if (findings.length === 0)
+    return (
+      <p className={styles.empty}>
+        {dismissed.size > 0 ? "Every finding has been dismissed." : "No findings in the changed files."}
+      </p>
+    );
 
   return (
     <ol ref={listRef} className={styles.files}>
@@ -70,8 +77,9 @@ export function FindingNavList({ findings, overCap }: FindingNavListProps) {
                   data-severity={f.severity}
                   data-over-cap={overCap.has(f.id)}
                   data-preexisting={f.preexisting ?? false}
+                  data-dismissed={dismissed.has(f.id)}
                   aria-current={f.id === current ? "true" : undefined}
-                  title={`${SEVERITY_LABEL[f.severity]}${f.preexisting ? " (pre-existing)" : ""}: ${f.title}`}
+                  title={`${SEVERITY_LABEL[f.severity]}${f.preexisting ? " (pre-existing)" : ""}${dismissed.has(f.id) ? " (dismissed)" : ""}: ${f.title}`}
                   onClick={() => nav.goToFinding(f.id)}
                 >
                   <span className={styles.dot} aria-hidden />

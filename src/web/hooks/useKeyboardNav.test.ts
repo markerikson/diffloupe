@@ -13,6 +13,7 @@ describe("keyAction", () => {
     expect(press("]")).toBe("nextStop");
     expect(press("[")).toBe("prevStop");
     expect(press("x")).toBe("toggleFile");
+    expect(press("r")).toBe("toggleReviewed");
     expect(press("?")).toBe("help");
     expect(press("q")).toBeNull();
   });
@@ -28,5 +29,10 @@ describe("keyAction", () => {
     expect(press("j", { target: { tagName: "TEXTAREA" } as unknown as EventTarget })).toBeNull();
     expect(press("j", { target: { tagName: "DIV", isContentEditable: true } as unknown as EventTarget })).toBeNull();
     expect(press("j", { target: { tagName: "BUTTON" } as unknown as EventTarget })).toBe("nextFile");
+  });
+
+  test("keeps shortcuts working while a checkbox has focus", () => {
+    expect(press("r", { target: { tagName: "INPUT", type: "checkbox" } as unknown as EventTarget })).toBe("toggleReviewed");
+    expect(press("r", { target: { tagName: "INPUT", type: "text" } as unknown as EventTarget })).toBeNull();
   });
 });

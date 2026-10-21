@@ -7,7 +7,9 @@ import {
   type ReviewTarget,
   type RunFinding,
   type RunHeader,
+  type RunUserState,
 } from "../types/review-run.ts";
+import { formatUsage, runUsageTotals } from "./usage.ts";
 
 export function formatTarget(target: ReviewTarget): string {
   if (target.kind === "pr") return `PR #${target.number} ${target.title}`;
@@ -49,13 +51,27 @@ export function formatRunList(runs: RunHeader[]): string {
     .join("\n\n");
 }
 
-function carried(f: RunFinding): string {
-  const notes = [f.preexisting && "pre-existing", f.carriedFrom && `open since ${f.carriedFrom}`].filter(Boolean);
+type FindingState = Pick<RunUserState, "findingStatus" | "findingNotes">;
+
+function triage(f: RunFinding, state: FindingState | undefined): string | undefined {
+  const status = state?.findingStatus[f.id];
+  if (status === "accepted") return "accepted";
+  if (status !== "dismissed") return undefined;
+  const reason = state?.findingNotes?.[f.id]?.reason;
+  return reason ? `dismissed: ${reason}` : "dismissed";
+}
+
+function carried(f: RunFinding, state?: FindingState): string {
+  const notes = [
+    triage(f, state),
+    f.preexisting && "pre-existing",
+    f.carriedFrom && `open since ${f.carriedFrom}`,
+  ].filter(Boolean);
   return notes.length ? `  (${notes.join(", ")})` : "";
 }
 
-function findingLine(f: RunFinding): string {
-  return `      [${f.severity}] ${f.title}${carried(f)}\n        ${formatAnchor(f.anchor)}`;
+function findingLine(f: RunFinding, state: FindingState | undefined): string {
+  return `      [${f.severity}] ${f.title}${carried(f, state)}\n        ${formatAnchor(f.anchor)}  id ${f.id}`;
 }
 
 function resolvedLines(run: ReviewRun, indent: string): string[] {
@@ -82,7 +98,8 @@ export function describeRound(run: Pick<ReviewRun, "round" | "meta">): string | 
   return `Round ${run.round}: full review${scopeReason ? ` (${scopeReason})` : ""}`;
 }
 
-export function formatRun(run: ReviewRun): string {
+/** `state` marks accepted and dismissed findings and counts reviewed files. */
+export function formatRun(run: ReviewRun, state?: RunUserState): string {
   const out: string[] = [];
   out.push(`${run.id}  ${run.status}`);
   out.push(`${formatTarget(run.target)}  ${run.base.slice(0, 12)}..${run.head.slice(0, 12)}`);
@@ -95,16 +112,16 @@ export function formatRun(run: ReviewRun): string {
   if (run.intent.alignment) out.push(`intent: ${run.intent.alignment}`);
 
   const filesByPath = new Map(run.files.map((f) => [f.path, f]));
-  out.push(...groupLines(run));
+  out.push(...groupLines(run, state));
 
   const outside = run.findings.filter((f) => !filesByPath.has(f.file));
   if (outside.length) {
     out.push("", `Findings on files outside the diff (${outside.length})`);
-    for (const f of outside) out.push(findingLine(f));
+    for (const f of outside) out.push(findingLine(f, state));
   }
   if (run.overCapFindings.length) {
     out.push("", `Over the posting cap (${run.overCapFindings.length})`);
-    for (const f of run.overCapFindings) out.push(findingLine(f));
+    for (const f of run.overCapFindings) out.push(findingLine(f, state));
   }
   out.push(...resolvedLines(run, "  "));
   if (run.stops.length) {
@@ -127,7 +144,26 @@ export function formatRun(run: ReviewRun): string {
     `${run.findings.length} findings, ${run.files.length} files, $${run.meta.costUsd.toFixed(2)}, ${Math.round(run.meta.wallMs / 1000)}s`,
     `anchors: ${describeAnchors(run)}`,
   );
+  const usage = formatUsage(runUsageTotals(run));
+  if (usage) out.push(`tokens: ${usage}`);
+  const triaged = state ? triageLine(run, state) : undefined;
+  if (triaged) out.push(`triage: ${triaged}`);
   return out.join("\n");
+}
+
+/** "1 accepted, 2 dismissed, 3 of 9 files reviewed", or undefined when nothing is marked. */
+function triageLine(run: ReviewRun, state: RunUserState): string | undefined {
+  const ids = new Set([...run.findings, ...run.overCapFindings].map((f) => f.id));
+  const marked = Object.entries(state.findingStatus).filter(([id]) => ids.has(id));
+  const accepted = marked.filter(([, s]) => s === "accepted").length;
+  const dismissed = marked.filter(([, s]) => s === "dismissed").length;
+  const reviewed = run.files.filter((f) => f.path in state.reviewedFiles).length;
+  const parts = [
+    accepted && `${accepted} accepted`,
+    dismissed && `${dismissed} dismissed`,
+    reviewed && `${reviewed} of ${run.files.length} files reviewed`,
+  ].filter(Boolean);
+  return parts.length ? parts.join(", ") : undefined;
 }
 
 function cost(run: ReviewRun): string {
@@ -135,7 +171,7 @@ function cost(run: ReviewRun): string {
 }
 
 /** Each group with its files, line counts and the findings on each file. */
-function groupLines(run: ReviewRun): string[] {
+function groupLines(run: ReviewRun, state?: FindingState): string[] {
   const out: string[] = [];
   const byId = new Map(run.findings.map((f) => [f.id, f]));
   const filesByPath = new Map(run.files.map((f) => [f.path, f]));
@@ -154,7 +190,7 @@ function groupLines(run: ReviewRun): string[] {
       out.push(`${indent}  ${p}${stat}`);
       for (const id of g.findingIds) {
         const finding = byId.get(id);
-        if (finding?.file === p) out.push(findingLine(finding));
+        if (finding?.file === p) out.push(findingLine(finding, state));
       }
     }
   }
@@ -214,7 +250,7 @@ export function formatRunSummary(run: ReviewRun): string {
   );
   out.push("", findings.length ? `Findings (${findings.length})` : "No findings.");
   for (const f of findings) {
-    out.push(`  [${f.severity}] ${f.title}${carried(f)}`, `    ${formatAnchor(f.anchor)}`);
+    out.push(`  [${f.severity}] ${f.title}${carried(f)}`, `    ${formatAnchor(f.anchor)}  id ${f.id}`);
     const why = lead(f.impact ?? f.explanation);
     if (why && why !== f.title) out.push(`    ${why}`);
   }

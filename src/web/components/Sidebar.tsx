@@ -68,11 +68,12 @@ interface SidebarProps {
   /** Findings on the page, in page order. */
   findings: readonly RunFinding[];
   overCap: ReadonlySet<string>;
+  dismissed: ReadonlySet<string>;
 }
 
 const MODE_LABEL: Record<SidebarMode, string> = { groups: "Groups", findings: "Findings", guide: "Guide" };
 
-export function Sidebar({ run, tree, visible, folded, onToggleFold, findings, overCap }: SidebarProps) {
+export function Sidebar({ run, tree, visible, folded, onToggleFold, findings, overCap, dismissed }: SidebarProps) {
   const dispatch = useAppDispatch();
   const savedMode = useAppSelector(selectSidebarMode);
   const modes: SidebarMode[] = ["groups"];
@@ -105,7 +106,7 @@ export function Sidebar({ run, tree, visible, folded, onToggleFold, findings, ov
       )}
       {mode === "findings" && (
         <nav className={styles.nav} aria-label="Findings">
-          <FindingNavList findings={findings} overCap={overCap} />
+          <FindingNavList findings={findings} overCap={overCap} dismissed={dismissed} />
         </nav>
       )}
       {mode === "groups" && <GroupList tree={tree} visible={visible} folded={folded} onToggleFold={onToggleFold} />}
