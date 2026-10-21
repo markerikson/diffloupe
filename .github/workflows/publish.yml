@@ -35,8 +35,13 @@ jobs:
         with:
           node-version: '24.x'
 
-      # prepareRun checks that opencode and tilth are on PATH
-      - run: npm install -g opencode-ai tilth
+      # prepareRun checks that opencode and tilth are on PATH. The `opencode-ai`
+      # npm package is the 1.x line; DiffLoupe needs 2.x from @opencode/cli.
+      - run: npm install -g @opencode/cli@2.0.32 tilth@0.9.0
+
+      # Nothing in the test suite runs the version check prepareRun applies.
+      - name: Check OpenCode is 2.x
+        run: opencode --version | grep -Eq '(^|[^0-9.])2\.[0-9]'
 
       - run: bun install --frozen-lockfile
 
