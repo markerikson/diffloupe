@@ -82,6 +82,14 @@ describe("findingMarkdown", () => {
       "_Open since run run-1. Repeats PR comment #7._",
     );
   });
+
+  // Run ids are local to the machine that ran the review; on a PR they mean
+  // nothing to the reader.
+  test("the GitHub form drops the local run id", () => {
+    const md = findingMarkdown(finding({ carriedFrom: "run-1", repeatOf: 7 }), undefined, { github: true });
+    expect(md).not.toContain("Open since run");
+    expect(md).toContain("_Repeats PR comment #7._");
+  });
 });
 
 describe("runMarkdown", () => {

@@ -71,7 +71,11 @@ function statusLabel(f: RunFinding, state: Pick<RunUserState, "findingStatus" | 
   return reason ? ` (dismissed: ${reason})` : " (dismissed)";
 }
 
-export function findingMarkdown(f: RunFinding, state?: Pick<RunUserState, "findingStatus" | "findingNotes">): string {
+export function findingMarkdown(
+  f: RunFinding,
+  state?: Pick<RunUserState, "findingStatus" | "findingNotes">,
+  opts: Pick<RunMarkdownOptions, "github"> = {},
+): string {
   const out = [
     `### [${f.severity}] ${f.title}${statusLabel(f, state)}`,
     `${code(anchorLocation(f.anchor))} · id ${code(f.id)}`,
@@ -79,7 +83,8 @@ export function findingMarkdown(f: RunFinding, state?: Pick<RunUserState, "findi
   const dismissNote = state?.findingStatus[f.id] === "dismissed" ? state.findingNotes?.[f.id]?.note?.trim() : undefined;
   if (dismissNote) out.push(`> Dismissed: ${dismissNote}`);
   const notes = [
-    f.carriedFrom && `Open since run ${f.carriedFrom}.`,
+    // A local run id means nothing to someone reading the pull request.
+    !opts.github && f.carriedFrom && `Open since run ${f.carriedFrom}.`,
     f.repeatOf !== undefined && `Repeats PR comment #${f.repeatOf}.`,
     f.preexisting && "Pre-existing: not introduced by this change.",
   ].filter(Boolean);
@@ -128,6 +133,8 @@ export interface RunMarkdownOptions {
   /** Reviewer state: accepted findings are marked, dismissed ones left out unless `includeDismissed`. */
   state?: Pick<RunUserState, "findingStatus" | "findingNotes"> | undefined;
   includeDismissed?: boolean;
+  /** For a pull request comment: leaves out notes that only make sense on this machine. */
+  github?: boolean;
 }
 
 export function runMarkdown(run: ReviewRun, opts: RunMarkdownOptions = {}): string {
@@ -147,14 +154,14 @@ export function runMarkdown(run: ReviewRun, opts: RunMarkdownOptions = {}): stri
   out.push(
     countLine(introduced, preexisting, overCapShown.length) + (hidden ? ` ${hidden} dismissed finding${hidden === 1 ? "" : "s"} left out.` : ""),
   );
-  for (const f of sortFindings(introduced)) out.push(findingMarkdown(f, state));
+  for (const f of sortFindings(introduced)) out.push(findingMarkdown(f, state, opts));
   if (preexisting.length) {
     out.push(`## Pre-existing (not introduced by this change)`);
-    for (const f of sortFindings(preexisting)) out.push(findingMarkdown(f, state));
+    for (const f of sortFindings(preexisting)) out.push(findingMarkdown(f, state, opts));
   }
   if (overCap.length) {
     out.push(`## Over the posting cap (${overCap.length})`);
-    for (const f of sortFindings(overCap)) out.push(findingMarkdown(f, state));
+    for (const f of sortFindings(overCap)) out.push(findingMarkdown(f, state, opts));
   }
   return `${out.join("\n\n")}\n`;
 }

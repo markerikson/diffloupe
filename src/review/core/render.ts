@@ -627,7 +627,7 @@ export function renderReview(o: {
     s.push(
       runId
         ? `📄 **[Full review detail](${server}/${slug}/actions/runs/${runId})** — download the` +
-            ` \`ai-code-review-${o.pr}-${o.head.slice(0, 9)}\` artifact and open \`${detailName}\`` +
+            ` \`${artifactName(o.pr ?? "", o.head)}\` artifact and open \`${detailName}\`` +
             " for the walkthrough and the evidence behind each finding. Artifacts expire 90 days" +
             " after the run."
         : `📄 Full walkthrough and evidence: \`${o.detailPath ?? detailName}\`.`,
@@ -813,6 +813,58 @@ export function fitComment(body: string, tail: string): string {
   const open = (kept.match(/<details/g) ?? []).length - (kept.match(/<\/details>/g) ?? []).length;
   const close = open > 0 ? `\n${closer.repeat(open)}` : "";
   return `${kept}${close}${notice}${tail}`;
+}
+
+/** The name the workflow uploads a pull request review's files under. */
+export function artifactName(pr: string | number, head: string): string {
+  return `ai-code-review-${pr}-${head.slice(0, 9)}`;
+}
+
+/** File the full findings Markdown is saved under in the run artifact. */
+export const FINDINGS_FILE = "findings.md";
+
+const REVIEW_DETAILS_FOLD = "<details><summary>Review details</summary>";
+
+/**
+ * Puts a collapsed, fenced copy of every finding into the summary comment,
+ * before the "Review details" fold, so GitHub's copy button on the code block
+ * copies them all. All or nothing: `fitComment` closes open `<details>` but not
+ * code fences, so a cut inside the block would break the rest of the comment.
+ * When the block does not fit, one line pointing at the artifact goes in
+ * instead, and when even that does not fit the summary is returned unchanged.
+ */
+export function insertCopyBlock(
+  summary: string,
+  markdown: string,
+  opts: { artifact?: string | undefined; limit?: number } = {},
+): string {
+  const limit = opts.limit ?? COMMENT_LIMIT;
+  const block = [
+    "<details><summary>Copy all findings as Markdown</summary>",
+    "",
+    fence(markdown, "markdown"),
+    "",
+    "</details>",
+  ].join("\n");
+  const pointer = opts.artifact
+    ? `_All findings as Markdown are too long for this comment: download the \`${opts.artifact}\` artifact and open \`${FINDINGS_FILE}\`._`
+    : `_All findings as Markdown are too long for this comment: see \`${FINDINGS_FILE}\` in the run artifact._`;
+  for (const insert of [block, pointer]) {
+    const out = insertBeforeFold(summary, insert);
+    if (out.length <= limit) return out;
+  }
+  return summary;
+}
+
+function insertBeforeFold(summary: string, insert: string): string {
+  let at = summary.lastIndexOf(REVIEW_DETAILS_FOLD);
+  if (at < 0) {
+    const markerAt = summary.lastIndexOf("<!-- ai-review kind=summary");
+    at = markerAt < 0 ? summary.length : markerAt;
+  }
+  const before = summary.slice(0, at).replace(/\n*$/, "");
+  const after = summary.slice(at);
+  return after ? `${before}\n\n${insert}\n\n${after}` : `${before}\n\n${insert}`;
 }
 
 /**
