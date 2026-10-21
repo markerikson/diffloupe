@@ -64,8 +64,6 @@ export function renderReview(o: {
   overCap?: Finding[] | undefined;
   /** See `INLINE_MODE`. Defaults to summary-only. */
   inlineMode?: "tier" | "none" | undefined;
-  /** Rendered to read on this machine, never posted: leaves out the note about how the comment updates. */
-  local?: boolean | undefined;
 }): {
   summary: string;
   /**
@@ -119,6 +117,7 @@ export function renderReview(o: {
   const summaryMarker = marker("summary", {
     ...(o.pr ? { pr: o.pr } : {}),
     ...(o.runs ? { runs: o.runs } : {}),
+    head: o.head,
   });
 
   const counts = reported.reduce<Record<string, number>>((acc, f) => {
@@ -663,16 +662,7 @@ export function renderReview(o: {
   s.push("<details><summary>Review details</summary>");
   s.push("");
   for (const [k, v] of Object.entries(o.stats)) s.push(`- ${k}: ${v}`);
-  // Said here on every review, because the moment it becomes useful is the
-  // moment the bot has gone quiet and is no longer writing anything new.
   s.push("");
-  if (o.pr && !o.local) {
-    s.push(
-      "This comment is rewritten on each push rather than replaced. Reviewing pauses" +
-        " automatically once a branch has had several; comment `/ai-review resume` to restart it.",
-    );
-    s.push("");
-  }
   s.push("</details>");
   // Invisible, and the only reason the next push updates this comment instead
   // of adding another one below it.
@@ -914,7 +904,6 @@ export async function writeArtifacts(o: {
     overCap: o.overCap,
     changedFiles,
     inlineMode: INLINE_MODE,
-    local: o.local,
   });
 
   const md = o.local

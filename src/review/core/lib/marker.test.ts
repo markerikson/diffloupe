@@ -33,6 +33,24 @@ describe("fingerprint", () => {
   });
 });
 
+// A GitHub Action reads these comments back with its own code. Changing the
+// hash or the marker text makes every earlier comment look foreign: the next
+// push posts a second summary and re-reports every finding.
+describe("pinned formats", () => {
+  it("keeps the fingerprint value", () => {
+    expect(fingerprint("src/a.ts", "Handle the null case")).toBe("b1353373b9");
+  });
+
+  it("keeps the marker text", () => {
+    expect(marker("inline", { file: "src/a.ts", line: "12", fp: "abc1234567" })).toBe(
+      "<!-- ai-review kind=inline file=src/a.ts line=12 fp=abc1234567 -->",
+    );
+    expect(marker("summary", { pr: "42", runs: "2", head: "0123456789abcdef0123456789abcdef01234567" })).toBe(
+      "<!-- ai-review kind=summary pr=42 runs=2 head=0123456789abcdef0123456789abcdef01234567 -->",
+    );
+  });
+});
+
 describe("marker", () => {
   it("round-trips its fields", () => {
     const m = readMarker(marker("inline", { file: "a.ts", line: "12", fp: "abc123" }));
