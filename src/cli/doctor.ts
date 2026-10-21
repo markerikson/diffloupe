@@ -177,13 +177,20 @@ async function exec(cmd: string, args: string[]): Promise<{ code: number; output
   }
 }
 
+/** True when doctor should exit 1: any failed check, or with `strict` any warning. */
+export function doctorFails(checks: Pick<Check, "status">[], strict: boolean): boolean {
+  return checks.some((c) => c.status === "fail" || (strict && c.status === "warn"));
+}
+
 const MARK: Record<CheckStatus, string> = { ok: pc.green("ok  "), warn: pc.yellow("warn"), fail: pc.red("FAIL") };
 
 export function createDoctorCommand(): Command {
   return new Command("doctor")
     .description("Check tools, models, credentials and disk use")
     .option("--config <file>", "Per-repo review settings, as passed to review")
-    .action(async (options: { config?: string }) => {
+    .option("--strict", "Exit 1 on warnings too, for CI (a model with no reported cost makes --max-cost unenforceable)")
+    .option("--json", "Print the checks as a JSON array instead of text")
+    .action(async (options: { config?: string; strict?: boolean; json?: boolean }) => {
       const checks = await runDoctorChecks({
         platform: process.platform,
         bunVersion: Bun.version,
@@ -201,7 +208,8 @@ export function createDoctorCommand(): Command {
           scratch: await dirSize(scratchDir()),
         }),
       });
-      for (const c of checks) console.log(`${MARK[c.status]}  ${pc.bold(c.name)}: ${c.detail}`);
-      if (checks.some((c) => c.status === "fail")) process.exit(1);
+      if (options.json) console.log(JSON.stringify(checks, null, 2));
+      else for (const c of checks) console.log(`${MARK[c.status]}  ${pc.bold(c.name)}: ${c.detail}`);
+      if (doctorFails(checks, options.strict === true)) process.exit(1);
     });
 }
