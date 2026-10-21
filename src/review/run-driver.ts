@@ -178,7 +178,7 @@ export interface PreparedRun {
   instructions?: string;
   patch: string;
   priorRunId?: string;
-  previous?: { run: ReviewRun; dismissed: string[]; lineMap: Map<string, LineHunk[]> };
+  previous?: { run: ReviewRun; dismissed: string[]; lineMap?: Map<string, LineHunk[]> };
   /** Review runs only: 1 for a first review, one more than the prior run's otherwise. */
   round?: number;
   /** Review everything even when there is a prior run. */
@@ -523,24 +523,26 @@ async function loadPrevious(
   repo: string,
   id: string,
   head: string,
-): Promise<{ run: ReviewRun; dismissed: string[]; lineMap: Map<string, LineHunk[]> } | undefined> {
+): Promise<{ run: ReviewRun; dismissed: string[]; lineMap?: Map<string, LineHunk[]> } | undefined> {
   try {
     const run = await loadRun(id);
     const state = await loadState(id);
     const dismissed = Object.entries(state.findingStatus)
       .filter(([, status]) => status === "dismissed")
       .map(([fid]) => fid);
-    let lineMap = new Map<string, LineHunk[]>();
+    let lineMap: Map<string, LineHunk[]> | undefined = new Map();
     const files = [...new Set(run.findings.map((f) => f.file))];
     if (run.head !== head && files.length) {
       try {
         const diff = await text("git", ["-C", repo, "diff", "-U0", "--no-color", "--no-ext-diff", run.head, head, "--", ...files]);
         lineMap = parseZeroContextDiff(diff);
       } catch {
-        // The prior head is gone (an unpinned snapshot, a gc): lines stay where they were.
+        // The prior head is gone (an unpinned snapshot, a gc): lines stay where
+        // they were, and nothing is recorded about which findings were acted on.
+        lineMap = undefined;
       }
     }
-    return { run, dismissed, lineMap };
+    return { run, dismissed, ...(lineMap ? { lineMap } : {}) };
   } catch {
     return undefined;
   }

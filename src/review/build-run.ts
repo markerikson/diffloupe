@@ -18,6 +18,7 @@ import type {
   RunKind,
   RunSlice,
 } from "../types/review-run.ts";
+import { actedOn } from "./acted-on.ts";
 import { anchor, locationSymbol, snapToSymbol } from "./anchors.ts";
 import { classifyFile, type Finding } from "./core/findings.ts";
 import { groupTitles } from "./core/lib/group-title.ts";
@@ -84,7 +85,9 @@ export interface BuildReviewRunInput {
   /**
    * The earlier run of this target whose findings were handed to the review as
    * prior comments. `lineMap` holds `git diff -U0 <its head> <this head>` hunks,
-   * used to move a carried finding's line to where that code now sits.
+   * used to move a carried finding's line to where that code now sits and to
+   * record which prior findings had their code edited. Absent when the diff
+   * could not be taken.
    */
   previous?: { run: ReviewRun; dismissed?: string[]; lineMap?: Map<string, LineHunk[]> };
   /** Receives one line per structural problem worth knowing about. Defaults to stderr. */
@@ -521,6 +524,8 @@ export function buildReviewRun(input: BuildReviewRunInput): ReviewRun {
   });
   const stages = stagesFromRecord(input.result.record);
   const mergeMode = record?.mergeMode;
+  const prev = input.previous;
+  const priorActedOn = prev?.lineMap && prev.run.head !== input.head ? actedOn(prev.run.findings, prev.lineMap) : undefined;
 
   return {
     schemaVersion: 1,
@@ -572,6 +577,7 @@ export function buildReviewRun(input: BuildReviewRunInput): ReviewRun {
     untrackedSkipped: input.untrackedSkipped ?? [],
     ...(input.priorRunId ? { priorRunId: input.priorRunId } : {}),
     ...(input.round !== undefined ? { round: input.round } : {}),
+    ...(priorActedOn ? { priorActedOn } : {}),
   };
 }
 

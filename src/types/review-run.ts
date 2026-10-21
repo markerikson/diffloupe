@@ -188,6 +188,13 @@ export function runKind(run: { meta: { kind?: RunKind | undefined } }): RunKind 
 }
 
 /**
+ * Per prior finding: whether the code at its lines changed before this run
+ * (`acted`), and whether the same span 35 lines away did (`control`).
+ */
+export const PriorActedOnSchema = type({ id: "string", acted: "boolean", control: "boolean" });
+export type PriorActedOn = typeof PriorActedOnSchema.infer;
+
+/**
  * - `groups`: parents come before their children; display order is array order.
  * - `overCapFindings`: findings the review stands behind but cut by the posting cap.
  * - `resolved`: findings from the prior run that this review found fixed.
@@ -201,6 +208,8 @@ export function runKind(run: { meta: { kind?: RunKind | undefined } }): RunKind 
  *   prompts and the repo's review instructions, to compare runs across versions.
  * - `meta.slices[].usage`, `meta.stages`: tokens per agent call, when recorded.
  * - `round`: 1 for a first review, one more than the prior run's otherwise.
+ * - `priorActedOn`: set when the prior run reviewed a different head; one
+ *   entry per prior finding anchored to a line on the additions side.
  * - `untrackedSkipped`: untracked files left out of a working-tree snapshot
  *   because of their size.
  */
@@ -271,6 +280,7 @@ export const ReviewRunSchema = type({
   untrackedSkipped: "string[]",
   "priorRunId?": "string",
   "round?": "number",
+  "priorActedOn?": PriorActedOnSchema.array(),
   "error?": "string",
 });
 export type ReviewRun = typeof ReviewRunSchema.infer;

@@ -123,6 +123,36 @@ describe("formatStats", () => {
     expect(text).toContain(`tokens over ${n} agent calls`);
   });
 
+  test("adds acted-on rates against the control spans only when runs recorded them", () => {
+    expect(formatStats(chainStats(inputs), statsByVersion(inputs))).not.toContain("acted on");
+    // r2 edited a and p (fixed) and b (still listed); the control span moved for a only.
+    const r2Acted = {
+      ...r2,
+      priorActedOn: [
+        { id: "a", acted: true, control: true },
+        { id: "b", acted: true, control: false },
+        { id: "p", acted: true, control: false },
+      ],
+    };
+    // r3 left b alone.
+    const r3Acted = { ...r3, priorActedOn: [{ id: "b", acted: false, control: false }] };
+    const acted = [input(r1), input(r2Acted, ["c"]), input(r3Acted)];
+    const chain = chainStats(acted)[0]!;
+    expect(chain.acted).toEqual({
+      change: { measured: 3, acted: 2, control: 1 },
+      preexisting: { measured: 1, acted: 1, control: 0 },
+      stillListed: 1,
+    });
+    const versions = statsByVersion(acted);
+    // b was raised by r1, so r3's measurement of it counts toward v1 too.
+    expect(versions.find((v) => v.promptVersion === "v1")?.acted.change.measured).toBe(3);
+    expect(versions.find((v) => v.promptVersion === "v2")?.acted.change.measured).toBe(0);
+    expect(statsTotals(chainStats(acted)).acted.change.acted).toBe(2);
+    const text = formatStats(chainStats(acted), versions);
+    expect(text).toContain("acted on: 2 of 3 edited (67%), control 33%, +33 points; pre-existing 1 of 1 edited (100%), control 0%, +100 points; 1 edited but still listed");
+    expect(text).toContain("prior findings acted on: 2 of 3");
+  });
+
   test("says so when nothing matches", () => {
     expect(formatStats([])).toBe("No complete review runs match.");
   });
