@@ -41,6 +41,31 @@ describe("addCopyBlock", () => {
     }
   });
 
+  test("over the comment limit, shortens findings from the end of the list", async () => {
+    const dir = await runDir();
+    try {
+      const large = loadFixture("large-pr").build();
+      const template = large.findings[0]!;
+      const findings = Array.from({ length: 30 }, (_, i) => ({
+        ...template,
+        id: `f${i}`,
+        severity: "blocker" as const,
+        title: `Finding ${String(i).padStart(2, "0")}`,
+        explanation: `Explanation ${i}. ${"x".repeat(5000)}`,
+      }));
+      await addCopyBlock(dir, { ...large, findings, overCapFindings: [] });
+      const body: string = JSON.parse(await readFile(path.join(dir, "raw", "payloads.json"), "utf8")).summary.body.body;
+      expect(body.length).toBeLessThanOrEqual(65536);
+      expect(body).toContain("Explanation 0.");
+      expect(body).not.toContain("Explanation 29.");
+      expect(body).toContain("### [blocker] Finding 29");
+      expect(body).toMatch(/The last \d+ findings are shortened to fit this comment/);
+      expect(await readFile(path.join(dir, "raw", "findings.md"), "utf8")).toContain("Explanation 29.");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("leaves the comment alone when there are no findings", async () => {
     const dir = await runDir();
     try {

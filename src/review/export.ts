@@ -135,6 +135,17 @@ export interface RunMarkdownOptions {
   includeDismissed?: boolean;
   /** For a pull request comment: leaves out notes that only make sense on this machine. */
   github?: boolean;
+  /**
+   * Cuts the last `count` findings, in document order, to a heading and a
+   * location, and puts `note` under the count line.
+   */
+  shorten?: { count: number; note: string };
+}
+
+function briefMarkdown(f: RunFinding, state: RunMarkdownOptions["state"]): string {
+  return [`### [${f.severity}] ${f.title}${statusLabel(f, state)}`, `${code(anchorLocation(f.anchor))} · id ${code(f.id)}`].join(
+    "\n\n",
+  );
 }
 
 export function runMarkdown(run: ReviewRun, opts: RunMarkdownOptions = {}): string {
@@ -154,14 +165,20 @@ export function runMarkdown(run: ReviewRun, opts: RunMarkdownOptions = {}): stri
   out.push(
     countLine(introduced, preexisting, overCapShown.length) + (hidden ? ` ${hidden} dismissed finding${hidden === 1 ? "" : "s"} left out.` : ""),
   );
-  for (const f of sortFindings(introduced)) out.push(findingMarkdown(f, state, opts));
-  if (preexisting.length) {
+  const sections = [sortFindings(introduced), sortFindings(preexisting), sortFindings(overCap)];
+  const shortenCount = Math.min(opts.shorten?.count ?? 0, sections.flat().length);
+  const shortened = new Set(shortenCount > 0 ? sections.flat().slice(-shortenCount) : []);
+  if (shortenCount > 0 && opts.shorten) out.push(opts.shorten.note);
+  const render = (f: RunFinding) => (shortened.has(f) ? briefMarkdown(f, state) : findingMarkdown(f, state, opts));
+  const [introducedSorted = [], preexistingSorted = [], overCapSorted = []] = sections;
+  for (const f of introducedSorted) out.push(render(f));
+  if (preexistingSorted.length) {
     out.push(`## Pre-existing (not introduced by this change)`);
-    for (const f of sortFindings(preexisting)) out.push(findingMarkdown(f, state, opts));
+    for (const f of preexistingSorted) out.push(render(f));
   }
-  if (overCap.length) {
-    out.push(`## Over the posting cap (${overCap.length})`);
-    for (const f of sortFindings(overCap)) out.push(findingMarkdown(f, state, opts));
+  if (overCapSorted.length) {
+    out.push(`## Over the posting cap (${overCapSorted.length})`);
+    for (const f of overCapSorted) out.push(render(f));
   }
   return `${out.join("\n\n")}\n`;
 }

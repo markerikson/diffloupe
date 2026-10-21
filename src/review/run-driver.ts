@@ -14,7 +14,7 @@ import type { ReviewConfig } from "./core/config.ts";
 import { run, text } from "./core/lib/proc.ts";
 import type { Target } from "./core/lib/target.ts";
 import { runReview, type ReviewEvent, type RunReviewOptions } from "./core/pipeline.ts";
-import { artifactName, FINDINGS_FILE, insertCopyBlock } from "./core/render.ts";
+import { artifactName, FINDINGS_FILE, insertCopyBlock, shortenedNote } from "./core/render.ts";
 import { runMarkdown } from "./export.ts";
 import { VERSION } from "../version.ts";
 import { runDiff, type RunDiffResult } from "./diff-run.ts";
@@ -493,12 +493,15 @@ export async function executeRun(prep: PreparedRun, opts: ExecuteRunOptions): Pr
 /**
  * GitHub mode: saves every finding as Markdown beside the payloads and, when
  * there are any, puts a copy of it into the summary comment, in both
- * `payloads.json` and the preview.
+ * `payloads.json` and the preview. When the copy is too long for the comment,
+ * findings are cut to their headings from the end of the list (lowest
+ * priority first) until it fits.
  */
 export async function addCopyBlock(dir: string, run: ReviewRun): Promise<void> {
   const markdown = runMarkdown(run, { includeOverCap: true, github: true });
   await writeFile(path.join(dir, "raw", FINDINGS_FILE), markdown);
-  if (run.findings.length + run.overCapFindings.length === 0) return;
+  const total = run.findings.length + run.overCapFindings.length;
+  if (total === 0) return;
   const payloadsPath = path.join(dir, "raw", "payloads.json");
   let payloads: { summary?: { body?: { body?: unknown } } };
   try {
@@ -509,7 +512,13 @@ export async function addCopyBlock(dir: string, run: ReviewRun): Promise<void> {
   const summary = payloads.summary?.body?.body;
   if (typeof summary !== "string" || !payloads.summary?.body) return;
   const artifact = run.target.kind === "pr" ? artifactName(run.target.number, run.head) : undefined;
-  const withBlock = insertCopyBlock(summary, markdown, { artifact });
+  function* versions() {
+    yield markdown;
+    for (let count = 1; count <= total; count++) {
+      yield runMarkdown(run, { includeOverCap: true, github: true, shorten: { count, note: shortenedNote(count, artifact) } });
+    }
+  }
+  const withBlock = insertCopyBlock(summary, versions(), { artifact });
   payloads.summary.body.body = withBlock;
   await writeFile(payloadsPath, `${JSON.stringify(payloads, null, 2)}\n`);
   const previewPath = path.join(dir, "raw", "review.md");

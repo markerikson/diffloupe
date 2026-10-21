@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { artifactName, insertCopyBlock } from "./render.ts";
+import { artifactName, insertCopyBlock, shortenedNote } from "./render.ts";
 import { marker } from "./lib/marker.ts";
 
 const summaryMarker = marker("summary", { pr: "5", runs: "1", head: "a".repeat(40) });
@@ -35,6 +35,19 @@ describe("insertCopyBlock", () => {
     expect(out).toContain(`download the \`ai-code-review-5-aaaaaaaaa\` artifact and open \`findings.md\``);
     expect(out.length).toBeLessThanOrEqual(summary.length + 300);
     expect(out).toEndWith(summaryMarker);
+  });
+
+  test("uses the first version that fits", () => {
+    const out = insertCopyBlock(summary, ["x".repeat(500), "short version"], { limit: summary.length + 300 });
+    expect(out).toContain("```markdown\nshort version\n```");
+    expect(out).not.toContain("xxxx");
+  });
+
+  test("shortenedNote points at the artifact", () => {
+    expect(shortenedNote(3, "ai-code-review-5-aaaaaaaaa")).toBe(
+      "_The last 3 findings are shortened to fit this comment. For the full text, download the `ai-code-review-5-aaaaaaaaa` artifact and open `findings.md`._",
+    );
+    expect(shortenedNote(1)).toStartWith("_The last finding is shortened");
   });
 
   test("leaves the summary alone when not even the pointer fits", () => {

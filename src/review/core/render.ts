@@ -825,35 +825,49 @@ export const FINDINGS_FILE = "findings.md";
 
 const REVIEW_DETAILS_FOLD = "<details><summary>Review details</summary>";
 
+function findingsFile(artifact: string | undefined): string {
+  return artifact
+    ? `download the \`${artifact}\` artifact and open \`${FINDINGS_FILE}\``
+    : `see \`${FINDINGS_FILE}\` in the run artifact`;
+}
+
+/** Heads the copy block when its last `count` findings are cut to their headings. */
+export function shortenedNote(count: number, artifact?: string): string {
+  const n = count === 1 ? "The last finding is" : `The last ${count} findings are`;
+  return `_${n} shortened to fit this comment. For the full text, ${findingsFile(artifact)}._`;
+}
+
 /**
- * Puts a collapsed, fenced copy of every finding into the summary comment,
+ * Puts a collapsed, fenced copy of the findings into the summary comment,
  * before the "Review details" fold, so GitHub's copy button on the code block
- * copies them all. All or nothing: `fitComment` closes open `<details>` but not
- * code fences, so a cut inside the block would break the rest of the comment.
- * When the block does not fit, one line pointing at the artifact goes in
- * instead, and when even that does not fit the summary is returned unchanged.
+ * copies them all. `markdown` may be several versions, longest first: the
+ * first one that fits is used. A version is used whole or not at all, since
+ * `fitComment` closes open `<details>` but not code fences, and a cut inside
+ * the block would break the rest of the comment. When no version fits, one
+ * line pointing at the artifact goes in instead, and when even that does not
+ * fit the summary is returned unchanged.
  */
 export function insertCopyBlock(
   summary: string,
-  markdown: string,
+  markdown: string | Iterable<string>,
   opts: { artifact?: string | undefined; limit?: number } = {},
 ): string {
   const limit = opts.limit ?? COMMENT_LIMIT;
-  const block = [
-    "<details><summary>Copy all findings as Markdown</summary>",
-    "",
-    fence(markdown, "markdown"),
-    "",
-    "</details>",
-  ].join("\n");
-  const pointer = opts.artifact
-    ? `_All findings as Markdown are too long for this comment: download the \`${opts.artifact}\` artifact and open \`${FINDINGS_FILE}\`._`
-    : `_All findings as Markdown are too long for this comment: see \`${FINDINGS_FILE}\` in the run artifact._`;
-  for (const insert of [block, pointer]) {
-    const out = insertBeforeFold(summary, insert);
+  const versions = typeof markdown === "string" ? [markdown] : markdown;
+  for (const version of versions) {
+    const block = [
+      "<details><summary>Copy all findings as Markdown</summary>",
+      "",
+      fence(version, "markdown"),
+      "",
+      "</details>",
+    ].join("\n");
+    const out = insertBeforeFold(summary, block);
     if (out.length <= limit) return out;
   }
-  return summary;
+  const pointer = `_All findings as Markdown are too long for this comment: ${findingsFile(opts.artifact)}._`;
+  const out = insertBeforeFold(summary, pointer);
+  return out.length <= limit ? out : summary;
 }
 
 function insertBeforeFold(summary: string, insert: string): string {
