@@ -129,21 +129,12 @@ describe("priorOptions", () => {
     expect(o.priorHead).toBe(previous.run.head);
   });
 
-  // In GitHub mode the pull request's own comments are the prior state. A
-  // local run's findings have no comment ids, so the core would write replies
-  // to threads that do not exist.
-  test("GitHub mode leaves the local prior run out", () => {
-    const o = priorOptions({ github: true, full: false, previous });
-    expect(o.local).toBe(false);
-    expect("prior" in o).toBe(false);
-    expect(o.priorHead).toBe(previous.run.head);
-  });
-
   test("--full reviews everything again", () => {
     expect("priorHead" in priorOptions({ github: false, full: true, previous })).toBe(false);
   });
 
-  test("a first review has no prior", () => {
+  // prepareRun never loads a prior run in GitHub mode.
+  test("a GitHub review has no prior", () => {
     expect(priorOptions({ github: true, full: false })).toEqual({ local: false });
   });
 });

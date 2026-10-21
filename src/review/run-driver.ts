@@ -316,13 +316,16 @@ export async function prepareRun(
     target.head,
   ]);
   await writeFile(path.join(dir, "diff.patch"), patch);
-  const priorRunId = isDiff ? undefined : await findPriorRunId(runRepo, reviewTarget, createdAt);
+  const full = req.full === true;
+  const github = req.github === true;
+  // In GitHub mode, earlier reviews are whatever the pull request's comments
+  // say. A local run may never have been posted, so it sets neither the
+  // findings to carry, the incremental scope, nor the round.
+  const priorRunId = isDiff || github ? undefined : await findPriorRunId(runRepo, reviewTarget, createdAt);
   const previous = priorRunId ? await loadPrevious(repo, priorRunId, target.head) : undefined;
   if (previous?.run.findings.length) {
     log(`  ${previous.run.findings.length} finding(s) from prior run ${previous.run.id}`);
   }
-  const full = req.full === true;
-  const github = req.github === true;
   const round = isDiff ? undefined : previous ? (await roundOf(previous.run)) + 1 : 1;
   if (round !== undefined && round > 1) {
     log(
@@ -330,8 +333,7 @@ export async function prepareRun(
         ? `  round ${round}, full review (--full)`
         : `  round ${round}: reviewing what changed since ${previous?.run.head.slice(0, 12) ?? "the last review"} (--full to review everything)`,
     );
-    // GitHub counts rounds from the summary marker instead.
-    if (round > ROUND_WARNING && !github) {
+    if (round > ROUND_WARNING) {
       log(`  warning: this change has been reviewed ${round - 1} times; later rounds mostly find smaller problems`);
     }
   }
@@ -547,15 +549,16 @@ function pendingInput(prep: PreparedRun): BuildPendingRunInput {
 
 /**
  * How the core sees earlier reviews. Locally, the prior run's findings stand
- * in for comments. In GitHub mode they are left out: prior state comes only
- * from the pull request's real comments, whose ids replies can target.
+ * in for comments. GitHub mode has no prior run (see `prepareRun`): prior
+ * state comes only from the pull request's real comments, whose ids replies
+ * can target.
  */
 export function priorOptions(
   prep: Pick<PreparedRun, "github" | "full" | "previous">,
 ): Pick<RunReviewOptions, "local" | "prior" | "priorHead"> {
   return {
     local: !prep.github,
-    ...(prep.previous && !prep.github ? { prior: priorComments(prep.previous.run) } : {}),
+    ...(prep.previous ? { prior: priorComments(prep.previous.run) } : {}),
     ...(prep.previous && !prep.full ? { priorHead: prep.previous.run.head } : {}),
   };
 }
