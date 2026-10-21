@@ -111,4 +111,10 @@ describe("writeOutDir", () => {
     expect(written.sort()).toEqual(["payloads.json", "review.md", "run-1.detail.md", "run.json"]);
     expect((await readdir(out)).sort()).toEqual(written);
   });
+
+  test("leaves out payloads.json for a run with nothing to post", async () => {
+    const out = path.join(tmp, "out-skipped");
+    const written = await writeOutDir("run-1", out, { payloads: false });
+    expect(written.sort()).toEqual(["review.md", "run-1.detail.md", "run.json"]);
+  });
 });

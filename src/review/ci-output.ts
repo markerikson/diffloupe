@@ -94,13 +94,22 @@ const RUN_FILES: [string, string][] = [
   ["run.json", "run.json"],
 ];
 
-/** Copies a run's files into `outDir`, skipping missing ones. Returns the names written. */
-export async function writeOutDir(runId: string, outDir: string): Promise<string[]> {
+/**
+ * Copies a run's files into `outDir`, skipping missing ones. Returns the names
+ * written. `payloads: false` leaves out payloads.json, for a run that has
+ * nothing to post even though the core wrote a payload file.
+ */
+export async function writeOutDir(
+  runId: string,
+  outDir: string,
+  opts: { payloads?: boolean } = {},
+): Promise<string[]> {
   await mkdir(outDir, { recursive: true });
   const dir = runDir(runId);
   const detail = `${runId}.detail.md`;
+  const files = opts.payloads === false ? RUN_FILES.filter(([, to]) => to !== "payloads.json") : RUN_FILES;
   const sources: [string, string][] = [
-    ...RUN_FILES.map(([from, to]): [string, string] => [path.join(dir, from), to]),
+    ...files.map(([from, to]): [string, string] => [path.join(dir, from), to]),
     [path.join(artifactsDir(), "reviews", detail), detail],
   ];
   const copied = await Promise.all(

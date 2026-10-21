@@ -86,10 +86,14 @@ async function report(
 ): Promise<CiResult> {
   const dir = runDir(id);
   const outDir = opts.out ? path.resolve(opts.out) : null;
+  // A skipped run still has a payload file: the core writes a "nothing to
+  // review" summary for it. Posting that comment is noise, so only a complete
+  // run reports or copies one.
+  const postable = status === "complete";
   const rawPayloads = path.join(dir, "raw", "payloads.json");
-  let payloads = (await Bun.file(rawPayloads).exists()) ? rawPayloads : null;
+  let payloads = postable && (await Bun.file(rawPayloads).exists()) ? rawPayloads : null;
   if (outDir) {
-    const written = await writeOutDir(id, outDir);
+    const written = await writeOutDir(id, outDir, { payloads: postable });
     payloads = written.includes("payloads.json") ? path.join(outDir, "payloads.json") : null;
   }
   const result = buildResult(run, {
