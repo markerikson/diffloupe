@@ -175,7 +175,6 @@ export type RunSlice = typeof RunSliceSchema.infer;
 export const RunStageCostSchema = type({ costUsd: "number", wallMs: "number", "usage?": RunUsageSchema });
 export type RunStageCost = typeof RunStageCostSchema.infer;
 
-
 /** `remote`: `root` is DiffLoupe's partial copy of the GitHub repository, not the user's clone. */
 export const RunRepoSchema = type({ root: "string", "slug?": "string", "remote?": "boolean" });
 
@@ -285,10 +284,34 @@ export const ReviewRunSchema = type({
 });
 export type ReviewRun = typeof ReviewRunSchema.infer;
 
-/** Reviewer state kept beside a run. Phase 2 only creates it empty. */
+export const FindingStatusSchema = type("'open' | 'accepted' | 'dismissed'");
+export type FindingStatus = typeof FindingStatusSchema.infer;
+
+export const DismissReasonSchema = type("'wrong' | 'not-worth-fixing' | 'already-handled' | 'duplicate' | 'other'");
+export type DismissReason = typeof DismissReasonSchema.infer;
+export const DISMISS_REASONS: readonly DismissReason[] = [
+  "wrong",
+  "not-worth-fixing",
+  "already-handled",
+  "duplicate",
+  "other",
+];
+
+export const FindingNoteSchema = type({ reason: DismissReasonSchema, "note?": "string", at: "string" });
+export type FindingNote = typeof FindingNoteSchema.infer;
+
+/**
+ * Reviewer state kept beside a run in `state.json`.
+ *
+ * - `reviewedFiles`: path to the head blob id when the file was marked
+ *   reviewed, `''` for a removed file.
+ * - `findingStatus`: a finding with no entry is open.
+ * - `findingNotes`: why a dismissed finding was dismissed.
+ */
 export const RunUserStateSchema = type({
-  reviewedFiles: "string[]",
-  findingStatus: type.Record("string", "'open' | 'accepted' | 'dismissed'"),
+  reviewedFiles: type.Record("string", "string"),
+  findingStatus: type.Record("string", FindingStatusSchema),
+  "findingNotes?": type.Record("string", FindingNoteSchema),
   comments: type({
     id: "string",
     file: "string",

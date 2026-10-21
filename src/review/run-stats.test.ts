@@ -72,6 +72,21 @@ describe("chainStats", () => {
   test("findings still listed on the last run count as open unless dismissed", () => {
     expect(chains[1]!.open).toBe(1);
   });
+
+  test("splits dismissals by reason", () => {
+    const withReasons: StatsInput = {
+      run: r2,
+      state: {
+        findingStatus: { b: "dismissed", c: "dismissed" },
+        findingNotes: { b: { reason: "wrong", at: "t" } },
+      },
+    };
+    const [chain] = chainStats([input(r1), withReasons, input(r3)]);
+    expect(chain!.dismissedBy).toEqual({ wrong: 1, unrecorded: 1 });
+    const text = formatStats(chainStats([input(r1), withReasons, input(r3)]));
+    expect(text).toContain("dismissed 2 (1 wrong, 1 unrecorded)");
+    expect(text).toContain("2 dismissed: 1 wrong, 1 unrecorded");
+  });
 });
 
 describe("statsTotals", () => {
@@ -100,7 +115,7 @@ describe("formatStats", () => {
   test("prints a block per chain and the totals", () => {
     const text = formatStats(chainStats(inputs), statsByVersion(inputs));
     expect(text).toContain("round 2  r2  1 new, 1 carried, 2 fixed, changes only");
-    expect(text).toContain("fixed 3, dismissed 1, still open at last run 0, $1.00 per fixed finding");
+    expect(text).toContain("fixed 3, dismissed 1 (1 unrecorded), still open at last run 0, $1.00 per fixed finding");
     expect(text).toContain("resolution rate 50%");
     expect(text).toContain("By prompt version / instructions:");
   });

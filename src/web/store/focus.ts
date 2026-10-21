@@ -11,6 +11,7 @@ export interface FocusState {
   stopLocation: number;
   sidebarMode: SidebarMode;
   showOverCap: boolean;
+  showDismissed: boolean;
   helpOpen: boolean;
 }
 
@@ -22,6 +23,7 @@ const initialState: FocusState = {
   stopLocation: 0,
   sidebarMode: "groups",
   showOverCap: false,
+  showDismissed: false,
   helpOpen: false,
 };
 
@@ -53,6 +55,9 @@ export const focusSlice = createSlice({
     overCapToggled(state) {
       state.showOverCap = !state.showOverCap;
     },
+    dismissedToggled(state) {
+      state.showDismissed = !state.showDismissed;
+    },
     helpSet(state, action: PayloadAction<boolean>) {
       state.helpOpen = action.payload;
     },
@@ -64,12 +69,21 @@ export const focusSlice = createSlice({
     selectStopLocation: (state) => state.stopLocation,
     selectSidebarMode: (state) => state.sidebarMode,
     selectShowOverCap: (state) => state.showOverCap,
+    selectShowDismissed: (state) => state.showDismissed,
     selectHelpOpen: (state) => state.helpOpen,
   },
 });
 
-export const { runEntered, fileFocused, findingFocused, stopFocused, sidebarModeSet, overCapToggled, helpSet } =
-  focusSlice.actions;
+export const {
+  runEntered,
+  fileFocused,
+  findingFocused,
+  stopFocused,
+  sidebarModeSet,
+  overCapToggled,
+  dismissedToggled,
+  helpSet,
+} = focusSlice.actions;
 
 export const {
   selectFocusedFile,
@@ -78,5 +92,6 @@ export const {
   selectStopLocation,
   selectSidebarMode,
   selectShowOverCap,
+  selectShowDismissed,
   selectHelpOpen,
 } = focusSlice.selectors;

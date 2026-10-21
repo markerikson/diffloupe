@@ -52,7 +52,7 @@ describe("run store", () => {
     for (const run of [first, second]) {
       const dir = await createRunDir(run.id);
       expect(JSON.parse(await readFile(path.join(dir, "state.json"), "utf8"))).toEqual({
-        reviewedFiles: [],
+        reviewedFiles: {},
         findingStatus: {},
         comments: [],
       });

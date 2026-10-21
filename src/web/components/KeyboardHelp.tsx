@@ -8,6 +8,7 @@ export const KEYS: readonly (readonly [string, string])[] = [
   ["n / p", "Next / previous finding"],
   ["] / [", "Next / previous walkthrough stop"],
   ["x", "Collapse or expand the current file"],
+  ["r", "Mark the current file viewed (or not)"],
   ["t", "Back to the summary (Back returns here)"],
   ["?", "Show this list"],
 ];

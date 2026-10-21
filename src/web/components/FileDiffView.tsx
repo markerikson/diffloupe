@@ -5,7 +5,10 @@ import PhCaretDown from "~icons/ph/caret-down";
 import PhCaretRight from "~icons/ph/caret-right";
 import type { RunFile } from "../../types/review-run.ts";
 import type { AnnotationMeta, RunAnnotation } from "../lib/annotations.ts";
+import { useRunState } from "../hooks/useRunState.ts";
 import { NARROW_QUERY, useMediaQuery } from "../lib/media.ts";
+import { useRunNav } from "../lib/run-nav.ts";
+import { useGetRunQuery } from "../store/api.ts";
 import { useAppDispatch, useAppSelector } from "../store/hooks.ts";
 import { fileCollapseToggled, selectDiffStyle, selectTheme, selectWrap } from "../store/view.ts";
 import { DiffStats } from "./DiffStats.tsx";
@@ -57,6 +60,9 @@ export const FileDiffView = memo(function FileDiffView({
   const wrap = useAppSelector(selectWrap);
   const theme = useAppSelector(selectTheme);
   const narrow = useMediaQuery(NARROW_QUERY);
+  const nav = useRunNav();
+  const reviewed = file.path in useRunState(runId).reviewedFiles;
+  const running = useGetRunQuery(runId).data?.status === "running";
   const oneSided = file.status === "added" || file.status === "removed";
   const diffStyle = userStyle === "unified" || oneSided || narrow ? "unified" : "split";
 
@@ -72,6 +78,18 @@ export const FileDiffView = memo(function FileDiffView({
     [diffStyle, wrap, theme, collapsed],
   );
   const renderAnnotation = useCallback((a: RunAnnotation) => <AnnotationCard meta={a.metadata} />, []);
+
+  const reviewedBox = (
+    <label className={styles.reviewed} title={running ? "Available when the run finishes" : "Mark this file reviewed (r)"}>
+      <input
+        type="checkbox"
+        checked={reviewed}
+        disabled={running}
+        onChange={(e) => nav.setReviewed(file.path, e.target.checked)}
+      />
+      Viewed
+    </label>
+  );
 
   const toggle = () => dispatch(fileCollapseToggled({ runId, path: file.path }));
   const caret = (
@@ -99,6 +117,7 @@ export const FileDiffView = memo(function FileDiffView({
             <NoteCount annotations={annotations} />
             {file.isBinary ? <span className={styles.tag}>binary</span> : <DiffStats additions={file.additions} deletions={file.deletions} />}
             <FileStatus status={file.status} />
+            {reviewedBox}
           </span>
         </div>
         {!collapsed && (
@@ -133,6 +152,7 @@ export const FileDiffView = memo(function FileDiffView({
             {collapsed && <NoteCount annotations={annotations} />}
             <DiffStats additions={file.additions} deletions={file.deletions} />
             <FileStatus status={file.status} />
+            {reviewedBox}
           </span>
         )}
       />

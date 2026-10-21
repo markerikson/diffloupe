@@ -4,16 +4,19 @@
  */
 import os from "node:os";
 import path from "node:path";
-import { appendFile, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { run as runProcess, text } from "./core/lib/proc.ts";
 import { type } from "arktype";
+import { applyStateOp, emptyState, parseState, type StateOp } from "./state-ops.ts";
 import { hasUsage, withRecordUsage } from "./usage.ts";
 import {
   ReviewRunSchema,
   ReviewTargetSchema,
   RunRepoSchema,
   RunStatusSchema,
+  type DismissReason,
   type FindingSeverity,
+  type FindingStatus,
   type ReviewRun,
   type ReviewTarget,
   type RunHeader,
@@ -43,17 +46,11 @@ export function runDir(id: string): string {
   return path.join(runsDir(), id);
 }
 
-const EMPTY_STATE: RunUserState = {
-  reviewedFiles: [],
-  findingStatus: {},
-  comments: [],
-};
-
 /** Creates `runs/<id>/` with `raw/` and an empty `state.json`. Returns the directory. */
 export async function createRunDir(id: string): Promise<string> {
   const dir = runDir(id);
   await mkdir(path.join(dir, "raw"), { recursive: true });
-  await writeFile(path.join(dir, "state.json"), `${JSON.stringify(EMPTY_STATE, null, 2)}\n`);
+  await writeFile(path.join(dir, "state.json"), `${JSON.stringify(emptyState(), null, 2)}\n`);
   return dir;
 }
 
@@ -101,12 +98,106 @@ export async function loadRunWithUsage(id: string): Promise<ReviewRun> {
   }
 }
 
+/** A `state.json` that is not valid JSON or fails `RunUserStateSchema`. */
+export class InvalidStateError extends Error {
+  constructor(
+    readonly id: string,
+    readonly summary: string,
+  ) {
+    super(`run ${id} has an invalid state.json: ${summary}`);
+    this.name = "InvalidStateError";
+  }
+}
+
+async function readState(id: string): Promise<RunUserState> {
+  let text: string;
+  try {
+    text = await readFile(path.join(runDir(id), "state.json"), "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return emptyState();
+    throw err;
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch (err) {
+    throw new InvalidStateError(id, err instanceof Error ? err.message : String(err));
+  }
+  const state = parseState(raw);
+  if (state instanceof type.errors) throw new InvalidStateError(id, state.summary);
+  return state;
+}
+
+/** The run's reviewer state; empty when `state.json` is missing or unreadable. */
 export async function loadState(id: string): Promise<RunUserState> {
   try {
-    return JSON.parse(await readFile(path.join(runDir(id), "state.json"), "utf8")) as RunUserState;
+    return await readState(id);
   } catch {
-    return EMPTY_STATE;
+    return emptyState();
   }
+}
+
+/** Replaces `state.json` by writing a temporary file and renaming it over the old one. */
+export async function writeState(id: string, state: RunUserState): Promise<void> {
+  const file = path.join(runDir(id), "state.json");
+  const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+  try {
+    await writeFile(tmp, `${JSON.stringify(state, null, 2)}\n`);
+    await rename(tmp, file);
+  } catch (err) {
+    await rm(tmp, { force: true });
+    throw err;
+  }
+}
+
+const stateQueues = new Map<string, Promise<unknown>>();
+
+/**
+ * Applies `op` to the saved state and writes it. Changes to one run are
+ * applied in order, so two requests cannot both read the old state. Throws
+ * `StateOpError` for ids or paths the run does not have.
+ */
+export async function updateState(id: string, op: StateOp): Promise<RunUserState> {
+  const previous = stateQueues.get(id) ?? Promise.resolve();
+  const next = previous
+    .catch(() => undefined)
+    .then(async () => {
+      const [run, state] = await Promise.all([loadRun(id), readState(id)]);
+      const updated = applyStateOp(state, op, run);
+      await writeState(id, updated);
+      return updated;
+    });
+  stateQueues.set(id, next);
+  try {
+    return await next;
+  } finally {
+    if (stateQueues.get(id) === next) stateQueues.delete(id);
+  }
+}
+
+export interface FindingNoteInput {
+  reason?: DismissReason | undefined;
+  note?: string | undefined;
+}
+
+export function setFindingStatus(
+  id: string,
+  findingIds: string[],
+  status: FindingStatus,
+  notes: FindingNoteInput = {},
+): Promise<RunUserState> {
+  return updateState(id, {
+    op: "finding",
+    ids: findingIds,
+    status,
+    reason: notes.reason,
+    note: notes.note,
+    at: new Date().toISOString(),
+  });
+}
+
+export function setFileReviewed(id: string, filePath: string | string[], reviewed: boolean): Promise<RunUserState> {
+  return updateState(id, { op: "reviewed", paths: Array.isArray(filePath) ? filePath : [filePath], value: reviewed });
 }
 
 function countBySeverity(run: ReviewRun): Record<FindingSeverity, number> {

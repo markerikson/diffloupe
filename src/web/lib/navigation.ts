@@ -13,6 +13,8 @@ export interface NavLists {
 
 export interface NavOptions {
   showOverCap?: boolean;
+  /** Finding ids to leave out, such as dismissed ones. */
+  hidden?: ReadonlySet<string>;
 }
 
 export function filesInPageOrder(files: readonly RunFile[], tree: Pick<GroupTree, "ordered">): RunFile[] {
@@ -35,7 +37,7 @@ export function navLists(
   const all = opts.showOverCap ? [...run.findings, ...run.overCapFindings] : run.findings;
   const lineOf = (f: RunFinding) => (f.anchor.kind === "file" ? 0 : f.anchor.line);
   const findings = all
-    .filter((f) => fileIndex.has(f.anchor.file))
+    .filter((f) => fileIndex.has(f.anchor.file) && !opts.hidden?.has(f.id))
     .map((f, i) => ({ f, i }))
     .sort(
       (a, b) =>

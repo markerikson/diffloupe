@@ -68,6 +68,14 @@
   opacity: 0.7;
 }
 
+.finding[data-dismissed="true"] {
+  opacity: 0.5;
+}
+
+.finding[data-dismissed="true"] .title {
+  text-decoration: line-through;
+}
+
 .tag {
   flex: none;
   font-size: 0.85em;

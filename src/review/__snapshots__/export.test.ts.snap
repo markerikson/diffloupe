@@ -9,7 +9,7 @@ Base \`ad555642469a\`, head \`b7e77e972a23\`
 
 ### [blocker] Unvalidated input reaches the server
 
-\`src/api/server.ts:51-53\`
+\`src/api/server.ts:51-53\` · id \`adc890675c\`
 
 Unvalidated input reaches the server: explanation.
 
@@ -19,7 +19,7 @@ Unvalidated input reaches the server: explanation.
 
 ### [should-fix] Query per row
 
-\`src/db/query.ts:100\`
+\`src/db/query.ts:100\` · id \`acdfa75ef9\`
 
 Query per row: explanation.
 
@@ -27,7 +27,7 @@ Query per row: explanation.
 
 ### [nice-to-have] Cited line sits between hunks
 
-\`src/db/query.ts:25\`
+\`src/db/query.ts:25\` · id \`a2e94fa9ef\`
 
 Cited line sits between hunks: explanation.
 
@@ -35,7 +35,7 @@ Cited line sits between hunks: explanation.
 
 ### [nice-to-have] File that is not in the diff
 
-\`src/gone.ts:5\`
+\`src/gone.ts:5\` · id \`ebeec782fb\`
 
 File that is not in the diff: explanation.
 
@@ -43,7 +43,7 @@ File that is not in the diff: explanation.
 
 ### [question] Guide wording
 
-\`docs/guide.md:3\`
+\`docs/guide.md:3\` · id \`2eec60ee0b\`
 
 Guide wording: explanation.
 
@@ -51,7 +51,7 @@ Guide wording: explanation.
 
 ### [question] Is the schema change intended?
 
-\`src/db/schema.ts\`
+\`src/db/schema.ts\` · id \`58a52d72b9\`
 
 Is the schema change intended?: explanation.
 
@@ -61,7 +61,7 @@ Is the schema change intended?: explanation.
 
 ### [nice-to-have] Far from any hunk
 
-\`src/api/server.ts:118\`
+\`src/api/server.ts:118\` · id \`98a476c6df\`
 
 Far from any hunk: explanation.
 
@@ -69,7 +69,7 @@ Far from any hunk: explanation.
 
 ### [nice-to-have] Hard-coded colour
 
-\`src/ui/button.tsx:20\`
+\`src/ui/button.tsx:20\` · id \`40032135e2\`
 
 Hard-coded colour: explanation.
 

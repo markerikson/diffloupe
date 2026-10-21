@@ -1,4 +1,4 @@
-import type { FindingSeverity, ReviewRun, RunFinding, RunUserState } from "../types/review-run.ts";
+import type { DismissReason, FindingSeverity, ReviewRun, RunFinding, RunUserState } from "../types/review-run.ts";
 import { formatTarget } from "./format-run.ts";
 import { fingerprintOf } from "./prior-run.ts";
 import { targetKey } from "./run-store.ts";
@@ -6,7 +6,7 @@ import { cacheShare, emptyUsageTotals, formatUsage, runUsageTotals, type UsageTo
 
 export interface StatsInput {
   run: ReviewRun;
-  state: Pick<RunUserState, "findingStatus">;
+  state: Pick<RunUserState, "findingStatus" | "findingNotes">;
 }
 
 export interface RoundStats {
@@ -55,6 +55,7 @@ export interface ChainStats {
   fixed: number;
   fixedPreexisting: number;
   dismissed: number;
+  dismissedBy: DismissalCounts;
   /** Findings still listed on the last run and not dismissed. Whether they were fixed is unknown. */
   open: number;
   costUsd: number;
@@ -77,6 +78,10 @@ export interface VersionStats {
   acted: ActedStats;
 }
 
+/** Dismissals by reason; `unrecorded` for dismissals saved without one. */
+export type DismissalKey = DismissReason | "unrecorded";
+export type DismissalCounts = Partial<Record<DismissalKey, number>>;
+
 export interface StatsTotals {
   chains: number;
   meanRounds: number;
@@ -84,6 +89,8 @@ export interface StatsTotals {
   pastThreeRounds: number;
   raised: number;
   fixed: number;
+  dismissed: number;
+  dismissedBy: DismissalCounts;
   /** Fixed over raised, for findings on the change only. Null when nothing was raised. */
   resolutionRate: number | null;
   costUsd: number;
@@ -138,6 +145,29 @@ function sumActed(all: ActedStats[]): ActedStats {
   return sum;
 }
 
+function countDismissals(reasons: Iterable<DismissalKey>): DismissalCounts {
+  const counts: DismissalCounts = {};
+  for (const r of reasons) counts[r] = (counts[r] ?? 0) + 1;
+  return counts;
+}
+
+function sumDismissals(all: DismissalCounts[]): DismissalCounts {
+  const sum: DismissalCounts = {};
+  for (const counts of all) {
+    for (const [r, n] of Object.entries(counts) as [DismissalKey, number][]) sum[r] = (sum[r] ?? 0) + n;
+  }
+  return sum;
+}
+
+/** "2 wrong, 1 duplicate", most common first. Empty when nothing was dismissed. */
+export function formatDismissals(counts: DismissalCounts): string {
+  return (Object.entries(counts) as [DismissalKey, number][])
+    .filter(([, n]) => n > 0)
+    .sort((a, b) => b[1] - a[1])
+    .map(([r, n]) => `${n} ${r}`)
+    .join(", ");
+}
+
 const emptySeverities = (): SeverityCounts => ({ blocker: 0, "should-fix": 0, "nice-to-have": 0, question: 0 });
 
 const total = (counts: SeverityCounts) => Object.values(counts).reduce((n, c) => n + c, 0);
@@ -176,7 +206,7 @@ function summarizeChain(members: StatsInput[], byId: Map<string, StatsInput>): C
   let raisedPreexisting = 0;
   let fixed = 0;
   let fixedPreexisting = 0;
-  const dismissed = new Set<string>();
+  const dismissed = new Map<string, DismissalKey>();
   const usage = emptyUsageTotals();
   const acted = emptyActed();
   const rounds = members.map(({ run, state }, index): RoundStats => {
@@ -195,7 +225,9 @@ function summarizeChain(members: StatsInput[], byId: Map<string, StatsInput>): C
       if (previous?.findings.find((f) => f.id === r.id)?.preexisting) fixedPreexisting++;
     }
     for (const e of actedEntries(run, previous)) addActed(acted, e);
-    for (const [id, status] of Object.entries(state.findingStatus)) if (status === "dismissed") dismissed.add(id);
+    for (const [id, status] of Object.entries(state.findingStatus)) {
+      if (status === "dismissed") dismissed.set(id, state.findingNotes?.[id]?.reason ?? "unrecorded");
+    }
     return {
       id: run.id,
       round: run.round ?? index + 1,
@@ -223,6 +255,7 @@ function summarizeChain(members: StatsInput[], byId: Map<string, StatsInput>): C
     fixed,
     fixedPreexisting,
     dismissed: dismissed.size,
+    dismissedBy: countDismissals(dismissed.values()),
     open: last.run.findings.filter((f) => !lastDismissed.has(f.id)).length,
     costUsd: rounds.reduce((n, r) => n + r.costUsd, 0),
     usage,
@@ -241,6 +274,8 @@ export function statsTotals(chains: ChainStats[]): StatsTotals {
     pastThreeRounds: chains.length ? chains.filter((c) => c.rounds.length > 3).length / chains.length : 0,
     raised,
     fixed: chains.reduce((n, c) => n + c.fixed, 0),
+    dismissed: chains.reduce((n, c) => n + c.dismissed, 0),
+    dismissedBy: sumDismissals(chains.map((c) => c.dismissedBy)),
     resolutionRate: raised ? fixedOnChange / raised : null,
     costUsd: chains.reduce((n, c) => n + c.costUsd, 0),
     usage: chains.reduce((sum, c) => {
@@ -353,7 +388,10 @@ export function formatStats(chains: ChainStats[], versions?: VersionStats[]): st
     if (usage) lines.push(`  tokens: ${usage}`);
     const perFixed = c.fixed ? `, ${usd(c.costUsd / c.fixed)} per fixed finding` : "";
     lines.push(`  raised: ${severityLine(c.raised)}${c.raisedPreexisting ? `; ${c.raisedPreexisting} pre-existing` : ""}`);
-    lines.push(`  fixed ${c.fixed}, dismissed ${c.dismissed}, still open at last run ${c.open}${perFixed}`);
+    const reasons = formatDismissals(c.dismissedBy);
+    lines.push(
+      `  fixed ${c.fixed}, dismissed ${c.dismissed}${reasons ? ` (${reasons})` : ""}, still open at last run ${c.open}${perFixed}`,
+    );
     const acted = formatActed(c.acted);
     if (acted) lines.push(`  acted on: ${acted}`);
     lines.push("");
@@ -363,6 +401,7 @@ export function formatStats(chains: ChainStats[], versions?: VersionStats[]): st
     `${t.chains} chain${t.chains === 1 ? "" : "s"}, ${t.meanRounds.toFixed(1)} rounds on average, ${percent(t.pastThreeRounds)} past three rounds`,
     `${t.raised} raised on the change, ${t.fixed} fixed, resolution rate ${percent(t.resolutionRate)}, ${usd(t.costUsd)} total`,
   );
+  if (t.dismissed) lines.push(`${t.dismissed} dismissed: ${formatDismissals(t.dismissedBy)}`);
   const usage = formatUsage(t.usage);
   if (usage) lines.push(`tokens over ${t.usage.calls} agent calls: ${usage}`);
   const acted = formatActed(t.acted);

@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { currentFileAtTop, scrollToFile } from "../lib/navigate.ts";
 import { type NavLists, neighbor } from "../lib/navigation.ts";
 import type { RunNav } from "../lib/run-nav.ts";
+import { api } from "../store/api.ts";
 import { helpSet } from "../store/focus.ts";
 import { useAppStore } from "../store/hooks.ts";
 import { fileCollapseToggled, selectCollapsedFiles } from "../store/view.ts";
@@ -14,6 +15,7 @@ export type KeyAction =
   | "nextStop"
   | "prevStop"
   | "toggleFile"
+  | "toggleReviewed"
   | "top"
   | "help";
 
@@ -25,6 +27,7 @@ const ACTIONS: Record<string, KeyAction> = {
   "]": "nextStop",
   "[": "prevStop",
   x: "toggleFile",
+  r: "toggleReviewed",
   t: "top",
   "?": "help",
 };
@@ -120,6 +123,13 @@ export function useKeyboardNav(lists: NavLists | null, nav: RunNav, runId: strin
           store.dispatch(fileCollapseToggled({ runId, path }));
           const groupId = top?.groupId ?? lists.files.find((f) => f.path === path)?.groupId;
           if (!wasCollapsed && groupId) scrollToFile(groupId, path, { focus: true });
+          return;
+        }
+        case "toggleReviewed": {
+          const path = top?.path ?? state.focus.file;
+          if (!path) return;
+          const reviewed = api.endpoints.getRunState.select(runId)(state).data?.reviewedFiles ?? {};
+          nav.setReviewed(path, !(path in reviewed));
           return;
         }
         case "top":

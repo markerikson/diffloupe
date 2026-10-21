@@ -17,6 +17,8 @@ export interface RunNav {
   goToStop(id: string, location?: number, opts?: GoToOptions): void;
   /** Copies text, or shows it in a dialog when the clipboard is unavailable. Resolves true when copied. */
   copy(text: string): Promise<boolean>;
+  /** Marks a file reviewed (collapsing it) or not reviewed (expanding it). */
+  setReviewed(path: string, reviewed: boolean): void;
   /** Walkthrough stops in guide order. */
   stops: readonly GuideStop[];
 }

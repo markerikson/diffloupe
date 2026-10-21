@@ -3,6 +3,7 @@ import { keepInView } from "../lib/navigate.ts";
 import PhFolderSimpleDuotone from "~icons/ph/folder-simple-duotone";
 import PhSignpost from "~icons/ph/signpost";
 import type { RunFile } from "../../types/review-run.ts";
+import { useRunState } from "../hooks/useRunState.ts";
 import type { RunAnnotation } from "../lib/annotations.ts";
 import { type FileNote, fileNotes } from "../lib/file-notes.ts";
 import { fileRows } from "../lib/file-rows.ts";
@@ -25,6 +26,7 @@ interface FileTreeProps {
 export function FileTree({ files, activePath, annotations, onSelect }: FileTreeProps) {
   const layout = useAppSelector(selectFileTreeLayout);
   const nav = useRunNav();
+  const reviewed = useRunState(nav.runId).reviewedFiles;
   const rows = useMemo(() => fileRows(files, [], layout), [files, layout]);
   const notes = useMemo(() => {
     const map = new Map<string, FileNote[]>();
@@ -58,7 +60,13 @@ export function FileTree({ files, activePath, annotations, onSelect }: FileTreeP
                   <span className={styles.name}>{row.name}</span>
                 </span>
               ) : row.file ? (
-                <button type="button" className={styles.file} onClick={() => onSelect(row.file!.path)} title={row.file.path}>
+                <button
+                  type="button"
+                  className={styles.file}
+                  data-reviewed={row.file.path in reviewed}
+                  onClick={() => onSelect(row.file!.path)}
+                  title={row.file.path in reviewed ? `${row.file.path} (viewed)` : row.file.path}
+                >
                   <span className={styles.name}>{row.name}</span>
                   <DiffStats additions={row.file.additions} deletions={row.file.deletions} binary={row.file.isBinary} />
                   <FileStatus status={row.file.status} />

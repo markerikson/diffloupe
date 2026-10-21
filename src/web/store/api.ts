@@ -6,8 +6,15 @@ import {
   type ReviewStage,
   type StartRunRequest,
 } from "../../server/types.ts";
-import { ReviewRunSchema, RunHeaderSchema, type ReviewRun } from "../../types/review-run.ts";
+import {
+  ReviewRunSchema,
+  RunHeaderSchema,
+  RunUserStateSchema,
+  type ReviewRun,
+  type RunUserState,
+} from "../../types/review-run.ts";
 import { withGroups } from "../../review/run-groups.ts";
+import { applyStateOp, type StateOp } from "../../review/state-ops.ts";
 import { followRunEvents } from "./run-events.ts";
 
 export interface RunProgress {
@@ -36,7 +43,7 @@ const emptyProgress = (): RunProgress => ({
 export const api = createApi({
   reducerPath: "api",
   baseQuery: fetchBaseQuery({ baseUrl: "/api" }),
-  tagTypes: ["Run", "RunList"],
+  tagTypes: ["Run", "RunList", "RunState"],
   onSchemaFailure: (error, info) => {
     console.error(`[diffloupe] ${info.endpoint} ${error.schemaName} failed:`, error.issues);
   },
@@ -108,7 +115,7 @@ export const api = createApi({
             });
           },
           onEnd() {
-            dispatch(api.util.invalidateTags([{ type: "Run", id }, "RunList"]));
+            dispatch(api.util.invalidateTags([{ type: "Run", id }, { type: "RunState", id }, "RunList"]));
           },
         });
         await cacheEntryRemoved;
@@ -119,6 +126,48 @@ export const api = createApi({
       query: (id) => ({ url: `/runs/${encodeURIComponent(id)}/diff`, responseHandler: "text" }),
       argSchema: RunIdSchema,
       providesTags: (_result, _error, id) => [{ type: "Run", id }],
+    }),
+    getRunState: build.query<RunUserState, string>({
+      query: (id) => `/runs/${encodeURIComponent(id)}/state`,
+      argSchema: RunIdSchema,
+      responseSchema: RunUserStateSchema,
+      providesTags: (_result, _error, id) => [{ type: "RunState", id }],
+    }),
+    /** Applies one change to the run's reviewer state, showing it before the server confirms. */
+    updateRunState: build.mutation<RunUserState, { runId: string; op: StateOp }>({
+      query: ({ runId, op }) => {
+        const base = `/runs/${encodeURIComponent(runId)}/state`;
+        if (op.op === "reviewed") {
+          return { url: `${base}/files`, method: "PUT", body: { path: op.paths[0], reviewed: op.value } };
+        }
+        const { status, reason, note } = op;
+        return {
+          url: `${base}/findings/${encodeURIComponent(op.ids[0] ?? "")}`,
+          method: "PUT",
+          body: { status, ...(reason ? { reason } : {}), ...(note ? { note } : {}) },
+        };
+      },
+      responseSchema: RunUserStateSchema,
+      async onQueryStarted({ runId, op }, { dispatch, getState, queryFulfilled }) {
+        const run = api.endpoints.getRun.select(runId)(getState()).data;
+        const patch = run
+          ? dispatch(
+              api.util.updateQueryData("getRunState", runId, (draft) => {
+                try {
+                  return applyStateOp(draft, op, run);
+                } catch {
+                  return draft;
+                }
+              }),
+            )
+          : undefined;
+        try {
+          const { data } = await queryFulfilled;
+          dispatch(api.util.upsertQueryData("getRunState", runId, data));
+        } catch {
+          patch?.undo();
+        }
+      },
     }),
     startRun: build.mutation({
       query: (body: StartRunRequest) => ({ url: "/runs", method: "POST", body }),
@@ -138,6 +187,8 @@ export const {
   useListRunsQuery,
   useGetRunQuery,
   useGetRunPatchQuery,
+  useGetRunStateQuery,
+  useUpdateRunStateMutation,
   useStartRunMutation,
   useDeleteRunMutation,
 } = api;

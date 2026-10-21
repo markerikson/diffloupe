@@ -13,6 +13,7 @@ describe("keyAction", () => {
     expect(press("]")).toBe("nextStop");
     expect(press("[")).toBe("prevStop");
     expect(press("x")).toBe("toggleFile");
+    expect(press("r")).toBe("toggleReviewed");
     expect(press("?")).toBe("help");
     expect(press("q")).toBeNull();
   });

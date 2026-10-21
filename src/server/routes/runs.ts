@@ -1,15 +1,27 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { type } from "arktype";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { run } from "../../review/core/lib/proc.ts";
-import { deleteRun, InvalidRunError, listRuns, loadRun, runDir } from "../../review/run-store.ts";
+import {
+  deleteRun,
+  InvalidRunError,
+  InvalidStateError,
+  listRuns,
+  loadRun,
+  loadState,
+  runDir,
+  updateState,
+} from "../../review/run-store.ts";
+import { emptyState, StateOpError, type StateOp } from "../../review/state-ops.ts";
 import { TargetError } from "../../review/targets.ts";
-import type { ReviewRun } from "../../types/review-run.ts";
+import type { ReviewRun, RunUserState } from "../../types/review-run.ts";
 import type { ServerContext } from "../context.ts";
 import { RunBusyError } from "../run-manager.ts";
 import { streamRunEvents } from "../sse.ts";
 import {
+  FileStateRequestSchema,
+  FindingStateRequestSchema,
   StartRunRequestSchema,
   type ErrorResponse,
   type StartRunRequest,
@@ -126,6 +138,59 @@ export function runsRoutes(ctx: ServerContext): Hono {
     if (!ctx.runs.isActive(id) && !(await findRun(id))) return c.json(notFound(id), 404);
     return streamRunEvents(c, ctx.runs, id);
   });
+
+  app.get("/:id/state", async (c) => {
+    const id = c.req.param("id");
+    const found = await findRun(id);
+    if (!found) return c.json(notFound(id), 404);
+    if (ctx.runs.pendingRun(id)) return c.json(emptyState() satisfies RunUserState);
+    return c.json(await loadState(id));
+  });
+
+  /** Validates the body, refuses while the run is active, and applies `op` to the saved state. */
+  async function changeState<T>(
+    c: Context,
+    schema: (body: unknown) => T | type.errors,
+    toOp: (body: T) => StateOp,
+  ): Promise<Response> {
+    const id = c.req.param("id") ?? "";
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "request body must be JSON" } satisfies ErrorResponse, 400);
+    }
+    const parsed = schema(body);
+    if (parsed instanceof type.errors) return c.json({ error: parsed.summary } satisfies ErrorResponse, 400);
+    if (ctx.runs.isActive(id)) {
+      return c.json({ error: `run ${id} is still running`, activeRunId: id } satisfies ErrorResponse, 409);
+    }
+    const found = await findRun(id);
+    if (!found) return c.json(notFound(id), 404);
+    if (found instanceof InvalidRunError) return c.json({ error: found.message } satisfies ErrorResponse, 422);
+    try {
+      return c.json((await updateState(id, toOp(parsed))) satisfies RunUserState);
+    } catch (err) {
+      if (err instanceof StateOpError) return c.json({ error: err.message } satisfies ErrorResponse, 400);
+      if (err instanceof InvalidStateError) return c.json({ error: err.message } satisfies ErrorResponse, 422);
+      throw err;
+    }
+  }
+
+  app.put("/:id/state/findings/:fid", (c) =>
+    changeState(c, FindingStateRequestSchema, (body) => ({
+      op: "finding",
+      ids: [c.req.param("fid")],
+      status: body.status,
+      reason: body.reason,
+      note: body.note,
+      at: new Date().toISOString(),
+    })),
+  );
+
+  app.put("/:id/state/files", (c) =>
+    changeState(c, FileStateRequestSchema, (body) => ({ op: "reviewed", paths: [body.path], value: body.reviewed })),
+  );
 
   app.post("/:id/cancel", async (c) => {
     const id = c.req.param("id");
