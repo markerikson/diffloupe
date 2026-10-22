@@ -21,6 +21,7 @@ import {
   leadSentences,
   mergeBudgetFor,
   packUnits,
+  postedPriorHead,
   primarySurface,
   readCheckedClaims,
   renderPriorComments,
@@ -1640,5 +1641,23 @@ describe("chooseReviewScope", () => {
 
   it("reviews in full when the previous head is not available", () => {
     expect(chooseReviewScope(files, null).kind).toBe("full");
+  });
+});
+
+describe("postedPriorHead", () => {
+  const comment = (over: Partial<PriorComment>): PriorComment =>
+    ({ id: 1, kind: "issue", author: "bot", body: "", resolved: false, url: "", ...over }) as PriorComment;
+
+  it("takes the head from the bot's latest summary", () => {
+    const prior = [
+      comment({ mine: true, runs: 1, head: "a".repeat(40) }),
+      comment({ mine: true, runs: 2, head: "b".repeat(40) }),
+      comment({ mine: false, runs: 3, head: "c".repeat(40) }),
+    ];
+    expect(postedPriorHead(prior)).toBe("b".repeat(40));
+  });
+
+  it("is undefined before the first posted review", () => {
+    expect(postedPriorHead([comment({ mine: true, runs: 1 })])).toBeUndefined();
   });
 });

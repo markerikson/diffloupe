@@ -35,7 +35,7 @@ describe("gatherPriorComments", () => {
         : "[]";
     const prior = await gatherPriorComments("o/r", "5", { gh, strict: true });
     expect(prior).toHaveLength(1);
-    expect(prior[0]).toMatchObject({ id: 9, mine: true, runs: 2 });
+    expect(prior[0]).toMatchObject({ id: 9, mine: true, runs: 2, head: "a".repeat(40) });
   });
 });
 

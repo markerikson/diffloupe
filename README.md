@@ -200,6 +200,7 @@ Checks Bun, git, OpenCode, tilth and `gh`; prints the model for each stage and w
 `--github` changes how a re-review finds the earlier rounds:
 
 - Earlier rounds come only from the PR's comments on GitHub, through `gh`. Runs saved on the CI machine are not used for carried-over findings, so a cached data directory cannot make the bot reply to comments that are not on the PR.
+- The summary comment records the head it reviewed. The next round narrows to the files changed since that head, as a local re-review does. After a force-push that removed that commit from the branch, the round is a full review. `--full` also forces one.
 - A `gh` failure while reading the PR description or its comments fails the run instead of reviewing without them.
 - The run writes `payloads.json` with the summary comment, the inline review and the replies.
 - The summary comment gets a "Copy all findings as Markdown" fold. If it would push the comment over GitHub's size limit, the comment links to the `findings.md` file in the run's artifact instead.

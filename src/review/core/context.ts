@@ -107,6 +107,8 @@ export interface PriorComment {
    * survives between runs — the workspace does not.
    */
   runs?: number;
+  /** On the bot's own summary comment: the head commit the last review saw. */
+  head?: string;
   /**
    * On the bot's own summary comment: the findings reported inside its body
    * rather than as comments of their own, because they sit outside the diff.
@@ -223,7 +225,9 @@ export async function gatherPriorComments(
       if (!mine && c.user?.type === "Bot") continue;
       // Read before condensing: condensing strips HTML comments, and the marker
       // is an HTML comment.
-      const runs = mine ? Number(findMarker(c.body ?? "", "summary")?.fields.runs ?? 0) : undefined;
+      const summaryMarker = mine ? findMarker(c.body ?? "", "summary") : undefined;
+      const runs = mine ? Number(summaryMarker?.fields.runs ?? 0) : undefined;
+      const head = summaryMarker?.fields.head;
       // Findings that never got an inline comment — off the diff, routed off
       // the inline set, or all of them when inline comments are off — live
       // inside this body, so their identities have to be read out of it too.
@@ -241,6 +245,8 @@ export async function gatherPriorComments(
         mine,
         ...(c.author_association ? { association: c.author_association } : {}),
         ...(runs ? { runs } : {}),
+        // Passed to git as a revision, so only a full sha is accepted.
+        ...(head && /^[0-9a-f]{40}$/i.test(head) ? { head: head.toLowerCase() } : {}),
         ...(summaryClaims.length ? { summaryClaims } : {}),
       });
     }

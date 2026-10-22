@@ -103,9 +103,32 @@ export interface RunReviewOptions {
    * changed since then are reviewed again, unless too many changed.
    */
   priorHead?: string;
+  /** Review every file even when an earlier head is known. */
+  full?: boolean;
 }
 
 const MIN_FILES_FOR_FALLBACK = 4;
+
+/** The head recorded in the bot's latest summary comment on the pull request. */
+export function postedPriorHead(prior: PriorComment[]): string | undefined {
+  const summaries = prior.filter((c) => c.mine && c.head);
+  summaries.sort((a, b) => (b.runs ?? 0) - (a.runs ?? 0));
+  return summaries[0]?.head;
+}
+
+/**
+ * On a GitHub run, the head of the last posted review, so a re-review narrows
+ * to what changed since. Ignored after a force-push that dropped it from the
+ * branch: a diff against a rewritten history does not say what is new.
+ */
+async function reviewedHeadOnPr(prior: PriorComment[], head: string, local: boolean | undefined): Promise<string | undefined> {
+  if (local) return undefined;
+  const posted = postedPriorHead(prior);
+  if (!posted) return undefined;
+  const ancestor = await gitText(["merge-base", "--is-ancestor", posted, head]).then(() => true, () => false);
+  if (!ancestor) console.error(`  previous review head ${posted.slice(0, 12)} is not in this branch's history; reviewing in full`);
+  return ancestor ? posted : undefined;
+}
 
 export interface ReviewScope {
   kind: "full" | "incremental";
@@ -268,18 +291,19 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     return { record: null, units: [], byClass, findings: [], costUsd: 0, wallMs: Date.now() - started, markdownPath };
   }
 
+  const priorHead = options.full ? undefined : (options.priorHead ?? (await reviewedHeadOnPr(prior, head, options.local)));
   let scope: ReviewScope = { kind: "full", files: sliceFiles };
-  if (options.priorHead) {
-    const since = options.priorHead === head
+  if (priorHead) {
+    const since = priorHead === head
       ? []
-      : await gitText(["diff", "--name-only", options.priorHead, head]).then(
+      : await gitText(["diff", "--name-only", priorHead, head]).then(
         (out) => out.trim().split("\n").filter(Boolean),
         () => null,
       );
     scope = chooseReviewScope(sliceFiles, since);
     console.error(
       scope.kind === "incremental"
-        ? `  re-review: ${scope.files.length} of ${sliceFiles.length} code files changed since ${options.priorHead.slice(0, 12)}`
+        ? `  re-review: ${scope.files.length} of ${sliceFiles.length} code files changed since ${priorHead.slice(0, 12)}`
         : `  re-review in full: ${scope.reason}`,
     );
   }
