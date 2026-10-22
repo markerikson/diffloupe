@@ -1,6 +1,6 @@
 import { text } from "./lib/proc.ts";
 import { readJson } from "./lib/io.ts";
-import { findMarker, isOwnComment, readMarkers, settledIds } from "./lib/marker.ts";
+import { findMarker, isOwnComment, readMarkers, settledIds, stripCopyBlock } from "./lib/marker.ts";
 import { SUBJECT } from "./config.ts";
 import type { StatedIntent } from "./prompts.ts";
 
@@ -152,9 +152,12 @@ export async function ghComments(endpoint: string, gh: GhText = ghText): Promise
  * comments agreed with, and the list of things considered and dropped. Stripping
  * them leaves the next run unable to see what it demoted or what it already
  * rejected, which is the context that stops it re-litigating both.
+ *
+ * The "Copy all findings" section is the exception: it repeats every finding's
+ * full argument, which is what the detail file was split out to hold.
  */
 export function condenseOwnSummary(body: string): string {
-  return body
+  return stripCopyBlock(body)
     .replace(/<!--[\s\S]*?-->/g, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();

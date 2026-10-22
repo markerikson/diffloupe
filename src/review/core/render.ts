@@ -1,7 +1,7 @@
 import path from "node:path";
 import { text } from "./lib/proc.ts";
 import { removeIfPresent, writeJson, writeText } from "./lib/io.ts";
-import { fingerprint, marker, stripMarkers } from "./lib/marker.ts";
+import { COPY_BLOCK_END, COPY_BLOCK_START, fingerprint, marker, stripMarkers } from "./lib/marker.ts";
 import { anchorFor, loadHunks } from "./lib/hunks.ts";
 import { code, fence } from "./lib/markdown.ts";
 import { INLINE_MODE, repoName } from "./config.ts";
@@ -856,16 +856,22 @@ export function insertCopyBlock(
   const versions = typeof markdown === "string" ? [markdown] : markdown;
   for (const version of versions) {
     const block = [
+      COPY_BLOCK_START,
       "<details><summary>Copy all findings as Markdown</summary>",
       "",
       fence(version, "markdown"),
       "",
       "</details>",
+      COPY_BLOCK_END,
     ].join("\n");
     const out = insertBeforeFold(summary, block);
     if (out.length <= limit) return out;
   }
-  const pointer = `_All findings as Markdown are too long for this comment: ${findingsFile(opts.artifact)}._`;
+  const pointer = [
+    COPY_BLOCK_START,
+    `_All findings as Markdown are too long for this comment: ${findingsFile(opts.artifact)}._`,
+    COPY_BLOCK_END,
+  ].join("\n");
   const out = insertBeforeFold(summary, pointer);
   return out.length <= limit ? out : summary;
 }

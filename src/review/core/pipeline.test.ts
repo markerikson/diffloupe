@@ -17,6 +17,7 @@ import {
   fallbackRank,
   fitComment,
   groupByDir,
+  insertCopyBlock,
   isConversationNoise,
   leadSentences,
   mergeBudgetFor,
@@ -714,6 +715,20 @@ describe("condenseOwnSummary", () => {
   it("closes up the gaps the markers leave behind", () => {
     const body = "one\n\n<!-- m -->\n\n\n\ntwo\n\n";
     expect(condenseOwnSummary(body)).toBe("one\n\ntwo");
+  });
+
+  it("drops the copy-all-findings section, block or pointer", () => {
+    const summary = "### Review\n\n- Should fix: Null case\n\n<details><summary>Review details</summary>\n\nstats\n</details>";
+    const withBlock = insertCopyBlock(summary, "### [should-fix] Null case\n\nThe full argument.\n\n```ts\n</details>\n```");
+    expect(withBlock).toContain("The full argument.");
+    const condensed = condenseOwnSummary(withBlock);
+    expect(condensed).not.toContain("Copy all findings");
+    expect(condensed).not.toContain("The full argument.");
+    expect(condensed).toBe("### Review\n\n- Should fix: Null case\n\n<details><summary>Review details</summary>\n\nstats\n</details>");
+
+    const withPointer = insertCopyBlock(summary, "x".repeat(500), { limit: summary.length + 300 });
+    expect(withPointer).toContain("too long for this comment");
+    expect(condenseOwnSummary(withPointer)).toBe(condenseOwnSummary(summary));
   });
 });
 

@@ -74,6 +74,22 @@ export function stripMarkers(text: string): string {
     .trimEnd();
 }
 
+/**
+ * Bracket the summary comment's "Copy all findings" section. It repeats every
+ * finding's full text, so the next run cuts it out before showing the summary
+ * to the model. Not `ai-review` markers: `readMarkers` and `stripMarkers` skip them.
+ */
+export const COPY_BLOCK_START = "<!-- ai-review-copy -->";
+export const COPY_BLOCK_END = "<!-- /ai-review-copy -->";
+
+/** Removes the copy section and the blank lines it leaves behind. */
+export function stripCopyBlock(body: string): string {
+  const start = body.indexOf(COPY_BLOCK_START);
+  const end = body.lastIndexOf(COPY_BLOCK_END);
+  if (start < 0 || end < start) return body;
+  return `${body.slice(0, start).trimEnd()}\n\n${body.slice(end + COPY_BLOCK_END.length).trimStart()}`.trim();
+}
+
 const KINDS: readonly string[] = ["summary", "summary-item", "inline", "reply"];
 
 export interface ParsedMarker {
