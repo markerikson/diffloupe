@@ -556,14 +556,13 @@ function pendingInput(prep: PreparedRun): BuildPendingRunInput {
  * How the core sees earlier reviews. Locally, the prior run's findings stand
  * in for comments. GitHub mode has no prior run (see `prepareRun`): prior
  * state comes only from the pull request's real comments, whose ids replies
- * can target, and the core reads the earlier head from the bot's summary.
+ * can target.
  */
 export function priorOptions(
   prep: Pick<PreparedRun, "github" | "full" | "previous">,
-): Pick<RunReviewOptions, "local" | "prior" | "priorHead" | "full"> {
+): Pick<RunReviewOptions, "local" | "prior" | "priorHead"> {
   return {
     local: !prep.github,
-    ...(prep.full ? { full: true } : {}),
     ...(prep.previous ? { prior: priorComments(prep.previous.run) } : {}),
     ...(prep.previous && !prep.full ? { priorHead: prep.previous.run.head } : {}),
   };
