@@ -1,6 +1,6 @@
 import { text } from "./lib/proc.ts";
 import { readJson } from "./lib/io.ts";
-import { findMarker, isOwnComment, readMarkers, settledIds } from "./lib/marker.ts";
+import { findMarker, isOwnComment, readMarkers, settledIds, stripCopyBlock } from "./lib/marker.ts";
 import { SUBJECT } from "./config.ts";
 import type { StatedIntent } from "./prompts.ts";
 
@@ -10,6 +10,22 @@ export async function gitText(args: string[]): Promise<string> {
   return await text("git", ["-C", SUBJECT, "-c", "diff.renames=true", ...args]);
 }
 
+export type GhText = (args: string[]) => Promise<string>;
+
+const ghText: GhText = (args) => text("gh", args);
+
+export interface GatherOptions {
+  /**
+   * Throw when `gh` fails instead of carrying on without the pull request's
+   * description or comments. Posting without them repeats earlier comments.
+   */
+  strict?: boolean;
+  gh?: GhText;
+}
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
 
 /**
  * Every hunk header in the diff, with no hunk bodies. Git puts the enclosing
@@ -36,20 +52,23 @@ export async function gatherIntent(
   base: string,
   head: string,
   stated?: string,
+  opts: GatherOptions = {},
 ): Promise<StatedIntent> {
+  const gh = opts.gh ?? ghText;
   let title = "";
   let body = "";
   // A bare commit range has no description, so the commit subjects are the only
   // statement of intent there is.
   if (pr) {
     try {
-      const meta = JSON.parse(await text("gh", ["api", `repos/${slug}/pulls/${pr}`])) as {
+      const meta = JSON.parse(await gh(["api", `repos/${slug}/pulls/${pr}`])) as {
         title?: string;
         body?: string;
       };
       title = meta.title ?? "";
       body = meta.body ?? "";
-    } catch {
+    } catch (err) {
+      if (opts.strict) throw new Error(`reading the pull request description: ${errorText(err)}`, { cause: err });
       /* offline / no access: intent section degrades to commits only */
     }
   }
@@ -88,6 +107,8 @@ export interface PriorComment {
    * survives between runs — the workspace does not.
    */
   runs?: number;
+  /** On the bot's own summary comment: the head commit the last review saw. */
+  head?: string;
   /**
    * On the bot's own summary comment: the findings reported inside its body
    * rather than as comments of their own, because they sit outside the diff.
@@ -95,10 +116,7 @@ export interface PriorComment {
   summaryClaims?: { fp: string; file: string; line: string }[];
   /**
    * GitHub's account of the author's standing in this repository: `OWNER`,
-   * `MEMBER`, `COLLABORATOR`, `CONTRIBUTOR`, `NONE` and so on. Carried because
-   * `/ai-review resume` raises the review budget, and the workflow's gate on
-   * who may say that only governs which comments start a run — the count is
-   * recomputed here from every comment on the pull request.
+   * `MEMBER`, `COLLABORATOR`, `CONTRIBUTOR`, `NONE` and so on.
    */
   association?: string;
 }
@@ -116,8 +134,8 @@ export interface GhComment {
   author_association?: string;
 }
 
-export async function ghComments(endpoint: string): Promise<GhComment[]> {
-  return JSON.parse(await text("gh", ["api", "--paginate", endpoint])) as GhComment[];
+export async function ghComments(endpoint: string, gh: GhText = ghText): Promise<GhComment[]> {
+  return JSON.parse(await gh(["api", "--paginate", endpoint])) as GhComment[];
 }
 
 /**
@@ -134,9 +152,12 @@ export async function ghComments(endpoint: string): Promise<GhComment[]> {
  * comments agreed with, and the list of things considered and dropped. Stripping
  * them leaves the next run unable to see what it demoted or what it already
  * rejected, which is the context that stops it re-litigating both.
+ *
+ * The "Copy all findings" section is the exception: it repeats every finding's
+ * full argument, which is what the detail file was split out to hold.
  */
 export function condenseOwnSummary(body: string): string {
-  return body
+  return stripCopyBlock(body)
     .replace(/<!--[\s\S]*?-->/g, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
@@ -156,14 +177,19 @@ export function condenseOwnSummary(body: string): string {
  * comment carries the summary — including findings that could not be anchored
  * to a diff line and therefore exist nowhere else.
  */
-export async function gatherPriorComments(slug: string, pr: string | undefined): Promise<PriorComment[]> {
+export async function gatherPriorComments(
+  slug: string,
+  pr: string | undefined,
+  opts: GatherOptions = {},
+): Promise<PriorComment[]> {
   const fixture = process.env.PRIOR_FIXTURE;
   if (fixture) return await readJson<PriorComment[]>(fixture);
   // A bare commit range has no comment threads to reconcile against.
   if (!pr) return [];
+  const gh = opts.gh ?? ghText;
   const out: PriorComment[] = [];
   try {
-    const raw = await ghComments(`repos/${slug}/pulls/${pr}/comments`);
+    const raw = await ghComments(`repos/${slug}/pulls/${pr}/comments`, gh);
     // A reply the bot wrote saying a point is fixed settles the comment it
     // replies to. GitHub's own thread resolution is GraphQL-only and everything
     // here goes through REST, so the state lives in the comment body. The rule
@@ -191,17 +217,20 @@ export async function gatherPriorComments(slug: string, pr: string | undefined):
           ...(c.in_reply_to_id ? { inReplyTo: c.in_reply_to_id } : {}),
         });
     }
-  } catch {
+  } catch (err) {
+    if (opts.strict) throw new Error(`reading the pull request's review comments: ${errorText(err)}`, { cause: err });
     /* offline / no access: the review proceeds without reconciliation */
   }
   try {
-    for (const c of await ghComments(`repos/${slug}/issues/${pr}/comments`)) {
+    for (const c of await ghComments(`repos/${slug}/issues/${pr}/comments`, gh)) {
       const mine = isOwnComment(c.body ?? "", c.user?.type, "summary");
       // Another workflow's status comment is not review context.
       if (!mine && c.user?.type === "Bot") continue;
       // Read before condensing: condensing strips HTML comments, and the marker
       // is an HTML comment.
-      const runs = mine ? Number(findMarker(c.body ?? "", "summary")?.fields.runs ?? 0) : undefined;
+      const summaryMarker = mine ? findMarker(c.body ?? "", "summary") : undefined;
+      const runs = mine ? Number(summaryMarker?.fields.runs ?? 0) : undefined;
+      const head = summaryMarker?.fields.head;
       // Findings that never got an inline comment — off the diff, routed off
       // the inline set, or all of them when inline comments are off — live
       // inside this body, so their identities have to be read out of it too.
@@ -219,10 +248,13 @@ export async function gatherPriorComments(slug: string, pr: string | undefined):
         mine,
         ...(c.author_association ? { association: c.author_association } : {}),
         ...(runs ? { runs } : {}),
+        // Passed to git as a revision, so only a full sha is accepted.
+        ...(head && /^[0-9a-f]{40}$/i.test(head) ? { head: head.toLowerCase() } : {}),
         ...(summaryClaims.length ? { summaryClaims } : {}),
       });
     }
-  } catch {
+  } catch (err) {
+    if (opts.strict) throw new Error(`reading the pull request's comments: ${errorText(err)}`, { cause: err });
     /* as above */
   }
   return out;

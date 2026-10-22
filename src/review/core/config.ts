@@ -165,10 +165,6 @@ export let MAX_SLICE_TOKENS = envNumber("MAX_SLICE_TOKENS", 42000);
  */
 export let WALK_DIFF_TOKENS = envNumber("WALK_DIFF_TOKENS", 100000);
 /**
- * Reviews posted on one pull request before it stops on its own. 0 disables.
- */
-export const AUTO_PAUSE = 0;
-/**
  * Whether findings also get inline comments on their lines, or live only in
  * the summary. "tier" posts an inline comment for each finding on the change's
  * most production-proximate surface; "none" posts the summary alone. Summary-only
@@ -178,13 +174,6 @@ export const AUTO_PAUSE = 0;
  * how human reviewers work here — flip it per-repo, not per-run.
  */
 export const INLINE_MODE: "tier" | "none" = process.env.INLINE_MODE === "tier" ? "tier" : "none";
-/**
- * Who may lift the pause with `/ai-review resume`. These are GitHub's own
- * `author_association` values for people with write access to the repository,
- * and they match the gate on the workflow's comment trigger — resuming spends
- * the API key, so it is not open to anyone who can type in the thread.
- */
-export const RESUME_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
 /**
  * Scratch directory the agent writes its findings JSON into. It sits outside the
  * checkout so that writing findings does not dirty the tree under review.

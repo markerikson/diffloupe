@@ -58,6 +58,8 @@ export interface ResolvedTarget {
 export interface ResolveOptions {
   /** For staged and worktree targets: diff against merge-base(base, HEAD) instead of HEAD. */
   base?: string;
+  /** For pull requests: review this commit instead of the live head. It must be in the head's history. */
+  head?: string;
   now?: Date;
   /** True when a tag already names a run; the tag then gets a `-2`, `-3`… suffix. */
   isTaken?: (tag: string) => boolean;
@@ -202,6 +204,7 @@ export async function resolveTarget(
       pullRequest = await fetchPullRequest(repo, spec.pr, spec.repo ?? (slug.startsWith("local/") ? undefined : slug));
       head = pullRequest.headRefOid;
       await ensureCommit(repo, head, [`refs/pull/${spec.pr}/head`]);
+      if (opts.head) head = await pinPullRequestHead(repo, spec.pr, head, opts.head);
       await ensureCommit(repo, pullRequest.baseRefOid, [pullRequest.baseRefName]);
       base = await mergeBase(pullRequest.baseRefOid, head);
       break;
@@ -416,6 +419,24 @@ async function ensureCommit(repo: string, sha: string, refs: string[]): Promise<
     if (await hasCommit(repo, sha)) return;
   }
   throw new TargetError(`commit ${sha} is not in this clone and could not be fetched from origin`);
+}
+
+/**
+ * `--head`: review the pull request as of the commit a CI job was started for,
+ * not whatever was pushed since. The commit must be in the branch's history.
+ */
+export async function pinPullRequestHead(repo: string, pr: number, liveHead: string, head: string): Promise<string> {
+  // Checked here as well as on the command line: the value reaches `git fetch`
+  // as an argument, and server requests skip the CLI's check.
+  if (!/^[0-9a-f]{40}$/i.test(head)) throw new TargetError(`--head must be a full 40-character commit SHA, not "${head}"`);
+  const pinned = head.toLowerCase();
+  if (pinned === liveHead) return liveHead;
+  await ensureCommit(repo, pinned, [`refs/pull/${pr}/head`, pinned]);
+  const onBranch = await run("git", ["-C", repo, "merge-base", "--is-ancestor", pinned, liveHead], { allowFail: true });
+  if (onBranch.code !== 0) {
+    throw new TargetError(`--head ${pinned} is not in the history of pull request #${pr} (head ${liveHead.slice(0, 12)})`);
+  }
+  return pinned;
 }
 
 function isBareRev(specText: string | undefined): boolean {

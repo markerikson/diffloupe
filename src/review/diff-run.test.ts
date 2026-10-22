@@ -100,6 +100,17 @@ describe("diff runs", () => {
     expect((await git("rev-parse", `refs/diffloupe/${second.id}`)).trim()).toBe(first.target.head);
   });
 
+  // The CLI rejects these too; this covers requests that come through the server.
+  it("refuses --github and --head outside a pull request review", async () => {
+    await expect(prepareRun({ kind: "diff", repo, target: "HEAD", github: true }, repo, () => {})).rejects.toThrow(
+      "--github needs a review of a pull request target",
+    );
+    await expect(prepareRun({ kind: "diff", repo, target: "#7", head: "a".repeat(40) }, repo, () => {})).rejects.toThrow(
+      "--head needs a review of a pull request target",
+    );
+    expect(await listRuns()).toEqual([]);
+  });
+
   it("asks for opencode only when the walkthrough is requested", async () => {
     await expect(prepareRun({ kind: "diff", repo, target: "HEAD", walkthrough: true }, repo, () => {})).rejects.toThrow(
       /opencode/,

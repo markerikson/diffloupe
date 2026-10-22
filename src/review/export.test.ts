@@ -82,6 +82,14 @@ describe("findingMarkdown", () => {
       "_Open since run run-1. Repeats PR comment #7._",
     );
   });
+
+  // Run ids are local to the machine that ran the review; on a PR they mean
+  // nothing to the reader.
+  test("the GitHub form drops the local run id", () => {
+    const md = findingMarkdown(finding({ carriedFrom: "run-1", repeatOf: 7 }), undefined, { github: true });
+    expect(md).not.toContain("Open since run");
+    expect(md).toContain("_Repeats PR comment #7._");
+  });
 });
 
 describe("runMarkdown", () => {
@@ -189,6 +197,28 @@ describe("runMarkdown", () => {
     );
     expect(md).toContain("## Over the posting cap (1)");
     expect(md).not.toContain("capped and dropped");
+  });
+
+  test("shortening cuts findings to their headings from the end of the list", () => {
+    const run = {
+      ...smallCommit,
+      findings: [
+        finding({ id: "a", title: "first", severity: "blocker", explanation: "Explain a." }),
+        finding({ id: "b", title: "second", severity: "question", explanation: "Explain b." }),
+        finding({ id: "c", title: "third", severity: "blocker", preexisting: true, explanation: "Explain c." }),
+      ],
+      overCapFindings: [finding({ id: "d", title: "fourth", explanation: "Explain d." })],
+    };
+    const md = runMarkdown(run, { includeOverCap: true, shorten: { count: 2, note: "_Shortened._" } });
+    expect(md.split("\n\n")[3]).toBe("_Shortened._");
+    expect(md).toContain("Explain a.");
+    expect(md).toContain("Explain b.");
+    expect(md).not.toContain("Explain c.");
+    expect(md).not.toContain("Explain d.");
+    expect(md).toContain("### [blocker] third\n\n`src/a.ts:10` · id `c`");
+    const all = runMarkdown(run, { includeOverCap: true, shorten: { count: 9, note: "_Shortened._" } });
+    expect(all).not.toContain("Explain a.");
+    expect(runMarkdown(run, { shorten: { count: 0, note: "_Shortened._" } })).not.toContain("_Shortened._");
   });
 
   test("snapshot", () => {

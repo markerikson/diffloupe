@@ -1,7 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import { BUILTIN_MODELS } from "../review/models.ts";
 import type { RunSetup } from "../review/setup.ts";
-import { formatBytes, runDoctorChecks, versionAtLeast, type DoctorDeps } from "./doctor.ts";
+import { doctorFails, formatBytes, runDoctorChecks, versionAtLeast, type DoctorDeps } from "./doctor.ts";
+
+describe("doctorFails", () => {
+  test("warnings fail only under --strict", () => {
+    const checks = [{ status: "ok" as const }, { status: "warn" as const }];
+    expect(doctorFails(checks, false)).toBe(false);
+    expect(doctorFails(checks, true)).toBe(true);
+    expect(doctorFails([{ status: "fail" as const }], false)).toBe(true);
+  });
+});
 
 const setup: RunSetup = {
   provider: "anthropic",

@@ -1,7 +1,7 @@
 import path from "node:path";
 import { text } from "./lib/proc.ts";
 import { removeIfPresent, writeJson, writeText } from "./lib/io.ts";
-import { fingerprint, marker, stripMarkers } from "./lib/marker.ts";
+import { COPY_BLOCK_END, COPY_BLOCK_START, fingerprint, marker, stripMarkers } from "./lib/marker.ts";
 import { anchorFor, loadHunks } from "./lib/hunks.ts";
 import { code, fence } from "./lib/markdown.ts";
 import { INLINE_MODE, repoName } from "./config.ts";
@@ -64,8 +64,6 @@ export function renderReview(o: {
   overCap?: Finding[] | undefined;
   /** See `INLINE_MODE`. Defaults to summary-only. */
   inlineMode?: "tier" | "none" | undefined;
-  /** Rendered to read on this machine, never posted: leaves out the note about how the comment updates. */
-  local?: boolean | undefined;
 }): {
   summary: string;
   /**
@@ -119,6 +117,7 @@ export function renderReview(o: {
   const summaryMarker = marker("summary", {
     ...(o.pr ? { pr: o.pr } : {}),
     ...(o.runs ? { runs: o.runs } : {}),
+    head: o.head,
   });
 
   const counts = reported.reduce<Record<string, number>>((acc, f) => {
@@ -628,7 +627,7 @@ export function renderReview(o: {
     s.push(
       runId
         ? `📄 **[Full review detail](${server}/${slug}/actions/runs/${runId})** — download the` +
-            ` \`ai-code-review-${o.pr}-${o.head.slice(0, 9)}\` artifact and open \`${detailName}\`` +
+            ` \`${artifactName(o.pr ?? "", o.head)}\` artifact and open \`${detailName}\`` +
             " for the walkthrough and the evidence behind each finding. Artifacts expire 90 days" +
             " after the run."
         : `📄 Full walkthrough and evidence: \`${o.detailPath ?? detailName}\`.`,
@@ -663,16 +662,7 @@ export function renderReview(o: {
   s.push("<details><summary>Review details</summary>");
   s.push("");
   for (const [k, v] of Object.entries(o.stats)) s.push(`- ${k}: ${v}`);
-  // Said here on every review, because the moment it becomes useful is the
-  // moment the bot has gone quiet and is no longer writing anything new.
   s.push("");
-  if (o.pr && !o.local) {
-    s.push(
-      "This comment is rewritten on each push rather than replaced. Reviewing pauses" +
-        " automatically once a branch has had several; comment `/ai-review resume` to restart it.",
-    );
-    s.push("");
-  }
   s.push("</details>");
   // Invisible, and the only reason the next push updates this comment instead
   // of adding another one below it.
@@ -825,6 +815,78 @@ export function fitComment(body: string, tail: string): string {
   return `${kept}${close}${notice}${tail}`;
 }
 
+/** The name the workflow uploads a pull request review's files under. */
+export function artifactName(pr: string | number, head: string): string {
+  return `ai-code-review-${pr}-${head.slice(0, 9)}`;
+}
+
+/** File the full findings Markdown is saved under in the run artifact. */
+export const FINDINGS_FILE = "findings.md";
+
+const REVIEW_DETAILS_FOLD = "<details><summary>Review details</summary>";
+
+function findingsFile(artifact: string | undefined): string {
+  return artifact
+    ? `download the \`${artifact}\` artifact and open \`${FINDINGS_FILE}\``
+    : `see \`${FINDINGS_FILE}\` in the run artifact`;
+}
+
+/** Heads the copy block when its last `count` findings are cut to their headings. */
+export function shortenedNote(count: number, artifact?: string): string {
+  const n = count === 1 ? "The last finding is" : `The last ${count} findings are`;
+  return `_${n} shortened to fit this comment. For the full text, ${findingsFile(artifact)}._`;
+}
+
+/**
+ * Puts a collapsed, fenced copy of the findings into the summary comment,
+ * before the "Review details" fold, so GitHub's copy button on the code block
+ * copies them all. `markdown` may be several versions, longest first: the
+ * first one that fits is used. A version is used whole or not at all, since
+ * `fitComment` closes open `<details>` but not code fences, and a cut inside
+ * the block would break the rest of the comment. When no version fits, one
+ * line pointing at the artifact goes in instead, and when even that does not
+ * fit the summary is returned unchanged.
+ */
+export function insertCopyBlock(
+  summary: string,
+  markdown: string | Iterable<string>,
+  opts: { artifact?: string | undefined; limit?: number } = {},
+): string {
+  const limit = opts.limit ?? COMMENT_LIMIT;
+  const versions = typeof markdown === "string" ? [markdown] : markdown;
+  for (const version of versions) {
+    const block = [
+      COPY_BLOCK_START,
+      "<details><summary>Copy all findings as Markdown</summary>",
+      "",
+      fence(version, "markdown"),
+      "",
+      "</details>",
+      COPY_BLOCK_END,
+    ].join("\n");
+    const out = insertBeforeFold(summary, block);
+    if (out.length <= limit) return out;
+  }
+  const pointer = [
+    COPY_BLOCK_START,
+    `_All findings as Markdown are too long for this comment: ${findingsFile(opts.artifact)}._`,
+    COPY_BLOCK_END,
+  ].join("\n");
+  const out = insertBeforeFold(summary, pointer);
+  return out.length <= limit ? out : summary;
+}
+
+function insertBeforeFold(summary: string, insert: string): string {
+  let at = summary.lastIndexOf(REVIEW_DETAILS_FOLD);
+  if (at < 0) {
+    const markerAt = summary.lastIndexOf("<!-- ai-review kind=summary");
+    at = markerAt < 0 ? summary.length : markerAt;
+  }
+  const before = summary.slice(0, at).replace(/\n*$/, "");
+  const after = summary.slice(at);
+  return after ? `${before}\n\n${insert}\n\n${after}` : `${before}\n\n${insert}`;
+}
+
 /**
  * Renders a review and writes both artifacts: the markdown preview a human
  * reads, and the exact GitHub API payloads, computed and not sent.
@@ -914,7 +976,6 @@ export async function writeArtifacts(o: {
     overCap: o.overCap,
     changedFiles,
     inlineMode: INLINE_MODE,
-    local: o.local,
   });
 
   const md = o.local
