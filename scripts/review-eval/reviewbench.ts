@@ -297,13 +297,18 @@ function toCandidate(f: RunFinding, producer: string, mappers: Map<string, (line
   if (a.kind === "file") {
     start = a.cited?.line || 1;
     end = a.cited?.endLine ?? start;
-  } else if (a.side === "deletions") {
-    const map = mappers.get(a.file) ?? ((l: number) => l);
-    start = map(a.line);
-    end = Math.max(start, map(a.endLine ?? a.line));
   } else {
-    start = a.line;
-    end = a.endLine ?? a.line;
+    // `line`/`endLine` are snapped to the visible diff for display; `cited` is what the reviewer wrote.
+    const first = a.cited?.line || a.line;
+    const last = a.cited?.line ? (a.cited.endLine ?? first) : (a.endLine ?? first);
+    if (a.side === "deletions") {
+      const map = mappers.get(a.file) ?? ((l: number) => l);
+      start = map(first);
+      end = Math.max(start, map(last));
+    } else {
+      start = first;
+      end = last;
+    }
   }
   const message = [f.title, f.explanation, f.impact].filter(Boolean).join("\n\n");
   return { file: a.file, start_line: Math.max(start, 1), end_line: Math.max(end, start, 1), message, producer };
@@ -524,6 +529,11 @@ async function cmdJudge(): Promise<void> {
 
   const piDir = path.join(out, "pi-agent");
   const usageLog = path.join(out, "usage.jsonl");
+  // ReviewBench re-judges every PR unless it is resuming from a checkpoint, so the
+  // log should cover exactly the calls behind the results.json this run writes.
+  if (!fs.existsSync(path.join(out, "results.checkpoint.json"))) {
+    for (const f of [usageLog, `${usageLog}.errors`]) fs.rmSync(f, { force: true });
+  }
   const proxy = usageProxy(usageLog);
   writeJson(path.join(piDir, "models.json"), {
     providers: {
