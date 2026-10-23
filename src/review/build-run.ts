@@ -298,9 +298,14 @@ function carryForward(
     }
     const hunks = prev.lineMap?.get(f.file) ?? [];
     const move = (line: number | undefined) => (line ? mapLine(hunks, line) : undefined);
+    const alsoAt = f.alsoAt?.map((s) => {
+      const siteHunks = prev.lineMap?.get(s.file) ?? [];
+      return s.line ? { ...s, line: mapLine(siteHunks, s.line) } : s;
+    });
     carried.push({
       ...f,
       anchor: anchor(file, f.file, move(f.anchor.cited.line), move(f.anchor.cited.endLine)),
+      ...(alsoAt ? { alsoAt } : {}),
       carriedFrom: f.carriedFrom ?? prev.run.id,
     });
   }
