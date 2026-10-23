@@ -25,7 +25,7 @@ import { gitText, diffOutline, gatherIntent, gatherPriorComments, renderPriorCom
 import { agent, CancelledError, killAgents, resetOpenCodeConfig, type AgentFailure } from "./runner.ts";
 import { slicePrompt, mergePrompt, promptVersion, instructionsHash, type ReviewUnit, coverUnits, packUnits, type Walkthrough, partitionPrompt, groupNamingPrompt, walkthroughPrompt } from "./prompts.ts";
 import { classifySurface, SURFACE_RANK, CONF, SEV } from "./surface.ts";
-import { saidFingerprints, readCheckedClaims, mergeBudgetFor, fallbackRank, coordinatorHasWork, type MergeDecisions, MAX_POSTED, MAX_POSTED_INCREMENTAL, MAX_PREEXISTING, applyDecisions, capFindings } from "./coordinate.ts";
+import { saidFingerprints, readCheckedClaims, mergeBudgetFor, fallbackRank, coordinatorHasWork, type MergeDecisions, MAX_POSTED, MAX_POSTED_INCREMENTAL, MAX_PREEXISTING, applyDecisions, capFindings, otherSites } from "./coordinate.ts";
 import { writeArtifacts } from "./render.ts";
 import { draftIntent, type IntentDraftRecord } from "./intent-draft.ts";
 
@@ -556,6 +556,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
       }
       for (const f of raw) {
         f._slice = slice.unitId;
+        f.also_at = otherSites(f, f.also_at);
         allFindings.push(f);
       }
       const sliceChecked = readCheckedClaims(r.payload);

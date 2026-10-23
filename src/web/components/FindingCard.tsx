@@ -158,6 +158,12 @@ export const FindingCard = memo(function FindingCard({ finding, overCap }: Findi
       </div>
       {note && <p className={styles.note}>{note}</p>}
       <Markdown source={finding.explanation} className={styles.body} />
+      {finding.alsoAt?.length ? (
+        <Markdown
+          source={`Same problem at: ${finding.alsoAt.map((r) => `\`${r.line ? `${r.file}:${r.line}` : r.file}\``).join(", ")}`}
+          className={styles.note}
+        />
+      ) : null}
       {hasDetails && expanded && (
         <div className={styles.details}>
           {finding.impact && (

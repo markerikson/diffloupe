@@ -113,6 +113,7 @@ export interface MergeDecisions {
     id: number;
     severity?: Finding["severity"];
     merge_with?: number[];
+    repeats?: number[];
     repeat_of?: number;
     preexisting?: boolean;
     note?: string;
@@ -171,6 +172,23 @@ export function capFindings(
   return { posted, overCap };
 }
 
+/**
+ * The `path:line` entries of `sites` that are not the finding's own location,
+ * deduplicated in order. Anything that is not a non-empty string is dropped,
+ * since the list comes from model output. Undefined when nothing is left.
+ */
+export function otherSites(f: Pick<Finding, "file" | "line">, sites: unknown): string[] | undefined {
+  if (!Array.isArray(sites)) return undefined;
+  const own = `${f.file}:${f.line}`;
+  const out = new Set<string>();
+  for (const s of sites) {
+    if (typeof s !== "string") continue;
+    const site = s.trim().replace(/^`|`$/g, "");
+    if (site && site !== own && site !== f.file) out.add(site);
+  }
+  return out.size ? [...out] : undefined;
+}
+
 export function applyDecisions(
   decisions: MergeDecisions,
   toMerge: Finding[],
@@ -187,13 +205,26 @@ export function applyDecisions(
     if (claimed.has(d.id)) continue;
     claimed.add(d.id);
     const refs = new Set(base.cross_file_refs ?? []);
-    for (const m of d.merge_with ?? []) {
-      const other = toMerge[m];
-      if (!other || claimed.has(m)) continue;
-      claimed.add(m);
-      refs.add(`${other.file}:${other.line}`);
-      for (const r of other.cross_file_refs ?? []) refs.add(r);
+    const sites = [...(base.also_at ?? [])];
+    // `repeats` are copies of the same defect, shown with the finding.
+    // `merge_with` are the same problem seen from elsewhere (a caller, the
+    // fix location), which only support it.
+    for (const [ids, copies] of [
+      [d.repeats, true],
+      [d.merge_with, false],
+    ] as const) {
+      for (const m of ids ?? []) {
+        const other = toMerge[m];
+        if (!other || claimed.has(m)) continue;
+        claimed.add(m);
+        const at = [`${other.file}:${other.line}`, ...(other.also_at ?? [])];
+        if (copies) sites.push(...at);
+        else for (const r of at) refs.add(r);
+        for (const r of other.cross_file_refs ?? []) refs.add(r);
+      }
     }
+    refs.delete(`${base.file}:${base.line}`);
+    const alsoAt = otherSites(base, sites);
     // A `repeat_of` is only honored when it names a human's review comment.
     // Pointed at one of the bot's own, it would render as the bot replying to
     // itself in agreement; pointed at an id that is not on this PR at all, it
@@ -217,6 +248,7 @@ export function applyDecisions(
       severity: d.severity ?? base.severity,
       explanation: d.note ? `${base.explanation}\n\n${d.note}` : base.explanation,
       cross_file_refs: refs.size ? [...refs] : undefined,
+      also_at: alsoAt,
       // Written unconditionally rather than spread in only when it vets, and
       // after `...base` rather than before. A slice reviewer is told to set
       // `repeat_of` as well — the human-comments section of the slice prompt

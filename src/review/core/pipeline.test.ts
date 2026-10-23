@@ -30,6 +30,7 @@ import {
   openCodeConfig,
   openCodeInvocation,
   openCodeSettings,
+  otherSites,
   resetOpenCodeConfig,
   runReview,
   sumOpenCodeStream,
@@ -330,6 +331,17 @@ describe("renderReview detail split", () => {
     const fps = readMarkers(out.summary).filter((m) => m.kind === "summary-item");
     expect(fps).toHaveLength(2);
     expect(new Set(fps.map((m) => m.fields.fp)).size).toBe(2);
+  });
+
+  it("shows the other copies of a defect outside the collapsed sections", () => {
+    const out = renderReview({
+      ...base,
+      findings: [finding({ file: "src/a.ts", title: "uses url.origin", also_at: ["src/b.ts:7", "src/c.ts:9"] })],
+    });
+    const text = JSON.stringify(out);
+    const at = text.indexOf("Same problem at: `src/b.ts:7`, `src/c.ts:9`");
+    expect(at).toBeGreaterThan(-1);
+    expect(at).toBeLessThan(text.indexOf("<summary>Why this is a problem</summary>", text.indexOf("uses url.origin\\n")));
   });
 
   /**
@@ -997,10 +1009,32 @@ describe("applyDecisions", () => {
     expect(kept[0].explanation).toBe("e\n\nverified");
   });
 
-  it("folds a merged sibling into one finding that names both places", () => {
+  it("lists a repeated copy's location next to the finding", () => {
+    const { kept } = applyDecisions({ keep: [{ id: 0, repeats: [1] }] }, raw, []);
+    expect(kept).toHaveLength(1);
+    expect(kept[0].also_at).toEqual(["src/b.ts:20"]);
+    expect(kept[0].cross_file_refs).toBeUndefined();
+  });
+
+  it("keeps a merged sibling's location as a supporting reference only", () => {
     const { kept } = applyDecisions({ keep: [{ id: 0, merge_with: [1] }] }, raw, []);
     expect(kept).toHaveLength(1);
+    expect(kept[0].also_at).toBeUndefined();
     expect(kept[0].cross_file_refs).toEqual(["src/b.ts:20"]);
+  });
+
+  it("carries every repeated copy's other locations, without repeating its own", () => {
+    const withSites = [
+      finding({ file: "src/a.ts", line: 10, title: "first", also_at: ["src/d.ts:4"] }),
+      finding({ file: "src/b.ts", line: 20, title: "second", also_at: ["src/a.ts:10", "src/d.ts:4", "src/e.ts:5"] }),
+    ];
+    const { kept } = applyDecisions({ keep: [{ id: 0, repeats: [1] }] }, withSites, []);
+    expect(kept[0].also_at).toEqual(["src/d.ts:4", "src/b.ts:20", "src/e.ts:5"]);
+  });
+
+  it("does not also post a finding it listed as a repeat", () => {
+    const { kept } = applyDecisions({ keep: [{ id: 0, repeats: [1] }, { id: 1 }] }, raw, []);
+    expect(kept.map((f) => f.title)).toEqual(["first"]);
   });
 
   it("does not also post a finding it merged into another", () => {
@@ -1104,6 +1138,18 @@ describe("applyDecisions", () => {
       );
       expect(kept.map((f) => f.preexisting)).toEqual([false, true]);
     });
+  });
+});
+
+describe("otherSites", () => {
+  it("keeps model-written locations that are strings and not the finding's own", () => {
+    const f = { file: "src/a.ts", line: 10 };
+    expect(otherSites(f, ["src/b.ts:2", "`src/c.ts:3`", 4, "", "src/a.ts:10", "src/b.ts:2"])).toEqual([
+      "src/b.ts:2",
+      "src/c.ts:3",
+    ]);
+    expect(otherSites(f, "src/b.ts:2")).toBeUndefined();
+    expect(otherSites(f, ["src/a.ts:10"])).toBeUndefined();
   });
 });
 

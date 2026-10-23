@@ -248,7 +248,11 @@ Do all of the following:
 
 1. **Verify before keeping.** For each finding, open the cited file and line and confirm the code says what the finding claims. Drop any finding whose cited symbol, function, or line does not exist, or whose claim the surrounding code contradicts. This is the single most important thing you do — a confident wrong comment costs more than a missed bug.
 
-2. **Deduplicate.** Several reviewers may report the same underlying problem from different files. Keep the one located at the best place to fix it and name the others in its \`merge_with\`; their locations get folded into its cross-file references automatically. Do the same when several findings are the same mistake repeated in different places: keep one and merge the rest into it, so the author sees one class of bug with every location.
+2. **Deduplicate.** There are two kinds of duplicate, and they merge differently:
+   - **Copies of one defect.** The same mistake written in several places, where each location has the defect itself and needs the same edit. Keep one and list the rest in its \`repeats\`; their locations are added to its \`also_at\` list, which the author sees next to the finding.
+   - **One problem seen from several places.** Reviewers reported the same underlying problem at different code: a caller, a consumer, the place the fix should go, a test that depends on the behavior. Keep the one at the best place to fix it and list the others in its \`merge_with\`; their locations become supporting references in its evidence.
+
+   When unsure which kind it is, use \`merge_with\`. A finding's existing \`also_at\` entries are copies its reviewer already found; a separate finding at one of those locations is one more copy.
 
 3. **Drop noise.** Remove anything about formatting, naming, style, import order, or test coverage. Remove anything a typechecker or linter would catch. Remove anything about comments themselves — a stale, empty, or missing comment is never a finding. Remove findings that only restate what the diff does. Remove speculative findings that require an unlikely precondition to matter. Remove requests for defense in depth when the case is already handled, and generic advice with no concrete defect behind it. A finding about unchanged code this change does not affect is dropped unless it is serious; a serious one is kept as pre-existing (step 7).
 
@@ -272,7 +276,7 @@ Write a single JSON object to \`${o.outFile}\`:
 \`\`\`json
 {
   "keep": [ { "id": 0, "severity": "blocker|should-fix|question|nice-to-have",
-              "merge_with": [3, 7], "repeat_of": 123456, "preexisting": false, "note": "" } ],
+              "repeats": [5], "merge_with": [3, 7], "repeat_of": 123456, "preexisting": false, "note": "" } ],
   "drop": [ { "id": 1, "reason": "why it did not survive verification" } ],
   "resolved": [ { "id": 987654, "note": "the null check was added in this push" } ],
   "intent_alignment": {
@@ -282,7 +286,7 @@ Write a single JSON object to \`${o.outFile}\`:
   }
 }
 \`\`\`
-\`severity\`, \`merge_with\`, \`repeat_of\`, \`preexisting\` and \`note\` are all optional, and \`resolved\` is an empty array when nothing you previously raised has been fixed. Ids in \`resolved\` are comment ids from the "what you already told this author" section, not finding numbers. Write the file even if \`keep\` is empty.`;
+\`severity\`, \`repeats\`, \`merge_with\`, \`repeat_of\`, \`preexisting\` and \`note\` are all optional, and \`resolved\` is an empty array when nothing you previously raised has been fixed. Ids in \`resolved\` are comment ids from the "what you already told this author" section, not finding numbers. Write the file even if \`keep\` is empty.`;
 }
 
 function shortHash(text: string): string {

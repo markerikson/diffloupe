@@ -167,6 +167,7 @@ function toRunFinding(f: Finding, id: string, file: FileDiffMetadata | undefined
     ...(f.suggestion ? { suggestion: f.suggestion } : {}),
     ...(f.suggested_code ? { suggestedCode: f.suggested_code } : {}),
     ...(f.cross_file_refs?.length ? { crossFileRefs: f.cross_file_refs.map(parseRef) } : {}),
+    ...(f.also_at?.length ? { alsoAt: f.also_at.map(parseRef) } : {}),
     ...(f.repeat_of !== undefined ? { repeatOf: f.repeat_of } : {}),
     surface: classifySurface(f.file),
     ...(f.preexisting ? { preexisting: true } : {}),
