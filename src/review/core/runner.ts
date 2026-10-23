@@ -2,7 +2,7 @@ import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { chmod, mkdir, rm } from "node:fs/promises";
-import { ensureDir, exists, readJson, readText, removeIfPresent, writeJson, writeText } from "./lib/io.ts";
+import { ensureDir, exists, readText, removeIfPresent, writeJson, writeText } from "./lib/io.ts";
 import {
   DIR,
   SUBJECT,
@@ -515,6 +515,39 @@ export type AgentFailure = {
 
 const WRITE_TOOLS = new Set(["write", "edit", "multiedit"]);
 
+const CONTROL_ESCAPES: Record<string, string> = { "\n": "\\n", "\r": "\\r", "\t": "\\t", "\b": "\\b", "\f": "\\f" };
+
+/**
+ * Parses an agent's output file. Some models put raw tabs and newlines inside
+ * string values (usually `suggested_code` copied from a tab-indented file),
+ * which JSON.parse rejects; those are escaped and the parse retried.
+ */
+export function parseAgentJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    let out = "";
+    let inString = false;
+    let escaped = false;
+    let changed = false;
+    for (const c of text) {
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (c === "\\") escaped = true;
+        else if (c === '"') inString = false;
+        else if (c < " ") {
+          out += CONTROL_ESCAPES[c] ?? `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`;
+          changed = true;
+          continue;
+        }
+      } else if (c === '"') inString = true;
+      out += c;
+    }
+    if (!changed) throw error;
+    return JSON.parse(out);
+  }
+}
+
 /** Works out from the stream and the exit status why `outFile` is missing or unreadable. */
 export function diagnoseMissingOutput(o: {
   outFile: string;
@@ -681,7 +714,7 @@ async function runAgent(
   let payload: unknown = null;
   let failure: AgentFailure | undefined;
   try {
-    payload = await readJson(opts.outFile);
+    payload = parseAgentJson(await readText(opts.outFile));
   } catch (error) {
     const parseError = (await exists(opts.outFile))
       ? (error instanceof Error ? error.message : String(error))
