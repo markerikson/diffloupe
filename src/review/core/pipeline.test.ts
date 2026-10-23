@@ -344,6 +344,16 @@ describe("renderReview detail split", () => {
     expect(at).toBeLessThan(text.indexOf("<summary>Why this is a problem</summary>", text.indexOf("uses url.origin\\n")));
   });
 
+  it("lists the other copies of a defect on its summary bullet", () => {
+    const out = renderReview({
+      ...base,
+      findings: [finding({ file: "src/a.ts", title: "uses url.origin", also_at: ["src/b.ts:7", "src/c.ts:9"] })],
+    });
+    const bullet = out.summary.split("\n").find((l) => l.includes("uses url.origin"));
+    expect(bullet).toContain(" · also `src/b.ts:7`, `src/c.ts:9` · ");
+    expect(readMarkers(out.summary).filter((m) => m.kind === "summary-item")).toHaveLength(1);
+  });
+
   /**
    * The badge comes from the walkthrough call and the sentence from the
    * coordinator, issued concurrently. The coordinator writes its sentence only

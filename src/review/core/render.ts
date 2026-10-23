@@ -523,7 +523,8 @@ export function renderReview(o: {
         const fp = postedSet.has(f)
           ? ""
           : ` ${marker("summary-item", { file: f.file, line: f.line, fp: fingerprint(f.file, f.title) })}`;
-        out.push(`  - ${sev} ${flat(f.title)} — ${where} · _[${evidenceNo.get(f)}]_${fp}`);
+        const also = f.also_at?.length ? ` · also ${f.also_at.map(siteLink).join(", ")}` : "";
+        out.push(`  - ${sev} ${flat(f.title)} — ${where}${also} · _[${evidenceNo.get(f)}]_${fp}`);
       }
     }
     return out;

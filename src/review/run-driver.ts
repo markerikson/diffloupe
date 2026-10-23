@@ -604,7 +604,7 @@ async function loadPrevious(
       .filter(([, status]) => status === "dismissed")
       .map(([fid]) => fid);
     let lineMap: Map<string, LineHunk[]> | undefined = new Map();
-    const files = [...new Set(run.findings.map((f) => f.file))];
+    const files = [...new Set(run.findings.flatMap((f) => [f.file, ...(f.alsoAt ?? []).map((s) => s.file)]))];
     if (run.head !== head && files.length) {
       try {
         const diff = await text("git", ["-C", repo, "diff", "-U0", "--no-color", "--no-ext-diff", run.head, head, "--", ...files]);
