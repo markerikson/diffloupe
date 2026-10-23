@@ -517,10 +517,20 @@ const WRITE_TOOLS = new Set(["write", "edit", "multiedit"]);
 
 const CONTROL_ESCAPES: Record<string, string> = { "\n": "\\n", "\r": "\\r", "\t": "\\t", "\b": "\\b", "\f": "\\f" };
 
+/** A quote that ends a JSON string is followed by `,` `:` `}` `]` or the end of the text. */
+function closesString(text: string, quoteAt: number): boolean {
+  for (let i = quoteAt + 1; i < text.length; i++) {
+    const c = text.charAt(i);
+    if (!/\s/.test(c)) return ",:}]".includes(c);
+  }
+  return true;
+}
+
 /**
  * Parses an agent's output file. Some models put raw tabs and newlines inside
- * string values (usually `suggested_code` copied from a tab-indented file),
- * which JSON.parse rejects; those are escaped and the parse retried.
+ * string values (usually `suggested_code` copied from a tab-indented file), or
+ * leave a double quote in prose unescaped; JSON.parse rejects both. Those are
+ * escaped and the parse retried.
  */
 export function parseAgentJson(text: string): unknown {
   try {
@@ -530,12 +540,19 @@ export function parseAgentJson(text: string): unknown {
     let inString = false;
     let escaped = false;
     let changed = false;
-    for (const c of text) {
+    for (let i = 0; i < text.length; i++) {
+      const c = text.charAt(i);
       if (inString) {
         if (escaped) escaped = false;
         else if (c === "\\") escaped = true;
-        else if (c === '"') inString = false;
-        else if (c < " ") {
+        else if (c === '"') {
+          if (closesString(text, i)) inString = false;
+          else {
+            out += '\\"';
+            changed = true;
+            continue;
+          }
+        } else if (c < " ") {
           out += CONTROL_ESCAPES[c] ?? `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`;
           changed = true;
           continue;

@@ -14,6 +14,11 @@ describe("parseAgentJson", () => {
     });
   });
 
+  test("escapes unescaped double quotes inside prose", () => {
+    const text = '{\n  "findings": [\n    { "evidence": "so "generated code" is fine", "line": 3 }\n  ]\n}';
+    expect(parseAgentJson(text)).toEqual({ findings: [{ evidence: 'so "generated code" is fine', line: 3 }] });
+  });
+
   test("still rejects JSON that is broken in other ways", () => {
     expect(() => parseAgentJson('{"findings": [')).toThrow();
   });
