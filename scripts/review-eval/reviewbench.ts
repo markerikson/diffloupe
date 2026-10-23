@@ -20,7 +20,6 @@ import { EVAL_DIR, git } from "./env.ts";
 const ROOT = path.join(EVAL_DIR, "reviewbench");
 // DIFFLOUPE_SRC runs the reviews from another checkout, to score a branch with this harness.
 const WORKTREE = path.resolve(process.env.DIFFLOUPE_SRC ?? path.join(import.meta.dir, "../.."));
-const NODE_BIN = path.join(process.env.HOME ?? "", ".local/share/fnm/node-versions/v25.8.1/installation/bin");
 const REVIEW_TIMEOUT_MS = 30 * 60_000;
 const CLAUDE_PRODUCERS = ["llm_review:claude-", "ccr:claude-"];
 // $/M tokens: input, output, cache read, cache write.
@@ -148,7 +147,7 @@ function fetchBench(): void {
   console.log(`cloning ReviewBench into ${benchDir()}`);
   const clone = sh(["git", "clone", "--depth", "1", "https://github.com/review-bench/review-bench.git", benchDir()]);
   if (!clone.ok) throw new Error(clone.out);
-  const install = sh(["npm", "ci"], { cwd: benchDir(), env: { PATH: `${NODE_BIN}:${process.env.PATH}` } });
+  const install = sh(["npm", "ci"], { cwd: benchDir() });
   if (!install.ok) throw new Error(install.out);
 }
 
@@ -205,7 +204,7 @@ async function reviewOne(key: string, p: BenchPr): Promise<RunRecord> {
   const start = Date.now();
   const proc = Bun.spawn(["bun", path.join(WORKTREE, "src/index.ts"), ...args], {
     cwd: repoDir(key),
-    env: { ...process.env, XDG_DATA_HOME: dataHome, PATH: `${NODE_BIN}:${process.env.PATH}` },
+    env: { ...process.env, XDG_DATA_HOME: dataHome },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -570,7 +569,7 @@ async function cmdJudge(): Promise<void> {
   const before = sumUsage(usageLog);
   const proc = Bun.spawn(["npx", ...args], {
     cwd: benchDir(),
-    env: { ...process.env, PI_CODING_AGENT_DIR: piDir, PATH: `${NODE_BIN}:${process.env.PATH}` },
+    env: { ...process.env, PI_CODING_AGENT_DIR: piDir },
     stdout: "inherit",
     stderr: "inherit",
   });
