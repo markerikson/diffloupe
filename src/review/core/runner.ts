@@ -472,6 +472,7 @@ export async function openCodeInvocation(
       OPENCODE_DISABLE_AUTOUPDATE: "1",
       REVIEW_GOVERNOR_BUDGET_USD: String(opts.budget),
       REVIEW_GOVERNOR_DEADLINE_MS: String(DEADLINE_MS),
+      REVIEW_GOVERNOR_MAX_STEPS: String(MAX_STEPS),
       REVIEW_GOVERNOR_OUT_FILE: opts.outFile,
       REVIEW_GOVERNOR_LOG: path.join(ARTIFACTS, "logs", `${opts.tag}.governor.jsonl`),
       REVIEW_GOVERNOR_USAGE_FILE: usageFile,
