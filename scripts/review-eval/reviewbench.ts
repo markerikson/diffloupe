@@ -648,14 +648,29 @@ function cmdReport(): void {
   const wall = done.reduce((s, r) => s + r.wallMs, 0);
   const pct = (x: number) => (Number.isNaN(x) ? "  -  " : `${(x * 100).toFixed(1).padStart(5)}%`);
   console.log(`label ${label()}: ${done.length}/${runs.length} reviews done`);
-  if (done.length)
-    console.log(`review cost $${(cost / done.length).toFixed(2)}/PR, wall ${(wall / done.length / 60_000).toFixed(1)} min/PR`);
-  for (const rec of done) {
-    const run = loadRun(rec);
+  const loaded = done.map((rec) => ({ rec, run: loadRun(rec) }));
+  if (done.length) {
+    const sorted = done.map((r) => r.costUsd ?? 0).sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    const median = sorted.length % 2 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
     console.log(
-      `  ${rec.key}: ${run?.findings.length ?? 0} posted + ${run?.overCapFindings?.length ?? 0} over cap, $${rec.costUsd?.toFixed(2) ?? "?"}`,
+      `review cost $${(cost / done.length).toFixed(2)}/PR (median $${median.toFixed(2)}), wall ${(wall / done.length / 60_000).toFixed(1)} min/PR`,
+    );
+    const slices = loaded.flatMap(({ run }) => run?.meta.slices ?? []);
+    const failed = slices.filter((s) => s.status !== "ok").length;
+    const fallback = loaded.filter(({ run }) => run?.meta.mergeMode === "deterministic-fallback").length;
+    console.log(`slices ${failed}/${slices.length} failed, coordinator fallback on ${fallback} PR(s)`);
+    const models = loaded[0]?.run?.meta.models;
+    if (models) console.log(`models ${Object.entries(models).map(([stage, m]) => `${stage}=${m?.model}`).join(" ")}`);
+  }
+  for (const { rec, run } of loaded) {
+    const failed = run?.meta.slices.filter((s) => s.status !== "ok").length ?? 0;
+    console.log(
+      `  ${rec.key}: ${run?.findings.length ?? 0} posted + ${run?.overCapFindings?.length ?? 0} over cap, $${rec.costUsd?.toFixed(2) ?? "?"}, ${(rec.wallMs / 60_000).toFixed(1)} min${failed ? `, ${failed} slice(s) failed` : ""}`,
     );
   }
+  const failedRuns = runs.filter((r) => r.status !== "done");
+  for (const rec of failedRuns) console.log(`  ${rec.key}: ${rec.status}`);
   for (const name of fs.readdirSync(labelDir()).filter((n) => n.startsWith("judge-")).sort()) {
     const resultsFile = path.join(labelDir(), name, "results.json");
     if (!fs.existsSync(resultsFile)) continue;
