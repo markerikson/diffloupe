@@ -42,6 +42,12 @@ export interface Finding {
    */
   effort?: "quick" | "moderate" | "involved";
   cross_file_refs?: string[];
+  /**
+   * Other `path:line` places where the same defect occurs and needs the same
+   * fix. Unlike `cross_file_refs`, which records what was read as support,
+   * these are shown with the finding so the author fixes every copy.
+   */
+  also_at?: string[] | undefined;
   suggestion?: string;
   suggested_code?: string;
   /**

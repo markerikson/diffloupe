@@ -27,6 +27,7 @@ When you are done, write your findings as JSON to the exact path given in the ta
       "confidence": "high" | "medium" | "low",
       "effort": "quick" | "moderate" | "involved",
       "cross_file_refs": ["src/other/file.ts:88"],
+      "also_at": ["src/path/to/sibling.ts:41"],
       "suggestion": "concrete fix",
       "suggested_code": "replacement source for the cited lines, if a mechanical fix exists",
       "preexisting": false
@@ -44,6 +45,7 @@ Rules for the object:
 - Every line number you write, in any field, refers to the file **as it exists in the current checkout** — the post-change state. Diff hunk headers look like `@@ -350,7 +380,9 @@`: the `-350` is the old file and must never be cited, the `+380` is the current one. If you are citing a line you have not read directly in this checkout, read it first rather than deriving it from the diff.
 - In prose, lead with the symbol and let the line follow it: "`parseConfig` (`src/config/parse.ts:57`)". A reader who has to correct one of your line numbers can still find the code by name.
 - `cross_file_refs` lists locations outside the diff that you read to support the finding. Empty array if the finding is entirely diff-local.
+- When the same defect appears in more than one place, write one finding at the place you would fix first and list every other occurrence in `also_at` as `path:line`. Do not write a separate finding per copy, and do not leave the other copies only in `evidence`; the author sees `also_at` without expanding anything. Each entry must need the same fix, and you must have read it in this checkout. Omit the field when there is only one occurrence.
 - `effort` is how much work the fix is, judged from the code and not from how much it matters: `quick` for a change confined to the lines you cited, `moderate` for one that touches a few call sites, `involved` for one that needs a design decision or a change to an interface other code depends on. It is what lets a reader pick which findings to clear before merging.
 - `line` is the first line the comment applies to. Set `end_line` only for a multi-line span; omit it otherwise.
 - `severity: "question"` is for a discrepancy you investigated and could not resolve from the code alone, where the author's intent settles it. State both sides in `explanation`.

@@ -118,6 +118,7 @@ export type FindingSeverity = typeof FindingSeveritySchema.infer;
 
 /**
  * - `id`: fingerprint of file and title, the same id the GitHub markers use.
+ * - `alsoAt`: other places the same defect occurs and needs the same fix.
  * - `repeatOf`: id of a human's earlier comment making the same claim.
  * - `carriedFrom`: set when an earlier run of the same target reported this
  *   finding: the id of the run that first did.
@@ -138,6 +139,7 @@ export const RunFindingSchema = type({
   "suggestion?": "string",
   "suggestedCode?": "string",
   "crossFileRefs?": type({ file: "string", "line?": "number" }).array(),
+  "alsoAt?": type({ file: "string", "line?": "number" }).array(),
   "repeatOf?": "number",
   "carriedFrom?": "string",
   "surface?": SurfaceSchema,

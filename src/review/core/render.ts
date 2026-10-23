@@ -92,6 +92,10 @@ export function renderReview(o: {
     if (!o.pr) return text.includes("`") ? text : `\`${text}\``;
     return `[${text}](${link(file, line)})`;
   };
+  const siteLink = (site: string) => {
+    const m = site.match(/^(.+?):(\d+)(?:-\d+)?$/);
+    return m?.[1] && m[2] ? loc(m[1], Number(m[2]), site) : loc(site, undefined, site);
+  };
   // Severity, then how far the code is from production, then confidence. Kept
   // here rather than left to the caller so a re-render of a stored run orders
   // the same way a fresh review does.
@@ -183,6 +187,10 @@ export function renderReview(o: {
     // are both one click away, in the order a doubting reader wants them.
     b.push("");
     b.push(f.impact?.trim() || leadSentences(f.explanation));
+    if (f.also_at?.length) {
+      b.push("");
+      b.push(`Same problem at: ${f.also_at.map(siteLink).join(", ")}`);
+    }
 
     if (f.explanation) {
       b.push("");
@@ -515,7 +523,8 @@ export function renderReview(o: {
         const fp = postedSet.has(f)
           ? ""
           : ` ${marker("summary-item", { file: f.file, line: f.line, fp: fingerprint(f.file, f.title) })}`;
-        out.push(`  - ${sev} ${flat(f.title)} — ${where} · _[${evidenceNo.get(f)}]_${fp}`);
+        const also = f.also_at?.length ? ` · also ${f.also_at.map(siteLink).join(", ")}` : "";
+        out.push(`  - ${sev} ${flat(f.title)} — ${where}${also} · _[${evidenceNo.get(f)}]_${fp}`);
       }
     }
     return out;
@@ -694,6 +703,7 @@ export function renderReview(o: {
     );
     const lead = f.impact?.trim() || leadSentences(f.explanation, 240);
     if (lead) b.push("", lead);
+    if (f.also_at?.length) b.push("", `Same problem at: ${f.also_at.map(siteLink).join(", ")}`);
     const rest = [f.explanation, f.evidence].filter(Boolean).join("\n\n");
     if (rest) {
       b.push("", "<details><summary>What I found</summary>", "", rest, "", "</details>");

@@ -91,6 +91,9 @@ export function findingMarkdown(
   if (notes.length) out.push(`_${notes.join(" ")}_`);
   out.push(f.explanation.trim());
   if (f.impact?.trim()) out.push(`**Impact:** ${f.impact.trim()}`);
+  if (f.alsoAt?.length) {
+    out.push(`**Also at:** ${f.alsoAt.map((r) => code(r.line ? `${r.file}:${r.line}` : r.file)).join(", ")}`);
+  }
   if (f.evidence.trim()) out.push(`**Evidence:** ${f.evidence.trim()}`);
   if (f.suggestedCode) {
     if (f.suggestion?.trim()) out.push(`**Suggestion:** ${f.suggestion.trim()}`);

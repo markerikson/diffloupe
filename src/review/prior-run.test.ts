@@ -96,4 +96,23 @@ describe("carrying findings from the prior run", () => {
     });
     expect(run.findings.some((f) => f.id === open.id)).toBe(false);
   });
+
+  test("carried findings move their also-at lines with the new diff", () => {
+    if (!open) throw new Error("fixture needs a finding");
+    const withSites = {
+      ...prev,
+      findings: [{ ...open, alsoAt: [{ file: "src/other.ts", line: 40 }, { file: "src/untouched.ts", line: 7 }, { file: "README.md" }] }],
+    };
+    const lineMap = new Map([["src/other.ts", [{ oldStart: 10, oldCount: 0, newStart: 11, newCount: 3 }]]]);
+    const run = buildReviewRun({
+      ...fixture.input,
+      result: { ...fixture.input.result, record: { ...fixture.input.result.record, verifiedFindings: [] } },
+      previous: { run: withSites, lineMap },
+    });
+    expect(run.findings.find((f) => f.id === open.id)?.alsoAt).toEqual([
+      { file: "src/other.ts", line: 43 },
+      { file: "src/untouched.ts", line: 7 },
+      { file: "README.md" },
+    ]);
+  });
 });

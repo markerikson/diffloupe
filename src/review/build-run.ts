@@ -167,6 +167,7 @@ function toRunFinding(f: Finding, id: string, file: FileDiffMetadata | undefined
     ...(f.suggestion ? { suggestion: f.suggestion } : {}),
     ...(f.suggested_code ? { suggestedCode: f.suggested_code } : {}),
     ...(f.cross_file_refs?.length ? { crossFileRefs: f.cross_file_refs.map(parseRef) } : {}),
+    ...(f.also_at?.length ? { alsoAt: f.also_at.map(parseRef) } : {}),
     ...(f.repeat_of !== undefined ? { repeatOf: f.repeat_of } : {}),
     surface: classifySurface(f.file),
     ...(f.preexisting ? { preexisting: true } : {}),
@@ -297,9 +298,14 @@ function carryForward(
     }
     const hunks = prev.lineMap?.get(f.file) ?? [];
     const move = (line: number | undefined) => (line ? mapLine(hunks, line) : undefined);
+    const alsoAt = f.alsoAt?.map((s) => {
+      const siteHunks = prev.lineMap?.get(s.file) ?? [];
+      return s.line ? { ...s, line: mapLine(siteHunks, s.line) } : s;
+    });
     carried.push({
       ...f,
       anchor: anchor(file, f.file, move(f.anchor.cited.line), move(f.anchor.cited.endLine)),
+      ...(alsoAt ? { alsoAt } : {}),
       carriedFrom: f.carriedFrom ?? prev.run.id,
     });
   }
