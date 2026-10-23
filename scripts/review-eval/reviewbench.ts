@@ -5,6 +5,7 @@
 // Outputs go to <eval dir>/reviewbench. RB_DIR points at an existing ReviewBench checkout
 // (with `npm ci` done); otherwise `fetch` clones one into <eval dir>/reviewbench/bench.
 // DIFFLOUPE_SRC=<checkout> makes `run` review with another DiffLoupe checkout.
+// RB_REVIEW_TIMEOUT_MIN sets the per-PR review timeout (default 30 minutes).
 //   bun scripts/review-eval/reviewbench.ts fetch [--set test|full] [--pr <key>...]
 //   bun scripts/review-eval/reviewbench.ts run --label <name> [--pr <key>...] [-- <diffloupe review args>]
 //   bun scripts/review-eval/reviewbench.ts convert --label <name>
@@ -20,7 +21,7 @@ import { EVAL_DIR, git } from "./env.ts";
 const ROOT = path.join(EVAL_DIR, "reviewbench");
 // DIFFLOUPE_SRC runs the reviews from another checkout, to score a branch with this harness.
 const WORKTREE = path.resolve(process.env.DIFFLOUPE_SRC ?? path.join(import.meta.dir, "../.."));
-const REVIEW_TIMEOUT_MS = 30 * 60_000;
+const REVIEW_TIMEOUT_MS = Number(process.env.RB_REVIEW_TIMEOUT_MIN ?? 30) * 60_000;
 const CLAUDE_PRODUCERS = ["llm_review:claude-", "ccr:claude-"];
 // $/M tokens: input, output, cache read, cache write.
 const PRICE: Record<string, [number, number, number, number]> = {
@@ -68,8 +69,15 @@ function flag(name: string): string | undefined {
   const i = own.indexOf(`--${name}`);
   return i === -1 ? undefined : own[i + 1];
 }
+// Collects every value after each `--name` up to the next flag, so `--pr a b` and `--pr a --pr b` match.
 function flags(name: string): string[] {
-  return own.flatMap((a, i) => (a === `--${name}` && own[i + 1] ? [own[i + 1]!] : []));
+  const values: string[] = [];
+  let collecting = false;
+  for (const a of own) {
+    if (a.startsWith("--")) collecting = a === `--${name}`;
+    else if (collecting) values.push(a);
+  }
+  return values;
 }
 function has(name: string): boolean {
   return own.includes(`--${name}`);
@@ -189,6 +197,8 @@ function cmdFetch(): void {
 async function reviewOne(key: string, p: BenchPr): Promise<RunRecord> {
   const dataHome = path.join(labelDir(), "data", key);
   const logFile = path.join(labelDir(), "logs", `${key}.stderr.log`);
+  // A run left by an interrupted attempt would make this review a follow-up round of it.
+  if (fs.existsSync(dataHome)) fs.renameSync(dataHome, `${dataHome}.prev-${Date.now()}`);
   fs.mkdirSync(dataHome, { recursive: true });
   fs.mkdirSync(path.dirname(logFile), { recursive: true });
   const args = [
