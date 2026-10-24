@@ -5,7 +5,7 @@
  * working-tree changes are snapshotted into a synthetic commit on top of HEAD,
  * built through a temporary index so the user's real index is never written.
  */
-import { copyFile, mkdir, rm, stat } from "node:fs/promises";
+import { copyFile, mkdir, rm, stat, utimes } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
@@ -494,9 +494,20 @@ async function snapshotWorktree(repo: string, parent: string): Promise<{ commit:
   try {
     // Starting from a copy of the real index keeps files marked
     // assume-unchanged or skip-worktree as the user staged them.
-    await copyFile(realIndex, tmpIndex).catch(async () => {
-      await text("git", ["-C", top, "read-tree", parent], { env: { ...process.env, GIT_INDEX_FILE: tmpIndex } });
-    });
+    await copyFile(realIndex, tmpIndex).then(
+      async () => {
+        // Git re-reads a file whose mtime is not older than the index's
+        // ("racily clean"). A fresh mtime on the copy would hide edits made
+        // in the same instant as the last index write, so keep the original,
+        // rounded down to the second, which only makes git re-check more.
+        const { mtimeMs } = await stat(realIndex);
+        const seconds = Math.floor(mtimeMs / 1000);
+        await utimes(tmpIndex, seconds, seconds);
+      },
+      async () => {
+        await text("git", ["-C", top, "read-tree", parent], { env: { ...process.env, GIT_INDEX_FILE: tmpIndex } });
+      },
+    );
     const env = { ...process.env, GIT_INDEX_FILE: tmpIndex };
 
     const untracked = (await text("git", ["-C", top, "ls-files", "--others", "--exclude-standard", "-z"]))

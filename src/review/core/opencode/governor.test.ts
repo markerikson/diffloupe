@@ -75,13 +75,21 @@ const fakeContext = (toolIds: () => string[] = () => []) => {
 };
 
 const setup = async (
-  opts: { budget?: number; outFile?: string; deadlineMs?: number; usageFile?: string; waitFor?: string } = {},
+  opts: {
+    budget?: number;
+    outFile?: string;
+    deadlineMs?: number;
+    maxSteps?: number;
+    usageFile?: string;
+    waitFor?: string;
+  } = {},
 ) => {
   const env = { ...process.env };
   let clock = realNow();
   Date.now = () => clock;
   process.env.REVIEW_GOVERNOR_BUDGET_USD = String(opts.budget ?? 1);
   process.env.REVIEW_GOVERNOR_DEADLINE_MS = String(opts.deadlineMs ?? 0);
+  process.env.REVIEW_GOVERNOR_MAX_STEPS = String(opts.maxSteps ?? 0);
   process.env.REVIEW_GOVERNOR_OUT_FILE = opts.outFile ?? "";
   process.env.REVIEW_GOVERNOR_USAGE_FILE = opts.usageFile ?? "";
   process.env.REVIEW_GOVERNOR_WAIT_FOR_TOOLS = opts.waitFor ?? "";
@@ -259,6 +267,23 @@ describe("opencode spend governor", () => {
   it("does not interrupt merely for being over budget, which the tool refusals already handle", async () => {
     const g = await setup({ budget: 1 });
     await g.spend(1.4);
+    expect(g.interrupted).toEqual([]);
+  });
+
+  it("nudges on step count, so a cheap fast model is warned before OpenCode's step cap", async () => {
+    // 80 steps leaves 75 before the reserve; 75% of that is 56.25.
+    const g = await setup({ budget: 10, maxSteps: 80 });
+    for (let i = 0; i < 56; i++) await g.spend(0.001);
+    expect(g.nudge()).toBeNull();
+    await g.spend(0.001);
+    expect(g.nudge()).toContain("57 of 75 steps");
+  });
+
+  it("leaves only the findings write once the step limit is reached", async () => {
+    const g = await setup({ budget: 10, maxSteps: 80 });
+    for (let i = 0; i < 75; i++) await g.spend(0.001);
+    expect(g.tool("tilth_tilth_read").message).toContain("Step limit reached: 75 of 75 steps");
+    expect(g.tool("write").allowed).toBe(true);
     expect(g.interrupted).toEqual([]);
   });
 

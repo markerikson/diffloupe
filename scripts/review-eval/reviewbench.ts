@@ -5,6 +5,7 @@
 // Outputs go to <eval dir>/reviewbench. RB_DIR points at an existing ReviewBench checkout
 // (with `npm ci` done); otherwise `fetch` clones one into <eval dir>/reviewbench/bench.
 // DIFFLOUPE_SRC=<checkout> makes `run` review with another DiffLoupe checkout.
+// RB_REVIEW_TIMEOUT_MIN sets the per-PR review timeout (default 30 minutes).
 //   bun scripts/review-eval/reviewbench.ts fetch [--set test|full] [--pr <key>...]
 //   bun scripts/review-eval/reviewbench.ts run --label <name> [--pr <key>...] [-- <diffloupe review args>]
 //   bun scripts/review-eval/reviewbench.ts convert --label <name>
@@ -20,7 +21,7 @@ import { EVAL_DIR, git } from "./env.ts";
 const ROOT = path.join(EVAL_DIR, "reviewbench");
 // DIFFLOUPE_SRC runs the reviews from another checkout, to score a branch with this harness.
 const WORKTREE = path.resolve(process.env.DIFFLOUPE_SRC ?? path.join(import.meta.dir, "../.."));
-const REVIEW_TIMEOUT_MS = 30 * 60_000;
+const REVIEW_TIMEOUT_MS = Number(process.env.RB_REVIEW_TIMEOUT_MIN ?? 30) * 60_000;
 const CLAUDE_PRODUCERS = ["llm_review:claude-", "ccr:claude-"];
 // $/M tokens: input, output, cache read, cache write.
 const PRICE: Record<string, [number, number, number, number]> = {
@@ -68,8 +69,15 @@ function flag(name: string): string | undefined {
   const i = own.indexOf(`--${name}`);
   return i === -1 ? undefined : own[i + 1];
 }
+// Collects every value after each `--name` up to the next flag, so `--pr a b` and `--pr a --pr b` match.
 function flags(name: string): string[] {
-  return own.flatMap((a, i) => (a === `--${name}` && own[i + 1] ? [own[i + 1]!] : []));
+  const values: string[] = [];
+  let collecting = false;
+  for (const a of own) {
+    if (a.startsWith("--")) collecting = a === `--${name}`;
+    else if (collecting) values.push(a);
+  }
+  return values;
 }
 function has(name: string): boolean {
   return own.includes(`--${name}`);
@@ -189,6 +197,8 @@ function cmdFetch(): void {
 async function reviewOne(key: string, p: BenchPr): Promise<RunRecord> {
   const dataHome = path.join(labelDir(), "data", key);
   const logFile = path.join(labelDir(), "logs", `${key}.stderr.log`);
+  // A run left by an interrupted attempt would make this review a follow-up round of it.
+  if (fs.existsSync(dataHome)) fs.renameSync(dataHome, `${dataHome}.prev-${Date.now()}`);
   fs.mkdirSync(dataHome, { recursive: true });
   fs.mkdirSync(path.dirname(logFile), { recursive: true });
   const args = [
@@ -648,14 +658,29 @@ function cmdReport(): void {
   const wall = done.reduce((s, r) => s + r.wallMs, 0);
   const pct = (x: number) => (Number.isNaN(x) ? "  -  " : `${(x * 100).toFixed(1).padStart(5)}%`);
   console.log(`label ${label()}: ${done.length}/${runs.length} reviews done`);
-  if (done.length)
-    console.log(`review cost $${(cost / done.length).toFixed(2)}/PR, wall ${(wall / done.length / 60_000).toFixed(1)} min/PR`);
-  for (const rec of done) {
-    const run = loadRun(rec);
+  const loaded = done.map((rec) => ({ rec, run: loadRun(rec) }));
+  if (done.length) {
+    const sorted = done.map((r) => r.costUsd ?? 0).sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    const median = sorted.length % 2 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
     console.log(
-      `  ${rec.key}: ${run?.findings.length ?? 0} posted + ${run?.overCapFindings?.length ?? 0} over cap, $${rec.costUsd?.toFixed(2) ?? "?"}`,
+      `review cost $${(cost / done.length).toFixed(2)}/PR (median $${median.toFixed(2)}), wall ${(wall / done.length / 60_000).toFixed(1)} min/PR`,
+    );
+    const slices = loaded.flatMap(({ run }) => run?.meta.slices ?? []);
+    const failed = slices.filter((s) => s.status !== "ok").length;
+    const fallback = loaded.filter(({ run }) => run?.meta.mergeMode === "deterministic-fallback").length;
+    console.log(`slices ${failed}/${slices.length} failed, coordinator fallback on ${fallback} PR(s)`);
+    const models = loaded[0]?.run?.meta.models;
+    if (models) console.log(`models ${Object.entries(models).map(([stage, m]) => `${stage}=${m?.model}`).join(" ")}`);
+  }
+  for (const { rec, run } of loaded) {
+    const failed = run?.meta.slices.filter((s) => s.status !== "ok").length ?? 0;
+    console.log(
+      `  ${rec.key}: ${run?.findings.length ?? 0} posted + ${run?.overCapFindings?.length ?? 0} over cap, $${rec.costUsd?.toFixed(2) ?? "?"}, ${(rec.wallMs / 60_000).toFixed(1)} min${failed ? `, ${failed} slice(s) failed` : ""}`,
     );
   }
+  const failedRuns = runs.filter((r) => r.status !== "done");
+  for (const rec of failedRuns) console.log(`  ${rec.key}: ${rec.status}`);
   for (const name of fs.readdirSync(labelDir()).filter((n) => n.startsWith("judge-")).sort()) {
     const resultsFile = path.join(labelDir(), name, "results.json");
     if (!fs.existsSync(resultsFile)) continue;

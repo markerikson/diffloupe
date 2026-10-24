@@ -78,6 +78,8 @@ import path from "node:path";
 const NUDGE_AT = 0.75;
 /** Multiple of the binding limit at which an agent with no findings file is interrupted. */
 const ABORT_AT = 2;
+/** Steps kept back below OpenCode's `steps` cap for writing the findings file. */
+const STEP_RESERVE = 5;
 /**
  * Ceiling on any single shell command, in milliseconds.
  *
@@ -433,6 +435,16 @@ async function setup(ctx: GovernorContext) {
   const usageFile = process.env.REVIEW_GOVERNOR_USAGE_FILE ?? "";
   const waitForTools = process.env.REVIEW_GOVERNOR_WAIT_FOR_TOOLS ?? "";
   const expectTools = (process.env.REVIEW_GOVERNOR_EXPECT_TOOLS ?? "").split(",").filter(Boolean);
+  const maxSteps = Number(process.env.REVIEW_GOVERNOR_MAX_STEPS ?? 0);
+  /**
+   * The step count at which only the findings write is left. OpenCode's own
+   * `steps` cap ends the session with a text-only turn, so a reviewer that
+   * reaches it mid-investigation never writes its file. Measured on one
+   * 16-slice PR: DeepSeek V4.1 Flash and MiniMax M3.1 Flash each lost three
+   * slices this way, at 80 steps and four to nine minutes, long before the
+   * time limit would have nudged them. The reserve leaves room for the write.
+   */
+  const stepLimit = maxSteps > STEP_RESERVE ? maxSteps - STEP_RESERVE : 0;
 
   /**
    * Taken when the plugin loads, which is process start: the whole point is to
@@ -482,25 +494,36 @@ async function setup(ctx: GovernorContext) {
     }
   };
 
-  /** No limit of either kind configured means no governing: every stage is inert. */
-  const capped = budget > 0 || deadlineMs > 0;
+  /** No limit of any kind configured means no governing: every stage is inert. */
+  const capped = budget > 0 || deadlineMs > 0 || stepLimit > 0;
   const elapsedMs = () => Date.now() - startedAt;
+  /** Each limit's progress as a fraction; an unconfigured one stays at zero. */
+  const fractions = () => ({
+    cost: budget > 0 ? spent / budget : 0,
+    time: deadlineMs > 0 ? elapsedMs() / deadlineMs : 0,
+    steps: stepLimit > 0 ? usage.numTurns / stepLimit : 0,
+  });
   /**
    * How far along the binding limit is, as a fraction. An unconfigured limit
-   * contributes zero and so can never be the binding one; with both set, the
-   * one nearer its ceiling decides, which is what makes cost and time a single
-   * ladder rather than two that have to agree.
+   * contributes zero and so can never be the binding one; otherwise the one
+   * nearest its ceiling decides, which makes cost, time and steps a single
+   * ladder rather than several that have to agree.
    */
-  const pressure = () =>
-    Math.max(budget > 0 ? spent / budget : 0, deadlineMs > 0 ? elapsedMs() / deadlineMs : 0);
+  const pressure = () => Math.max(...Object.values(fractions()));
   /** Which limit is in force, for messages the model reads. */
-  const binding = (): "cost" | "time" =>
-    deadlineMs > 0 && (budget <= 0 || elapsedMs() / deadlineMs >= spent / budget) ? "time" : "cost";
+  const binding = (): "cost" | "time" | "steps" => {
+    const f = fractions();
+    if (f.steps > f.time && f.steps > f.cost) return "steps";
+    return deadlineMs > 0 && (budget <= 0 || f.time >= f.cost) ? "time" : "cost";
+  };
   /** One clause naming the limit that is out, in the units it is measured in. */
-  const limitNote = () =>
-    binding() === "time"
+  const limitNote = () => {
+    const b = binding();
+    if (b === "steps") return `Step limit reached: ${usage.numTurns} of ${stepLimit} steps`;
+    return b === "time"
       ? `Time limit reached: ${Math.round(elapsedMs() / 1000)}s of ${Math.round(deadlineMs / 1000)}s`
       : `Budget exhausted: $${spent.toFixed(2)} of $${budget.toFixed(2)}`;
+  };
   const over = () => capped && pressure() >= 1;
   const delivered = () => outFile !== "" && existsSync(outFile);
 
@@ -624,10 +647,13 @@ async function setup(ctx: GovernorContext) {
     if (!capped || over() || pressure() < NUDGE_AT) return;
     // Above the limit this is silent, because the refusal in `execute.before`
     // carries the message.
+    const b = binding();
     const used =
-      binding() === "time"
-        ? `You have used ${Math.round(elapsedMs() / 1000)}s of a ${Math.round(deadlineMs / 1000)}s time limit.`
-        : `You have spent $${spent.toFixed(2)} of a $${budget.toFixed(2)} budget.`;
+      b === "steps"
+        ? `You have used ${usage.numTurns} of ${stepLimit} steps.`
+        : b === "time"
+          ? `You have used ${Math.round(elapsedMs() / 1000)}s of a ${Math.round(deadlineMs / 1000)}s time limit.`
+          : `You have spent $${spent.toFixed(2)} of a $${budget.toFixed(2)} budget.`;
     appendToResult(
       call.result,
       `\n\n[WRAP UP] ${used} ` +
@@ -708,7 +734,7 @@ async function setup(ctx: GovernorContext) {
     );
   });
 
-  log("setup", { budget, deadlineMs, cwd: process.cwd() });
+  log("setup", { budget, deadlineMs, stepLimit, cwd: process.cwd() });
   return () => events.abort();
 }
 

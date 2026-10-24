@@ -2,7 +2,7 @@ import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { chmod, mkdir, rm } from "node:fs/promises";
-import { ensureDir, exists, readJson, readText, removeIfPresent, writeJson, writeText } from "./lib/io.ts";
+import { ensureDir, exists, readText, removeIfPresent, writeJson, writeText } from "./lib/io.ts";
 import {
   DIR,
   SUBJECT,
@@ -472,6 +472,7 @@ export async function openCodeInvocation(
       OPENCODE_DISABLE_AUTOUPDATE: "1",
       REVIEW_GOVERNOR_BUDGET_USD: String(opts.budget),
       REVIEW_GOVERNOR_DEADLINE_MS: String(DEADLINE_MS),
+      REVIEW_GOVERNOR_MAX_STEPS: String(MAX_STEPS),
       REVIEW_GOVERNOR_OUT_FILE: opts.outFile,
       REVIEW_GOVERNOR_LOG: path.join(ARTIFACTS, "logs", `${opts.tag}.governor.jsonl`),
       REVIEW_GOVERNOR_USAGE_FILE: usageFile,
@@ -514,6 +515,60 @@ export type AgentFailure = {
 };
 
 const WRITE_TOOLS = new Set(["write", "edit", "multiedit"]);
+
+const CONTROL_ESCAPES: Record<string, string> = { "\n": "\\n", "\r": "\\r", "\t": "\\t", "\b": "\\b", "\f": "\\f" };
+
+/** A quote that ends a JSON string is followed by `,` `:` `}` `]` or the end of the text. */
+function closesString(text: string, quoteAt: number): boolean {
+  for (let i = quoteAt + 1; i < text.length; i++) {
+    const c = text.charAt(i);
+    if (!/\s/.test(c)) return ",:}]".includes(c);
+  }
+  return true;
+}
+
+/**
+ * Parses an agent's output file. Some models put raw tabs and newlines inside
+ * string values (usually `suggested_code` copied from a tab-indented file), or
+ * leave a double quote in prose unescaped; JSON.parse rejects both. Those are
+ * escaped and the parse retried.
+ */
+export function parseAgentJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    let out = "";
+    let inString = false;
+    let escaped = false;
+    let changed = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text.charAt(i);
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (c === "\\") escaped = true;
+        else if (c === '"') {
+          if (closesString(text, i)) inString = false;
+          else {
+            out += '\\"';
+            changed = true;
+            continue;
+          }
+        } else if (c < " ") {
+          out += CONTROL_ESCAPES[c] ?? `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`;
+          changed = true;
+          continue;
+        }
+      } else if (c === '"') inString = true;
+      out += c;
+    }
+    if (!changed) throw error;
+    try {
+      return JSON.parse(out);
+    } catch {
+      throw error;
+    }
+  }
+}
 
 /** Works out from the stream and the exit status why `outFile` is missing or unreadable. */
 export function diagnoseMissingOutput(o: {
@@ -681,7 +736,7 @@ async function runAgent(
   let payload: unknown = null;
   let failure: AgentFailure | undefined;
   try {
-    payload = await readJson(opts.outFile);
+    payload = parseAgentJson(await readText(opts.outFile));
   } catch (error) {
     const parseError = (await exists(opts.outFile))
       ? (error instanceof Error ? error.message : String(error))

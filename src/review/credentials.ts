@@ -28,7 +28,8 @@ export const PROVIDER_ENV: Record<string, string[]> = {
   deepseek: ["DEEPSEEK_API_KEY"],
   cerebras: ["CEREBRAS_API_KEY"],
   togetherai: ["TOGETHER_AI_API_KEY"],
-  fireworks: ["FIREWORKS_API_KEY"],
+  "fireworks-ai": ["FIREWORKS_API_KEY"],
+  neuralwatt: ["NEURALWATT_API_KEY"],
   opencode: ["OPENCODE_API_KEY"],
 };
 

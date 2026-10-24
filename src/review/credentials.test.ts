@@ -31,6 +31,18 @@ describe("planCredentials", () => {
     expect(plan.coverage[0]?.source).toBe("config");
   });
 
+  test("Fireworks and NeuralWatt use their OpenCode provider ids", () => {
+    const plan = planCredentials({
+      providers: providers([
+        ["fireworks-ai", ["review"]],
+        ["neuralwatt", ["coordinator"]],
+      ]),
+      env: {},
+      apiKeys: { "fireworks-ai": "fw", neuralwatt: "nw" },
+    });
+    expect(plan.childEnv).toEqual({ FIREWORKS_API_KEY: "fw", NEURALWATT_API_KEY: "nw" });
+  });
+
   test("apiKeys for a provider with no known env var are imported", () => {
     const plan = planCredentials({ providers: providers([["acme", ["review"]]]), env: {}, apiKeys: { acme: "k" } });
     expect(plan.childEnv).toEqual({});
