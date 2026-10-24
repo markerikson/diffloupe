@@ -192,6 +192,17 @@ export function runKind(run: { meta: { kind?: RunKind | undefined } }): RunKind 
  * Per prior finding: whether the code at its lines changed before this run
  * (`acted`), and whether the same span 35 lines away did (`control`).
  */
+export const RunDisputeSchema = type({
+  fp: "string",
+  outcome: "'withdrawn' | 'upheld' | 'unjudged'",
+  "earlier?": "boolean",
+  "file?": "string",
+  "line?": "string",
+  "claim?": "string",
+  "note?": "string",
+});
+export type RunDispute = typeof RunDisputeSchema.infer;
+
 export const PriorActedOnSchema = type({ id: "string", acted: "boolean", control: "boolean" });
 export type PriorActedOn = typeof PriorActedOnSchema.infer;
 
@@ -199,6 +210,9 @@ export type PriorActedOn = typeof PriorActedOnSchema.infer;
  * - `groups`: parents come before their children; display order is array order.
  * - `overCapFindings`: findings the review stands behind but cut by the posting cap.
  * - `resolved`: findings from the prior run that this review found fixed.
+ * - `disputes`: every finding the author disputed on this pull request, with
+ *   the review's ruling. `earlier` marks a ruling carried forward from an
+ *   earlier review; `unjudged` means no ruling yet.
  * - `unreviewed`: code files no reviewer read: over the slice cap, in a failed
  *   slice, or skipped at the cost limit.
  * - `meta.budgetStopped`: the cost limit stopped new slices from starting.
@@ -245,6 +259,7 @@ export const ReviewRunSchema = type({
   findings: RunFindingSchema.array(),
   overCapFindings: RunFindingSchema.array(),
   resolved: type({ id: "string", "note?": "string", "title?": "string", "file?": "string" }).array(),
+  "disputes?": RunDisputeSchema.array(),
   unreviewed: { overCap: "string[]", failed: "string[]", "budget?": "string[]" },
   meta: {
     "model?": "string",

@@ -6,7 +6,8 @@ import { anchorFor, loadHunks } from "./lib/hunks.ts";
 import { code, fence } from "./lib/markdown.ts";
 import { INLINE_MODE, POST_MIN_SEVERITY, repoName } from "./config.ts";
 import { type Finding } from "./findings.ts";
-import { type PriorComment } from "./context.ts";
+import { type PriorComment, type PriorRuling } from "./context.ts";
+import { type DisputeRuling } from "./disputes.ts";
 import { type Walkthrough } from "./prompts.ts";
 import { classifySurface, SURFACE_RANK, primarySurface, SURFACE_TAG, CONF, SEV, EFFORT_TAG, anchorCovers, CAT, leadSentences } from "./surface.ts";
 import { mergeRisk, prodRisk, TIER_TITLE, type Verdict } from "./verdict.ts";
@@ -76,6 +77,10 @@ export function renderReview(o: {
   inlineMode?: "tier" | "none" | undefined;
   /** See `POST_MIN_SEVERITY`. Absent lists every severity with the main findings. */
   minSeverity?: Finding["severity"] | null | undefined;
+  /** This review's rulings on disputed findings. Each gets a reply in its thread. */
+  rulings?: DisputeRuling[] | undefined;
+  /** Rulings from earlier reviews, carried forward in the summary unchanged. */
+  earlierRulings?: PriorRuling[] | undefined;
 }): {
   summary: string;
   /**
@@ -92,6 +97,8 @@ export function renderReview(o: {
     author?: string | undefined;
     url?: string | undefined;
     finding?: Finding | undefined;
+    /** What a reply without a finding does, for the preview. Absent on a close-out. */
+    about?: string | undefined;
     body: string;
   }[];
 } {
@@ -130,6 +137,26 @@ export function renderReview(o: {
   // file the PR never opened.
   const fresh = reported.filter((f) => f._anchor?.kind !== "off-diff");
   const priorById = new Map((o.prior ?? []).map((c) => [c.id, c]));
+  const rulings = o.rulings ?? [];
+  // Every ruling on the pull request so far, one bullet each. The bullet text
+  // is read back as the label on the next review, so an earlier one is copied
+  // verbatim rather than rebuilt.
+  const disputeSection = () => {
+    const ruledNow = new Set(rulings.map((r) => r.fp));
+    const lines = [
+      ...(o.earlierRulings ?? [])
+        .filter((r) => !ruledNow.has(r.fp))
+        .map((r) => `- ${r.label} ${marker("dispute", { fp: r.fp, outcome: r.outcome })}`),
+      ...rulings.map((r) => {
+        const what = r.outcome === "withdrawn" ? "↩️ Withdrawn" : "Upheld, for a human reviewer";
+        const note = r.note ? ` — ${r.note}` : "";
+        return `- ${what}: \`${r.file}:${r.line}\` ${r.claim} (disputed by @${r.author})${note} ` +
+          marker("dispute", { fp: r.fp, outcome: r.outcome });
+      }),
+    ];
+    if (!lines.length) return "";
+    return [`<details><summary>Disputed findings (${lines.length})</summary>`, "", ...lines, "", "</details>"].join("\n");
+  };
   const summaryMarker = marker("summary", {
     ...(o.pr ? { pr: o.pr } : {}),
     ...(o.runs ? { runs: o.runs } : {}),
@@ -702,9 +729,12 @@ export function renderReview(o: {
   s.push("");
   s.push("</details>");
   // Invisible, and the only reason the next push updates this comment instead
-  // of adding another one below it.
+  // of adding another one below it. The dispute rulings travel with it: the
+  // summary is the only state carried between reviews, so a ruling cut off by
+  // truncation would be argued again on the next push.
+  const tail = [disputeSection(), summaryMarker].filter(Boolean).join("\n\n");
   s.push("");
-  s.push(summaryMarker);
+  s.push(tail);
 
   // These two must stay index-parallel: `writeArtifacts` pairs `ordered[i]` with
   // `inline[i]` to build both the preview and the review payload. `posted` is
@@ -721,6 +751,7 @@ export function renderReview(o: {
     author?: string | undefined;
     url?: string | undefined;
     finding?: Finding | undefined;
+    about?: string | undefined;
     body: string;
   }[] = echoed.map((f) => {
     const id = f.repeat_of!;
@@ -765,8 +796,36 @@ export function renderReview(o: {
     });
   }
 
+  // A withdrawn finding's thread is closed the same way a fixed one is, so the
+  // next review and the gate both read it as settled. An upheld one is left
+  // open: someone other than the bot and the author has to decide it.
+  for (const r of rulings) {
+    if (!r.commentId) continue;
+    const c = priorById.get(r.commentId);
+    const note = r.note ? ` ${r.note}` : "";
+    replies.push({
+      comment_id: r.commentId,
+      author: c?.author,
+      url: c?.url,
+      about: `${r.outcome} after a dispute`,
+      body: r.outcome === "withdrawn"
+        ? [
+          `↩️ Withdrawn after @${r.author}'s reply.${note}`,
+          "",
+          marker("reply", { of: r.commentId, addressed: 1, fp: r.fp, dispute: "withdrawn" }),
+        ].join("\n")
+        : [
+          `Checked @${r.author}'s reply against \`${o.head.slice(0, 12)}\` — this still stands.${note}`,
+          "",
+          "Leaving it for a human reviewer to decide.",
+          "",
+          marker("reply", { of: r.commentId, fp: r.fp, dispute: "upheld" }),
+        ].join("\n"),
+    });
+  }
+
   return {
-    summary: fitComment(s.join("\n"), summaryMarker),
+    summary: fitComment(s.join("\n"), tail),
     // Not passed through `fitComment`: it is a file, not a comment, so the
     // 65,536-byte limit that forces truncation does not apply to it. That is the
     // point of splitting them — the detail that used to be dropped on a large
@@ -947,6 +1006,9 @@ export async function writeArtifacts(o: {
   walkthrough?: Walkthrough | undefined;
   prior?: PriorComment[] | undefined;
   resolved?: { id: number; note?: string | undefined }[] | undefined;
+  /** See `renderReview`. */
+  rulings?: DisputeRuling[] | undefined;
+  earlierRulings?: PriorRuling[] | undefined;
   runs?: number | undefined;
   /** See `renderReview`. */
   noReviewers?: boolean | undefined;
@@ -1007,6 +1069,8 @@ export async function writeArtifacts(o: {
     repo: o.slug,
     prior: o.prior,
     resolved: o.resolved,
+    rulings: o.rulings,
+    earlierRulings: o.earlierRulings,
     runs: o.runs,
     noReviewers: o.noReviewers,
     unreviewed: o.unreviewed,
@@ -1054,7 +1118,7 @@ export async function writeArtifacts(o: {
           "",
           ...replies.map((r, i) =>
             [
-              `<!-- reply ${i + 1} of ${replies.length} — to ${r.author ? `@${r.author}` : "comment"} ${r.comment_id}${r.finding ? ` on ${r.finding.file}:${r.finding.line}` : " — closing it out as fixed"} -->`,
+              `<!-- reply ${i + 1} of ${replies.length} — to ${r.author ? `@${r.author}` : "comment"} ${r.comment_id}${r.finding ? ` on ${r.finding.file}:${r.finding.line}` : ` — ${r.about ?? "closing it out as fixed"}`} -->`,
               "",
               ...(r.url ? [`In reply to ${r.url}`, ""] : []),
               r.body,

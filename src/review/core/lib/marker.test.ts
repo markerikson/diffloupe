@@ -1,5 +1,5 @@
 
-import { findMarker, fingerprint, isOwnComment, marker, readMarker, readMarkers, stripMarkers } from "./marker.ts";
+import { findMarker, fingerprint, isOwnComment, marker, readMarker, readMarkers, readResponses, stripMarkers } from "./marker.ts";
 
 describe("fingerprint", () => {
   // The model rewrites a title slightly on every run — capitalization, an added
@@ -165,5 +165,50 @@ describe("close-out replies", () => {
   it("carries a fingerprint on both reply shapes", () => {
     const corroboration = marker("reply", { of: "555", fp: "abc1234567" });
     expect(readMarkers(corroboration).find((m) => m.fields.fp)?.fields.fp).toBe("abc1234567");
+  });
+});
+
+describe("readResponses", () => {
+  it("reads a dispute and uses the rest of the comment as its reason", () => {
+    const body = "<!-- ai-review-response fp=ABC123def verdict=disputed -->\nThe lock is held by the caller.";
+    expect(readResponses(body)).toEqual([
+      { fp: "abc123def", verdict: "disputed", reason: "The lock is held by the caller." },
+    ]);
+  });
+
+  it("accepts action= in place of verdict=", () => {
+    expect(readResponses("Done. <!-- ai-review-response fp=abc123 action=fixed -->")).toEqual([
+      { fp: "abc123", verdict: "fixed", reason: "Done." },
+    ]);
+  });
+
+  it("ignores malformed markers", () => {
+    expect(readResponses("<!-- ai-review-response fp=xyz verdict=disputed -->")).toEqual([]);
+    expect(readResponses("<!-- ai-review-response fp=abc123 verdict=maybe -->")).toEqual([]);
+  });
+
+  // The bot's own markers use a different prefix, so a response is never read
+  // as the bot's output, and a bot comment is never read as a response.
+  it("does not confuse responses with the bot's markers", () => {
+    const response = "<!-- ai-review-response fp=abc123 verdict=disputed -->";
+    expect(readMarkers(response)).toEqual([]);
+    expect(readResponses(marker("reply", { of: "1", fp: "abc123" }))).toEqual([]);
+  });
+
+  it("gives each answer its own paragraph when one comment answers several findings", () => {
+    const leading = [
+      "<!-- ai-review-response fp=aaa111 verdict=disputed -->",
+      "First reason.",
+      "<!-- ai-review-response fp=bbb222 verdict=fixed -->",
+      "Second reason.",
+    ].join("\n");
+    expect(readResponses(leading).map((r) => r.reason)).toEqual(["First reason.", "Second reason."]);
+    const trailing = [
+      "First reason.",
+      "<!-- ai-review-response fp=aaa111 verdict=disputed -->",
+      "Second reason.",
+      "<!-- ai-review-response fp=bbb222 verdict=fixed -->",
+    ].join("\n");
+    expect(readResponses(trailing).map((r) => r.reason)).toEqual(["First reason.", "Second reason."]);
   });
 });

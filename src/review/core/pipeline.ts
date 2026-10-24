@@ -28,6 +28,7 @@ import { classifySurface, SURFACE_RANK, CONF, SEV } from "./surface.ts";
 import { saidFingerprints, readCheckedClaims, mergeBudgetFor, fallbackRank, coordinatorHasWork, type MergeDecisions, MAX_POSTED, MAX_POSTED_INCREMENTAL, MAX_PREEXISTING, applyDecisions, capFindings, otherSites } from "./coordinate.ts";
 import { writeArtifacts } from "./render.ts";
 import { draftIntent, type IntentDraftRecord } from "./intent-draft.ts";
+import { disputeRecord, earlierRulings, hasOpenDisputes, pendingDisputes, renderDisputes, rulingsFromDecisions } from "./disputes.ts";
 
 export * from "./config.ts";
 export * from "./findings.ts";
@@ -237,6 +238,12 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
   const intent = await gatherIntent(slug, pr, base, head, options.intent, { strict });
   const prior = [...(await gatherPriorComments(slug, pr, { strict })), ...(options.prior ?? [])];
   const priorMd = renderPriorComments(prior, intent.body);
+  const pending = pendingDisputes(prior);
+  const earlier = earlierRulings(prior);
+  if (pending.length) {
+    const disputed = pending.filter((d) => d.verdict === "disputed").length;
+    console.error(`  ${disputed} disputed and ${pending.length - disputed} reported-fixed answers to earlier findings`);
+  }
 
   // Counted for the run record.
   const reviewsSoFar = Math.max(0, ...prior.filter((c) => c.mine).map((c) => c.runs ?? 0));
@@ -635,6 +642,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
   await removeIfPresent(mergeOut);
   const mp = mergePrompt({
     findings: toMerge, intent, draft, files: sliceFiles, prior: priorMd, outFile: mergeOut, instructions: options.instructions,
+    disputes: renderDisputes(pending),
     changedLines: parseDiffHunks(diffU0),
     maxNew: incremental ? MAX_POSTED_INCREMENTAL : MAX_POSTED,
     sinceLast: incremental ? scope.files : undefined,
@@ -702,8 +710,11 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     return { wallMs: 0, exitCode: -1, costUsd: 0, numTurns: 0, usage: null, payload: null };
   };
     const skipped = { wallMs: 0, exitCode: 0, costUsd: 0, numTurns: 0, usage: null, payload: null };
-    const nothingChanged = incremental && scope.files.length === 0;
-    const mergeIdle = nothingChanged || !coordinatorHasWork(toMerge, prior);
+    // A dispute needs a ruling even when no code changed: the author's answer
+    // is new, and leaving it unread stalls the pull request.
+    const disputesOpen = hasOpenDisputes(pending);
+    const nothingChanged = incremental && scope.files.length === 0 && !disputesOpen;
+    const mergeIdle = nothingChanged || (!disputesOpen && !coordinatorHasWork(toMerge, prior));
     if (nothingChanged) console.error("  coordinator skipped: no code changed since the last review");
     else if (mergeIdle) console.error("  coordinator skipped: no findings and no earlier comments to close out");
     emit({ type: "stage", stage: "coordinating" });
@@ -732,6 +743,12 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
   let coordinatorDropped: { title: string; reason: string }[] = [];
   let mergeMode = mergeIdle ? "nothing-to-merge" : "coordinator";
 
+  // Rulings are only taken from the coordinator. When it did not run, the
+  // disputes stay open and the next review rules on them.
+  const rulings = rulingsFromDecisions(mp2.disputes, pending);
+  for (const r of rulings) console.error(`  ${r.outcome} "${r.claim}" after @${r.author} disputed it`);
+  const withdrawn = new Set([...earlier, ...rulings].filter((r) => r.outcome === "withdrawn").map((r) => r.fp));
+
   // ---- deterministic suppression of things already said
   const alreadySaid = saidFingerprints(prior);
   // Run before the cap, not after. The slices re-find the same top-ranked
@@ -740,9 +757,15 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
   // deleted, and nothing promotes the eleventh into a slot the third vacated —
   // the review shrinks by the number of repeats instead of showing what is new.
   const suppressSaid = (list: Finding[]) => {
-    if (!alreadySaid.size) return list;
+    if (!alreadySaid.size && !withdrawn.size) return list;
     return list.filter((f) => {
-      const hit = alreadySaid.get(fingerprint(f.file, f.title));
+      const fp = fingerprint(f.file, f.title);
+      if (withdrawn.has(fp)) {
+        coordinatorDropped.push({ title: f.title, reason: "withdrawn after the author disputed it" });
+        console.error(`  suppressed "${f.title}" — withdrawn after a dispute`);
+        return false;
+      }
+      const hit = alreadySaid.get(fp);
       if (!hit) return true;
       coordinatorDropped.push({
         title: f.title,
@@ -831,6 +854,8 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     // no `file` — sending one there is a 404, and the post job counts that as a
     // failed call and goes red. `file` is what distinguishes the two.
     if (!c.file) return false;
+    // A ruled dispute gets its own reply below; a second one would contradict it.
+    if (c.fingerprint && rulings.some((d) => d.fp === c.fingerprint)) return false;
     return !(c.fingerprint && stillOpen.has(c.fingerprint));
   });
   if (resolved.length) console.error(`  closing out ${resolved.length} earlier comments as fixed`);
@@ -877,6 +902,12 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     ...(droppedQuestions.length ? { "questions not posted (settings)": droppedQuestions.length } : {}),
     "registry signals": reg.findings.length,
     "prior comments considered": prior.length,
+    ...(rulings.length
+      ? {
+        "disputes ruled": `${rulings.filter((r) => r.outcome === "withdrawn").length} withdrawn, ` +
+          `${rulings.filter((r) => r.outcome === "upheld").length} upheld`,
+      }
+      : {}),
     ...(incremental
       ? { "review scope": `${scope.files.length} of ${sliceFiles.length} code files changed since the last review` }
       : scope.reason ? { "review scope": `full: ${scope.reason}` } : {}),
@@ -920,6 +951,8 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     walkthrough,
     prior,
     resolved,
+    rulings,
+    earlierRulings: earlier,
     runs: reviewsSoFar + 1,
     noReviewers: sliceRuns.length === 0,
     unreviewed: notReviewedFiles,
@@ -970,6 +1003,8 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
       checked,
       unreviewed: notReviewedFiles,
       resolved,
+      ...(pending.length || earlier.length ? { disputes: disputeRecord(earlier, rulings, pending) } : {}),
+      ...(rulings.length ? { rulings } : {}),
       runs: reviewsSoFar + 1,
       rejected,
     intentAlignment: mp2.intent_alignment ?? null,

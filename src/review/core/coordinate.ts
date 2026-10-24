@@ -120,6 +120,8 @@ export interface MergeDecisions {
   }[];
   drop?: { id: number; reason: string }[];
   resolved?: { id: number; note?: string }[];
+  /** Rulings on disputed findings, by fingerprint: see `rulingsFromDecisions`. */
+  disputes?: { fp?: unknown; outcome?: unknown; note?: unknown }[];
   intent_alignment?: { summary?: string; unstated?: string[]; missing?: string[] };
 }
 

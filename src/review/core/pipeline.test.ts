@@ -39,7 +39,8 @@ import {
   type PriorComment,
 } from "./pipeline.ts";
 import { diagnoseMissingOutput } from "./runner.ts";
-import { readMarkers } from "./lib/marker.ts";
+import { readMarkers, settledIds } from "./lib/marker.ts";
+import type { DisputeRuling } from "./disputes.ts";
 import { ARTIFACTS, OUT, applyConfig } from "./config.ts";
 
 // Repo-specific surface patterns that the classifySurface assertions below rely on.
@@ -646,6 +647,50 @@ describe("renderReview close-out replies", () => {
     const human = priorComment({ id: 22, author: "someone", mine: false, file: "a.ts", line: 3 });
     const out = renderReview({ ...base, prior: [human], resolved: [{ id: 22 }] });
     expect(out.replies).toHaveLength(0);
+  });
+});
+
+describe("renderReview dispute rulings", () => {
+  const base = { head: "abc1234567", findings: [], stats: {}, repo: "o/r" };
+  const ruling = (over: Partial<DisputeRuling> = {}): DisputeRuling => ({
+    fp: "abcdef12",
+    outcome: "withdrawn",
+    file: "a.ts",
+    line: "3",
+    claim: "null check missing",
+    author: "alice",
+    commentId: 21,
+    note: "validated upstream",
+    ...over,
+  });
+
+  it("closes a withdrawn finding's thread and records the ruling in the summary", () => {
+    const out = renderReview({ ...base, rulings: [ruling()] });
+    expect(out.replies).toHaveLength(1);
+    const reply = out.replies[0]!;
+    expect(reply.comment_id).toBe(21);
+    expect(reply.body).toContain("Withdrawn after @alice's reply");
+    expect(settledIds([{ in_reply_to_id: 21, body: reply.body, user: { type: "Bot" } }])).toContain(21);
+    const disputes = readMarkers(out.summary).filter((m) => m.kind === "dispute");
+    expect(disputes.map((m) => m.fields)).toEqual([{ fp: "abcdef12", outcome: "withdrawn" }]);
+  });
+
+  it("leaves an upheld finding's thread open for a human", () => {
+    const out = renderReview({ ...base, rulings: [ruling({ outcome: "upheld" })] });
+    const reply = out.replies[0]!;
+    expect(reply.body).toContain("still stands");
+    expect(readMarkers(reply.body)[0]!.fields.addressed).toBeUndefined();
+    expect(out.summary).toContain("Upheld, for a human reviewer");
+  });
+
+  it("carries earlier rulings forward without replying again", () => {
+    const out = renderReview({
+      ...base,
+      earlierRulings: [{ fp: "abcdef12", outcome: "withdrawn", label: "Withdrawn: `a.ts:3` null check" }],
+    });
+    expect(out.replies).toHaveLength(0);
+    expect(out.summary).toContain("- Withdrawn: `a.ts:3` null check");
+    expect(readMarkers(out.summary).filter((m) => m.kind === "dispute")).toHaveLength(1);
   });
 });
 

@@ -209,6 +209,24 @@ Checks Bun, git, OpenCode, tilth and `gh`; prints the model for each stage and w
 
 Review agents may not reach the network. DiffLoupe gathers the PR description and comments itself before any agent starts, the web tools are turned off, and shell commands such as `curl`, `wget`, `gh pr`, `gh api` and `git fetch` are refused, as is inline `node -e`/`bun -e`/`python -c` code that makes a request. That check reads command lines and can be got around, so on CI also limit outbound traffic from the review job to the model provider and GitHub, and keep tokens that can write to the repository out of the review step.
 
+### Answering a finding
+
+The PR author, or an agent fixing the PR for them, can answer a finding with a marker and a reason, either as a reply in the finding's thread or as a PR comment:
+
+```markdown
+<!-- ai-review-response fp=3f9c2a1b verdict=disputed -->
+The value is validated in `parseInput` before it gets here.
+```
+
+`fp` is the finding's fingerprint, from the `fp=` field of the marker on the bot's comment or summary bullet. `verdict` is `disputed` (the finding is wrong) or `fixed` (the code now handles it); `action` works in place of `verdict`. One comment can answer several findings with one marker per paragraph. Answers are read from any account, bots included.
+
+On the next review the coordinator rules once on each disputed finding:
+
+- **Withdrawn**: the bot replies in the thread and marks it settled, and the finding is never reported again on that PR.
+- **Upheld**: the bot replies that the finding still stands and leaves the thread open for a human reviewer. It does not argue the point again.
+
+Rulings are listed in a "Disputed findings" fold at the end of the summary comment, which is how later reviews remember them. A `fixed` answer is not a ruling: the coordinator checks the code and closes the finding out as usual if the fix is there. `run.json` lists each disputed finding under `disputes` with its outcome (`withdrawn`, `upheld`, or `unjudged` when the coordinator did not rule), and `diffloupe runs stats` counts them.
+
 ### Exit codes
 
 | Code | Meaning |

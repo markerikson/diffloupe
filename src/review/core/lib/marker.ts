@@ -20,8 +20,13 @@ import { createHash } from "node:crypto";
  * own — several appear inside one `summary` comment — so it exists purely to
  * give those findings the identity every inline finding gets from its own
  * marker.
+ *
+ * `dispute` records the ruling on a disputed finding inside the summary comment:
+ * its fingerprint and whether the review withdrew or upheld it. The summary is
+ * the only state that survives between runs, so this is what stops a dispute
+ * being judged twice.
  */
-export type MarkerKind = "summary" | "summary-item" | "inline" | "reply";
+export type MarkerKind = "summary" | "summary-item" | "inline" | "reply" | "dispute";
 
 const PREFIX = "ai-review";
 
@@ -90,7 +95,7 @@ export function stripCopyBlock(body: string): string {
   return `${body.slice(0, start).trimEnd()}\n\n${body.slice(end + COPY_BLOCK_END.length).trimStart()}`.trim();
 }
 
-const KINDS: readonly string[] = ["summary", "summary-item", "inline", "reply"];
+const KINDS: readonly string[] = ["summary", "summary-item", "inline", "reply", "dispute"];
 
 export interface ParsedMarker {
   kind: MarkerKind;
@@ -191,4 +196,59 @@ export function settledIds(
     settled.add(Number.isFinite(of) && of > 0 ? of : c.in_reply_to_id);
   }
   return settled;
+}
+
+/**
+ * An answer to one of the bot's findings, written by the author or by an agent
+ * working for them:
+ *
+ *   <!-- ai-review-response fp=<fingerprint> verdict=disputed -->
+ *
+ * `verdict` is `disputed` (the finding is wrong) or `fixed` (the code now
+ * addresses it). `action` is accepted in place of `verdict`. The text around
+ * the marker is the reason.
+ *
+ * A different prefix from the bot's own markers on purpose: `readMarkers` and
+ * `isOwnComment` never mistake a response for the bot's output, whoever posts it.
+ */
+export interface ReviewResponse {
+  fp: string;
+  verdict: "disputed" | "fixed";
+}
+
+const RESPONSE_RE = new RegExp(`<!--\\s*${PREFIX}-response\\s+([^>]*?)\\s*-->`, "g");
+
+/**
+ * Every well-formed response marker in a body, in order, each with the reason
+ * it gives. One comment may answer several findings. With one marker the
+ * reason is the whole comment. With several, each marker owns the text after
+ * it up to the next one — or the text before it, when the markers close their
+ * paragraphs instead of opening them.
+ */
+export function readResponses(body: string): (ReviewResponse & { reason: string })[] {
+  const matches = [...body.matchAll(RESPONSE_RE)];
+  const clean = (s: string) => stripMarkers(s).trim();
+  const between = matches.map((m, i) =>
+    body.slice((m.index ?? 0) + m[0].length, matches[i + 1]?.index ?? body.length),
+  );
+  const before = body.slice(0, matches[0]?.index ?? 0);
+  const trailing = !!clean(before) && !clean(between.at(-1) ?? "");
+  const out: (ReviewResponse & { reason: string })[] = [];
+  matches.forEach((m, i) => {
+    const fields: Record<string, string> = {};
+    for (const pair of (m[1] ?? "").split(/\s+/)) {
+      const eq = pair.indexOf("=");
+      if (eq > 0) fields[pair.slice(0, eq)] = pair.slice(eq + 1);
+    }
+    const verdict = fields.verdict ?? fields.action;
+    const fp = fields.fp;
+    if (!fp || !/^[0-9a-f]{6,40}$/i.test(fp) || (verdict !== "disputed" && verdict !== "fixed")) return;
+    const reason = matches.length === 1
+      ? clean(body.replace(RESPONSE_RE, ""))
+      : trailing
+        ? clean(i === 0 ? before : (between[i - 1] ?? ""))
+        : clean((i === 0 ? before : "") + (between[i] ?? ""));
+    out.push({ fp: fp.toLowerCase(), verdict, reason });
+  });
+  return out;
 }

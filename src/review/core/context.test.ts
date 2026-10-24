@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { gatherIntent, gatherPriorComments, type GhText } from "./context.ts";
+import { gatherIntent, gatherPriorComments, renderPriorComments, type GhText, type PriorComment } from "./context.ts";
 import { marker } from "./lib/marker.ts";
 
 const offline: GhText = async () => {
@@ -36,6 +36,62 @@ describe("gatherPriorComments", () => {
     const prior = await gatherPriorComments("o/r", "5", { gh, strict: true });
     expect(prior).toHaveLength(1);
     expect(prior[0]).toMatchObject({ id: 9, mine: true, runs: 2, head: "a".repeat(40) });
+  });
+
+  test("keeps another bot's comment when it answers a finding", async () => {
+    const comments = [
+      { id: 3, body: "Deploy preview ready", user: { login: "vercel", type: "Bot" } },
+      {
+        id: 4,
+        body: "<!-- ai-review-response fp=abcdef12 verdict=disputed -->\nThe value is validated upstream.",
+        user: { login: "fixer", type: "Bot" },
+      },
+    ];
+    const gh: GhText = async (args) => (args.at(-1)?.includes("/issues/") ? JSON.stringify(comments) : "[]");
+    const prior = await gatherPriorComments("o/r", "5", { gh, strict: true });
+    expect(prior.map((c) => c.id)).toEqual([4]);
+    expect(prior[0]?.responses).toEqual([
+      { fp: "abcdef12", verdict: "disputed", reason: "The value is validated upstream." },
+    ]);
+  });
+
+  test("reads dispute rulings from the bot's own summary", async () => {
+    const body = [
+      "# Review",
+      `- Withdrawn: \`a.ts:3\` null check ${marker("dispute", { fp: "abcdef12", outcome: "withdrawn" })}`,
+      marker("summary", { pr: "5", runs: "2", head: "a".repeat(40) }),
+    ].join("\n\n");
+    const gh: GhText = async (args) =>
+      args.at(-1)?.includes("/issues/")
+        ? JSON.stringify([{ id: 9, body, user: { login: "bot", type: "Bot" } }])
+        : "[]";
+    const prior = await gatherPriorComments("o/r", "5", { gh, strict: true });
+    expect(prior[0]?.rulings).toEqual([{ fp: "abcdef12", outcome: "withdrawn", label: "Withdrawn: `a.ts:3` null check" }]);
+  });
+});
+
+describe("renderPriorComments", () => {
+  test("lists withdrawn findings and leaves dispute replies out of the discussion", () => {
+    const summary: PriorComment = {
+      id: 9,
+      author: "bot",
+      resolved: false,
+      mine: true,
+      body: "summary",
+      rulings: [{ fp: "abcdef12", outcome: "withdrawn", label: "Withdrawn: `a.ts:3` null check" }],
+    };
+    const reply: PriorComment = {
+      id: 10,
+      author: "alice",
+      resolved: false,
+      mine: false,
+      body: "The value is validated upstream.",
+      responses: [{ fp: "abcdef12", verdict: "disputed", reason: "The value is validated upstream." }],
+    };
+    const md = renderPriorComments([summary, reply]);
+    expect(md).toContain("You withdrew these");
+    expect(md).toContain("- Withdrawn: `a.ts:3` null check");
+    expect(md).not.toContain("validated upstream");
   });
 });
 

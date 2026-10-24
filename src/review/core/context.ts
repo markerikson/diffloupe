@@ -1,6 +1,15 @@
 import { text } from "./lib/proc.ts";
 import { readJson } from "./lib/io.ts";
-import { findMarker, isOwnComment, readMarkers, settledIds, stripCopyBlock } from "./lib/marker.ts";
+import {
+  findMarker,
+  isOwnComment,
+  readMarkers,
+  readResponses,
+  settledIds,
+  stripCopyBlock,
+  stripMarkers,
+  type ReviewResponse,
+} from "./lib/marker.ts";
 import { SUBJECT } from "./config.ts";
 import type { StatedIntent } from "./prompts.ts";
 
@@ -113,12 +122,50 @@ export interface PriorComment {
    * On the bot's own summary comment: the findings reported inside its body
    * rather than as comments of their own, because they sit outside the diff.
    */
-  summaryClaims?: { fp: string; file: string; line: string }[];
+  summaryClaims?: { fp: string; file: string; line: string; text?: string }[];
   /**
    * GitHub's account of the author's standing in this repository: `OWNER`,
    * `MEMBER`, `COLLABORATOR`, `CONTRIBUTOR`, `NONE` and so on.
    */
   association?: string;
+  /**
+   * Answers to the bot's findings, from response markers in this comment: see
+   * `readResponses`. Read from anyone, bots included, since the author's own
+   * agent is the expected sender.
+   */
+  responses?: (ReviewResponse & { reason: string })[];
+  /**
+   * On the bot's own summary comment: every dispute it has already ruled on,
+   * read from the `dispute` markers it carries forward on each review.
+   */
+  rulings?: PriorRuling[];
+}
+
+export type DisputeOutcome = "withdrawn" | "upheld";
+
+export interface PriorRuling {
+  fp: string;
+  outcome: DisputeOutcome;
+  /** The summary bullet the ruling was written as, without its marker. */
+  label: string;
+}
+
+/** The `dispute` markers in the bot's summary, each with the bullet text it sits on. */
+export function readRulings(body: string): PriorRuling[] {
+  const out: PriorRuling[] = [];
+  for (const line of body.split("\n")) {
+    for (const m of readMarkers(line)) {
+      const { fp, outcome } = m.fields;
+      if (m.kind !== "dispute" || !fp || (outcome !== "withdrawn" && outcome !== "upheld")) continue;
+      out.push({ fp, outcome, label: stripMarkers(line).replace(/^\s*[-*]\s*/, "").trim() });
+    }
+  }
+  return out;
+}
+
+function responsesOf(body: string): Pick<PriorComment, "responses"> {
+  const responses = readResponses(body);
+  return responses.length ? { responses } : {};
 }
 
 export interface GhComment {
@@ -215,6 +262,7 @@ export async function gatherPriorComments(
           : {}),
           ...(settled.has(c.id) ? { addressed: true } : {}),
           ...(c.in_reply_to_id ? { inReplyTo: c.in_reply_to_id } : {}),
+          ...(mine ? {} : responsesOf(c.body ?? "")),
         });
     }
   } catch (err) {
@@ -224,8 +272,10 @@ export async function gatherPriorComments(
   try {
     for (const c of await ghComments(`repos/${slug}/issues/${pr}/comments`, gh)) {
       const mine = isOwnComment(c.body ?? "", c.user?.type, "summary");
-      // Another workflow's status comment is not review context.
-      if (!mine && c.user?.type === "Bot") continue;
+      const responses = mine ? {} : responsesOf(c.body ?? "");
+      // Another workflow's status comment is not review context. An answer to a
+      // finding is, whoever posts it: the author's agent is usually a bot.
+      if (!mine && c.user?.type === "Bot" && !responses.responses) continue;
       // Read before condensing: condensing strips HTML comments, and the marker
       // is an HTML comment.
       const summaryMarker = mine ? findMarker(c.body ?? "", "summary") : undefined;
@@ -235,10 +285,18 @@ export async function gatherPriorComments(
       // the inline set, or all of them when inline comments are off — live
       // inside this body, so their identities have to be read out of it too.
       const summaryClaims = mine
-        ? readMarkers(c.body ?? "")
-            .filter((m) => m.kind === "summary-item" && m.fields.fp)
-            .map((m) => ({ fp: m.fields.fp, file: m.fields.file ?? "?", line: m.fields.line ?? "?" }))
+        ? (c.body ?? "").split("\n").flatMap((text) =>
+            readMarkers(text)
+              .filter((m) => m.kind === "summary-item" && m.fields.fp)
+              .map((m) => ({
+                fp: m.fields.fp,
+                file: m.fields.file ?? "?",
+                line: m.fields.line ?? "?",
+                text: stripMarkers(text).replace(/^\s*[-*]\s*/, "").trim(),
+              })),
+          )
         : [];
+      const rulings = mine ? readRulings(c.body ?? "") : [];
       out.push({
         id: c.id,
         author: c.user?.login ?? "?",
@@ -251,6 +309,8 @@ export async function gatherPriorComments(
         // Passed to git as a revision, so only a full sha is accepted.
         ...(head && /^[0-9a-f]{40}$/i.test(head) ? { head: head.toLowerCase() } : {}),
         ...(summaryClaims.length ? { summaryClaims } : {}),
+        ...(rulings.length ? { rulings } : {}),
+        ...responses,
       });
     }
   } catch (err) {
@@ -290,9 +350,11 @@ export function renderPriorComments(prior: PriorComment[], description = ""): st
   // finding can be posted into it as corroboration. A conversation comment has
   // neither: it is context to weigh, and the two cannot share a section because
   // the instructions for them are opposite.
-  const human = prior.filter((c) => !c.mine && c.file);
+  // An answer to one of the bot's findings is not a review comment to agree
+  // with. The coordinator gets it in a section of its own: see `renderDisputes`.
+  const human = prior.filter((c) => !c.mine && c.file && !c.responses);
   const discussion = prior.filter(
-    (c) => !c.mine && !c.file && !isConversationNoise(c.body, description),
+    (c) => !c.mine && !c.file && !c.responses && !isConversationNoise(c.body, description),
   );
   // A point the bot already closed out is finished business. Listing it would
   // spend prompt tokens re-litigating something the author has watched resolve.
@@ -305,6 +367,8 @@ export function renderPriorComments(prior: PriorComment[], description = ""): st
   // comment.
   const ownInline = prior.filter((c) => c.mine && c.file && !c.addressed && !c.inReplyTo);
   const ownSummary = prior.filter((c) => c.mine && !c.file);
+  const withdrawn = ownSummary.flatMap((c) => c.rulings ?? []).filter((r) => r.outcome === "withdrawn");
+  const withdrawnFps = new Set(withdrawn.map((r) => r.fp));
   const lines: string[] = [];
 
   const bullet = (c: PriorComment, cap: number) => {
@@ -384,7 +448,8 @@ export function renderPriorComments(prior: PriorComment[], description = ""): st
     for (const c of ownInline) bullet(c, 300);
     if (ownSummary.length) {
       for (const c of ownSummary) {
-        if (c.summaryClaims?.length) {
+        const claims = (c.summaryClaims ?? []).filter((s) => !withdrawnFps.has(s.fp));
+        if (claims.length) {
           // These were reported in the summary without an inline comment of
           // their own — off the diff, routed off the inline set, or everything
           // when inline comments are off — so they read as absent from the
@@ -399,7 +464,7 @@ export function renderPriorComments(prior: PriorComment[], description = ""): st
             "again. Leave one out only when you have read the code and it is fixed.",
             "",
           );
-          for (const s of c.summaryClaims) lines.push(`- \`${s.file}:${s.line}\``);
+          for (const s of claims) lines.push(`- \`${s.file}:${s.line}\``);
         }
         lines.push("", `Your summary comment (id=${c.id}), conclusions only:`, "");
         // 1800 dates from when the summary carried every finding's full argument
@@ -413,6 +478,15 @@ export function renderPriorComments(prior: PriorComment[], description = ""): st
         // still bounding a pathological one.
         lines.push(c.body.slice(0, 12000));
       }
+    }
+    if (withdrawn.length) {
+      lines.push(
+        "",
+        "You withdrew these after the author disputed them and you agreed they were wrong. Never",
+        "report them again, in any wording.",
+        "",
+      );
+      for (const r of withdrawn) lines.push(`- ${r.label}`);
     }
     lines.push("");
   }

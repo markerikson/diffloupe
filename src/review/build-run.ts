@@ -13,6 +13,7 @@ import type {
   ReviewTarget,
   RunFile,
   RunFileStatus,
+  RunDispute,
   RunFinding,
   RunGroup,
   RunKind,
@@ -57,6 +58,7 @@ interface CoreRecord {
   promptVersion?: string;
   instructionsHash?: string;
   resolved?: { id: number; note?: string }[];
+  disputes?: RunDispute[];
   rejected?: unknown[];
   intentAlignment?: {
     summary?: string;
@@ -555,6 +557,7 @@ export function buildReviewRun(input: BuildReviewRunInput): ReviewRun {
     findings,
     overCapFindings,
     resolved,
+    ...(record?.disputes?.length ? { disputes: record.disputes } : {}),
     unreviewed: record?.unreviewed ?? { overCap: [], failed: [] },
     meta: {
       ...(record?.model ? { model: record.model } : {}),
