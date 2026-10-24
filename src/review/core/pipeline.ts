@@ -376,6 +376,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
   if (!singleGroup) {
     parted = await agent(pp, {
       budget: PART_BUDGET, outFile: partOut, tag: partTag, model: MODEL_WALK, effort: EFFORT_AUX,
+      answerKeys: ["groups", "review_units"],
     });
     addCost(parted.costUsd);
   }
@@ -525,7 +526,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
       // the other slices are still running inside it.
       let r: Awaited<ReturnType<typeof agent>>;
       try {
-        r = await agent(prompt, { budget: SLICE_BUDGET, outFile, tag });
+        r = await agent(prompt, { budget: SLICE_BUDGET, outFile, tag, answerKeys: ["findings"] });
         addCost(r.costUsd);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -583,6 +584,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
         // code says how the process ended, which is a different question.
         ok: r.payload !== null,
         ...(r.failure ? { failure: r.failure } : {}),
+        ...(r.deliveredAs ? { deliveredAs: r.deliveredAs } : {}),
       });
       console.error(
         `  [w${id}] ${slice.unitId}${slice.parts > 1 ? ` ${slice.part}/${slice.parts}` : ""} ` +
@@ -709,10 +711,16 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     const [merged, walked] = await Promise.all([
       mergeIdle
         ? Promise.resolve({ ...skipped, payload: { keep: [] } satisfies MergeDecisions })
-        : agent(mp, { budget: mergeBudget, outFile: mergeOut, tag: mergeTag, model: MODEL_MERGE, effort: EFFORT_AUX })
+        : agent(mp, {
+          budget: mergeBudget, outFile: mergeOut, tag: mergeTag, model: MODEL_MERGE, effort: EFFORT_AUX,
+          answerKeys: ["keep"],
+        })
           .then((r) => (addCost(r.costUsd), r))
           .catch(survive("coordinator")),
-      agent(wp, { budget: WALK_BUDGET, outFile: walkOut, tag: walkTag, model: MODEL_WALK, effort: EFFORT_AUX })
+      agent(wp, {
+        budget: WALK_BUDGET, outFile: walkOut, tag: walkTag, model: MODEL_WALK, effort: EFFORT_AUX,
+        answerKeys: ["chapters"],
+      })
         .then((r) => (addCost(r.costUsd), r))
         .catch(survive("walkthrough")),
     ]);
@@ -921,9 +929,11 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     merge: {
       wallMs: merged.wallMs, costUsd: merged.costUsd, numTurns: merged.numTurns, usage: merged.usage,
       tools: "tools" in merged ? merged.tools : undefined,
+      ...("deliveredAs" in merged ? { deliveredAs: merged.deliveredAs } : {}),
     },
     walk: {
       model: MODEL_WALK, wallMs: walked.wallMs, costUsd: walked.costUsd, numTurns: walked.numTurns, usage: walked.usage,
+      ...("deliveredAs" in walked ? { deliveredAs: walked.deliveredAs } : {}),
     },
     walkthrough: walkthrough ?? null,
     intentDraft,
