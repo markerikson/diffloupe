@@ -22,6 +22,17 @@ describe("parseAgentJson", () => {
   test("still rejects JSON that is broken in other ways", () => {
     expect(() => parseAgentJson('{"findings": [')).toThrow();
   });
+
+  test("reports the original parse error when a repair does not help", () => {
+    const text = '{"a": "x\ty", "b": }';
+    let original = "";
+    try {
+      JSON.parse(text);
+    } catch (error) {
+      original = (error as Error).message;
+    }
+    expect(() => parseAgentJson(text)).toThrow(original);
+  });
 });
 
 let tmp: string;

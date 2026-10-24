@@ -562,7 +562,11 @@ export function parseAgentJson(text: string): unknown {
       out += c;
     }
     if (!changed) throw error;
-    return JSON.parse(out);
+    try {
+      return JSON.parse(out);
+    } catch {
+      throw error;
+    }
   }
 }
 
