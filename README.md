@@ -194,6 +194,18 @@ Runs are stored under `$XDG_DATA_HOME/diffloupe/runs/<id>/` (`~/.local/share/dif
 
 Checks Bun, git, OpenCode, tilth and `gh`; prints the model for each stage and where it came from, and the source of each provider credential; and shows how much disk the data directory uses. Exits non-zero if a review could not run. `--config <file>` includes a per-repo settings file in the model lookup. `--strict` also exits non-zero on warnings, such as `gh` not being logged in or a model with no known cost. `--json` prints the checks as a JSON array of `{ name, status, detail }`.
 
+### `diffloupe gate`
+
+`diffloupe gate '#<n>' --fail-on <severity>` reads a pull request's comments on GitHub and lists the bot's findings that are still open. It exits 3 when one of them is at or above `--fail-on`, and 0 otherwise. It runs no model and needs only `gh`. `#<n>` takes the repository from the current checkout or `GH_REPO`; outside a checkout, pass `owner/repo#<n>`. See [Failing the check on findings](#failing-the-check-on-findings) for what counts as open.
+
+| Option | Meaning |
+|--------|---------|
+| `--fail-on <severity>` | Required. `blocker`, `should-fix`, `nice-to-have` or `question` |
+| `--json` | Print the result as JSON |
+| `--status [sha]` | Also set the `diffloupe/gate` commit status on that commit, or on the PR head when no sha is given |
+| `--override-label <name>` | Pass the gate when the PR has this label |
+| `--count-author-resolved` | Treat a thread the PR author resolved as closed. By default only the bot settles its own findings |
+
 ## Running in CI
 
 `diffloupe review '#<n>' --headless --github --head <sha> --out <dir>` reviews a pull request for a bot that posts the result. DiffLoupe itself does not post anything: it writes the GitHub API payloads, and a later step sends them.
@@ -235,7 +247,7 @@ Rulings are listed in a "Disputed findings" fold at the end of the summary comme
 | 0 | The review finished, or was skipped because the change has no code files |
 | 1 | The run failed, including a `gh` failure under `--github` |
 | 2 | The run could not start: a bad flag, target, model or credential |
-| 3 | `--fail-on` was given and a finding posted in this round is at or above that severity |
+| 3 | `--fail-on` was given and a finding posted in this round is at or above that severity. For `diffloupe gate`: an open finding is at or above `--fail-on` |
 | 4 | `--max-rounds` was given and this review would have been past that round, so it was skipped |
 | 130 | The run was cancelled |
 
@@ -289,29 +301,39 @@ Written to `--out` for every finished, failed, cancelled or skipped run, and pri
 
 ### Failing the check on findings
 
-Use a separate gate job instead of `--fail-on` when the comments are posted by a later job. The review job then fails only when the review breaks, and the gate job, which is the required check, fails only on findings:
+`--fail-on` on the review counts only the findings posted in this round. On a re-review, a finding already posted in an earlier round is not posted again, so a later push can pass while an earlier blocker is still unfixed. It suits a single job or a local script: it exits 3 after writing `--out`, and ignores findings over the comment cap.
+
+To block merges until the findings are dealt with, run `diffloupe gate` in a job after the comments are posted, and make that job the required check. It reads the PR on GitHub, so it sees every round's findings:
 
 ```yaml
 gate:
   needs: [review, post]
-  if: ${{ !cancelled() }}
+  if: ${{ !cancelled() && needs.post.result == 'success' }}
   runs-on: ubuntu-latest
+  permissions:
+    pull-requests: read
+    statuses: write
+  env:
+    GH_TOKEN: ${{ github.token }}
   steps:
-    - uses: actions/download-artifact@v4
-      if: ${{ needs.review.outputs.artifact != '' }}
-      with:
-        name: ${{ needs.review.outputs.artifact }}
-        path: review
-    - run: |
-        [ "${{ needs.review.result }}" = "success" ] || exit 0
-        [ -f review/result.json ] || exit 0
-        blockers=$(jq '.findings.bySeverity.blocker // 0' review/result.json)
-        [ "$blockers" -eq 0 ] || { echo "::error::$blockers blocker finding(s)"; exit 1; }
+    - uses: oven-sh/setup-bun@v2
+    - run: bun add -g @acemarke/diffloupe
+    - run: >
+        diffloupe gate '${{ github.repository }}#${{ github.event.pull_request.number }}'
+        --fail-on blocker
+        --status ${{ github.event.pull_request.head.sha }}
 ```
 
-This passes when the review job fails, so an outage does not block merges; change the first `exit 0` to `exit 1` for the opposite. Gate on `blocker` only: findings vary between runs, and a lower threshold blocks merges on false positives. `--fail-on` suits a single job or a local script. It exits 3 after writing `--out`, and ignores findings over the comment cap.
+A finding is open when:
 
-Both the gate job and `--fail-on` count only the findings posted in this round. On a re-review, a finding already posted in an earlier round is not posted again, so a later push can pass the check while an earlier blocker is still unfixed. To block merges until every finding is dealt with, turn on "Require conversation resolution before merging" in the branch protection rules instead. It blocks on any unresolved inline comment, from the bot or a person, at any severity.
+- it has an inline thread from the bot that is not resolved and that the bot has not settled. The bot settles a thread when it closes the finding out as fixed or withdraws it after a dispute. An outdated thread still counts, since moving the code does not fix it.
+- or it is listed in the bot's latest summary comment and was not withdrawn. With inline comments off, every finding is only in the summary.
+
+A thread the PR author resolved still counts unless `--count-author-resolved` is given, so the author cannot clear a blocker by closing the thread. An upheld dispute stays open until a human resolves the thread. Severity comes from the comment's marker; a finding whose severity cannot be read is listed as `unknown` and never fails the gate. `--override-label` passes the gate when the PR has that label, for a human to accept the open findings.
+
+With `--status`, the gate also sets a `diffloupe/gate` commit status on the PR head. Make that status the required check if you rerun the gate outside the PR's workflow, for example on `pull_request_review` events or after a dispute is ruled on, since a status on the head commit is replaced by the latest run.
+
+Gate on `blocker` only: findings vary between runs, and a lower threshold blocks merges on false positives. The `if:` above skips the gate when the review or post job fails, so an outage does not block merges; the required check then stays pending, so pick the behaviour you want there. "Require conversation resolution before merging" in the branch protection rules is a simpler option. It blocks on any unresolved inline comment, from the bot or a person, at any severity, but misses findings that are only in the summary.
 
 To stop an automated fix loop from running forever, pass `--max-rounds`. A review past that round is skipped before any model runs, exits 4 under `--headless`, and writes a `result.json` with `skipReason: "round-limit"`. Nothing is posted, so the summary comment and its rulings stay as they were.
 

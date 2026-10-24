@@ -260,10 +260,10 @@ export async function gatherPriorComments(
         ...(mine
           ? { fingerprint: readMarkers(c.body ?? "").find((m) => m.fields.fp)?.fields.fp }
           : {}),
-          ...(settled.has(c.id) ? { addressed: true } : {}),
-          ...(c.in_reply_to_id ? { inReplyTo: c.in_reply_to_id } : {}),
-          ...(mine ? {} : responsesOf(c.body ?? "")),
-        });
+        ...(settled.has(c.id) ? { addressed: true } : {}),
+        ...(c.in_reply_to_id ? { inReplyTo: c.in_reply_to_id } : {}),
+        ...(mine ? {} : responsesOf(c.body ?? "")),
+      });
     }
   } catch (err) {
     if (opts.strict) throw new Error(`reading the pull request's review comments: ${errorText(err)}`, { cause: err });
@@ -318,6 +318,154 @@ export async function gatherPriorComments(
     /* as above */
   }
   return out;
+}
+
+export interface ThreadComment {
+  id: number;
+  body: string;
+  author: string;
+  /** GraphQL `__typename` of the author: `Bot` for apps and Actions, `User` for people. */
+  authorType: string;
+  url: string;
+  replyTo?: number;
+}
+
+export interface ReviewThread {
+  id: string;
+  resolved: boolean;
+  outdated: boolean;
+  resolvedBy?: string;
+  file?: string;
+  line?: number;
+  comments: ThreadComment[];
+}
+
+export interface PullRequestThreads {
+  number: number;
+  url: string;
+  author: string;
+  headSha: string;
+  labels: string[];
+  threads: ReviewThread[];
+}
+
+const THREADS_QUERY = `query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      number url headRefOid
+      author { login }
+      labels(first: 100) { nodes { name } }
+      reviewThreads(first: 50, after: $endCursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          id isResolved isOutdated path line originalLine
+          resolvedBy { login }
+          comments(first: 50) {
+            nodes { databaseId body url author { login __typename } replyTo { databaseId } }
+          }
+        }
+      }
+    }
+  }
+}`;
+
+interface ThreadsPage {
+  data?: {
+    repository?: {
+      pullRequest?: {
+        number: number;
+        url: string;
+        headRefOid: string;
+        author?: { login?: string } | null;
+        labels?: { nodes?: { name: string }[] };
+        reviewThreads: {
+          pageInfo: { hasNextPage: boolean; endCursor: string | null };
+          nodes: {
+            id: string;
+            isResolved: boolean;
+            isOutdated: boolean;
+            path?: string | null;
+            line?: number | null;
+            originalLine?: number | null;
+            resolvedBy?: { login?: string } | null;
+            comments: {
+              nodes: {
+                databaseId: number;
+                body: string;
+                url: string;
+                author?: { login?: string; __typename?: string } | null;
+                replyTo?: { databaseId: number } | null;
+              }[];
+            };
+          }[];
+        };
+      } | null;
+    } | null;
+  };
+  errors?: { message: string }[];
+}
+
+/**
+ * The pull request's review threads with GitHub's own resolution state, which
+ * the REST comment endpoints do not expose. Throws on any failure: the gate
+ * reads this, and a gate that passes because GitHub was unreachable is worse
+ * than one that fails the check.
+ *
+ * Only the first 50 comments of each thread are read. That is enough for the
+ * root finding and the bot's close-out reply in any thread seen so far.
+ */
+export async function gatherReviewThreads(
+  slug: string,
+  pr: number,
+  opts: Pick<GatherOptions, "gh"> = {},
+): Promise<PullRequestThreads> {
+  const gh = opts.gh ?? ghText;
+  const [owner, name] = slug.split("/");
+  if (!owner || !name) throw new Error(`not an owner/name repository: ${slug}`);
+  const threads: ReviewThread[] = [];
+  let cursor: string | null = null;
+  let info: Omit<PullRequestThreads, "threads"> | null = null;
+  do {
+    const args = ["api", "graphql", "-f", `query=${THREADS_QUERY}`, "-f", `owner=${owner}`, "-f", `name=${name}`];
+    args.push("-F", `number=${pr}`);
+    if (cursor) args.push("-f", `endCursor=${cursor}`);
+    const page = JSON.parse(await gh(args)) as ThreadsPage;
+    if (page.errors?.length) throw new Error(page.errors.map((e) => e.message).join("; "));
+    const p = page.data?.repository?.pullRequest;
+    if (!p) throw new Error(`no pull request #${pr} in ${slug}`);
+    info ??= {
+      number: p.number,
+      url: p.url,
+      author: p.author?.login ?? "?",
+      headSha: p.headRefOid,
+      labels: (p.labels?.nodes ?? []).map((l) => l.name),
+    };
+    for (const t of p.reviewThreads.nodes) {
+      const line = t.line ?? t.originalLine;
+      threads.push({
+        id: t.id,
+        resolved: t.isResolved,
+        outdated: t.isOutdated,
+        ...(t.resolvedBy?.login ? { resolvedBy: t.resolvedBy.login } : {}),
+        ...(t.path ? { file: t.path } : {}),
+        ...(line ? { line } : {}),
+        comments: t.comments.nodes.map((c) => {
+          const comment: ThreadComment = {
+            id: c.databaseId,
+            body: c.body,
+            author: c.author?.login ?? "?",
+            authorType: c.author?.__typename ?? "",
+            url: c.url,
+          };
+          if (c.replyTo?.databaseId) comment.replyTo = c.replyTo.databaseId;
+          return comment;
+        }),
+      });
+    }
+    cursor = p.reviewThreads.pageInfo.hasNextPage ? p.reviewThreads.pageInfo.endCursor : null;
+  } while (cursor);
+  if (!info) throw new Error(`no pull request #${pr} in ${slug}`);
+  return { ...info, threads };
 }
 
 /**

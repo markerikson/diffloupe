@@ -325,13 +325,15 @@ describe("renderReview detail split", () => {
 
   it("keeps a fingerprint in the comment for every finding it lists", () => {
     const findings = [
-      finding({ file: "src/a.ts", title: "first claim", explanation: "long argument here" }),
-      finding({ file: "src/b.ts", title: "second claim", explanation: "another argument" }),
+      finding({ file: "src/a.ts", title: "first claim", explanation: "long argument here", severity: "should-fix" }),
+      finding({ file: "src/b.ts", title: "second claim", explanation: "another argument", severity: "blocker" }),
     ];
     const out = renderReview({ ...base, findings });
     const fps = readMarkers(out.summary).filter((m) => m.kind === "summary-item");
     expect(fps).toHaveLength(2);
     expect(new Set(fps.map((m) => m.fields.fp)).size).toBe(2);
+    // The gate reads severity from the marker.
+    expect(fps.map((m) => m.fields.sev).sort()).toEqual(["blocker", "should-fix"]);
   });
 
   it("shows the other copies of a defect outside the collapsed sections", () => {

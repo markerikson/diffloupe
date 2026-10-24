@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { VERSION } from "../version.ts";
 import { createDoctorCommand } from "./doctor.ts";
+import { createGateCommand } from "./gate.ts";
 import { createDiffCommand, createOpenCommand, createReviewCommand, createServeCommand } from "./review.ts";
 import { createRunsCommand } from "./runs.ts";
 
@@ -16,7 +17,8 @@ export function createProgram(): Command {
     .addCommand(createOpenCommand())
     .addCommand(createServeCommand())
     .addCommand(createRunsCommand())
-    .addCommand(createDoctorCommand());
+    .addCommand(createDoctorCommand())
+    .addCommand(createGateCommand());
 }
 
 export function run() {

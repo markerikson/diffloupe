@@ -41,7 +41,7 @@ function parseRounds(value: string): number {
   return n;
 }
 
-function parseSeverity(value: string): FindingSeverity {
+export function parseSeverity(value: string): FindingSeverity {
   if (!(SEVERITY_ORDER as readonly string[]).includes(value)) {
     throw new InvalidArgumentError(`must be one of ${SEVERITY_ORDER.join(", ")}`);
   }

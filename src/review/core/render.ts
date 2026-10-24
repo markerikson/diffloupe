@@ -293,11 +293,11 @@ export function renderReview(o: {
     b.push("");
     b.push(
       mode === "inline"
-        ? marker("inline", { file: f.file, line: f.line, fp: fingerprint(f.file, f.title) })
+        ? marker("inline", { file: f.file, line: f.line, fp: fingerprint(f.file, f.title), sev: f.severity })
         : // A finding rendered into the summary has no comment of its own to carry
           // its fingerprint, so without this it is invisible to every check that
           // reads what was already said.
-          marker("summary-item", { file: f.file, line: f.line, fp: fingerprint(f.file, f.title) }),
+          marker("summary-item", { file: f.file, line: f.line, fp: fingerprint(f.file, f.title), sev: f.severity }),
     );
     return b.join("\n");
   };
@@ -564,7 +564,7 @@ export function renderReview(o: {
         // claim). One home per fingerprint.
         const fp = postedSet.has(f)
           ? ""
-          : ` ${marker("summary-item", { file: f.file, line: f.line, fp: fingerprint(f.file, f.title) })}`;
+          : ` ${marker("summary-item", { file: f.file, line: f.line, fp: fingerprint(f.file, f.title), sev: f.severity })}`;
         const also = f.also_at?.length ? ` · also ${f.also_at.map(siteLink).join(", ")}` : "";
         out.push(`  - ${sev} ${flat(f.title)} — ${where}${also} · _[${evidenceNo.get(f)}]_${fp}`);
       }
