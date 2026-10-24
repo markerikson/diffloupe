@@ -37,7 +37,7 @@ export function createGateCommand(): Command {
       "Also write the result as the diffloupe/gate commit status on this commit (default: the PR head). Needs statuses: write",
     )
     .option("--override-label <name>", "Pass whatever is open when the pull request has this label")
-    .option("--count-author-resolved", "Keep counting threads the pull request's author resolved")
+    .option("--count-author-resolved", "Treat threads the pull request's author resolved as closed")
     .action(async (target: string, options: GateCommandOptions) => {
       let spec;
       try {

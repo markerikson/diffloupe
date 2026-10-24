@@ -63,6 +63,15 @@ describe("pendingDisputes", () => {
     expect(pending.map((d) => [d.verdict, d.reason])).toEqual([["disputed", "Second try."]]);
   });
 
+  it("orders answers by creation time, since inline and issue comment ids are separate sequences", () => {
+    const pending = pendingDisputes([
+      finding,
+      { ...answer(900, "aaa111", "fixed", "Inline reply, earlier."), createdAt: "2026-10-24T10:00:00Z" },
+      { ...answer(50, "aaa111", "disputed", "Issue comment, later."), createdAt: "2026-10-24T11:00:00Z" },
+    ]);
+    expect(pending.map((d) => d.reason)).toEqual(["Issue comment, later."]);
+  });
+
   it("skips a finding already closed out or ruled on", () => {
     expect(pendingDisputes([{ ...finding, addressed: true }, answer(20, "aaa111", "disputed", "No.")])).toEqual([]);
     const ruled = { ...summary, rulings: [{ fp: "aaa111", outcome: "upheld" as const, label: "Upheld: lock" }] };

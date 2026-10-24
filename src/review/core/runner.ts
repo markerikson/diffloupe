@@ -795,7 +795,7 @@ async function runAgent(
   let deliveredAs: "text" | undefined;
   if (failure?.kind === "no-output") {
     const reply = lastReplyText(stdout);
-    const answer = reply === undefined ? undefined : answerFromText(reply, opts.answerKeys ?? []);
+    const answer = reply === undefined || !opts.answerKeys?.length ? undefined : answerFromText(reply, opts.answerKeys);
     if (answer !== undefined) {
       payload = answer;
       failure = undefined;

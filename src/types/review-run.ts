@@ -237,6 +237,8 @@ export type PriorActedOn = typeof PriorActedOnSchema.infer;
  * - `meta.promptVersion`, `meta.instructionsHash`: short hashes of the review
  *   prompts and the repo's review instructions, to compare runs across versions.
  * - `meta.slices[].usage`, `meta.stages`: tokens per agent call, when recorded.
+ * - `meta.roundLimit`: `--max-rounds` stopped this run before any model ran.
+ *   Nothing was reviewed, so later runs do not use it as their prior run.
  * - `round`: 1 for a first review, one more than the prior run's otherwise.
  * - `priorActedOn`: set when the prior run reviewed a different head; one
  *   entry per prior finding anchored to a line on the additions side.
@@ -309,6 +311,7 @@ export const ReviewRunSchema = type({
     "scopeReason?": "string",
     "promptVersion?": "string",
     "instructionsHash?": "string",
+    "roundLimit?": { maxRounds: "number", round: "number" },
   },
   untrackedSkipped: "string[]",
   "priorRunId?": "string",
@@ -376,6 +379,7 @@ export const RunHeaderSchema = type({
     question: "number",
   },
   costUsd: "number",
+  "roundLimited?": "true",
   "invalid?": "string",
 });
 export type RunHeader = typeof RunHeaderSchema.infer;

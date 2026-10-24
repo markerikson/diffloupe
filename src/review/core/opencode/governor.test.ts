@@ -498,6 +498,8 @@ describe("checkShellCommand", () => {
       "timeout 10 gh issue list",
       'echo "$(curl -s https://example.com)"',
       "bash -c 'gh pr diff 5'",
+      "bash -lc 'gh pr view 5 --comments'",
+      "/usr/bin/curl https://example.com",
       "ls && git clone https://github.com/o/r",
     ]) {
       expect(checkShellCommand(cmd)?.rule).toBe("network");

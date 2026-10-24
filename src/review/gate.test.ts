@@ -75,10 +75,12 @@ describe("openFindings", () => {
     expect(failsOpenGate(open, "question").map((f) => f.fp)).toEqual(["aaaaaaaaaa"]);
   });
 
-  it("keeps counting a thread its author resolved only when asked to", () => {
+  it("keeps counting a thread the PR author resolved unless told to accept it", () => {
     const threads = [thread(1, inline("aaaaaaaaaa", "blocker"), { resolved: true, resolvedBy: "dev" })];
-    expect(openFindings(pr(threads), null)).toEqual([]);
-    expect(openFindings(pr(threads), null, { countAuthorResolved: true })).toHaveLength(1);
+    expect(openFindings(pr(threads), null)).toHaveLength(1);
+    expect(openFindings(pr(threads), null, { countAuthorResolved: true })).toEqual([]);
+    const byReviewer = [thread(1, inline("aaaaaaaaaa", "blocker"), { resolved: true, resolvedBy: "lead" })];
+    expect(openFindings(pr(byReviewer), null)).toEqual([]);
   });
 
   it("marks a finding upheld after a dispute", () => {

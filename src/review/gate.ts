@@ -44,8 +44,9 @@ export interface GateOptions {
   /** A label on the pull request that passes the gate whatever is open. */
   overrideLabel?: string;
   /**
-   * Keep counting a thread the pull request's author resolved. By default any
-   * resolution settles a thread; with this, only someone else's does.
+   * Treat a thread the pull request's author resolved as closed. By default
+   * only someone else's resolution closes a thread, so the author cannot
+   * clear a finding by resolving it.
    */
   countAuthorResolved?: boolean;
 }
@@ -83,7 +84,7 @@ function threadFinding(
   if (!root || !isOwnComment(root.body, root.authorType)) return null;
   const m = findMarker(root.body, "inline");
   if (!m) return null;
-  if (t.resolved && !(countAuthorResolved && t.resolvedBy === author)) return null;
+  if (t.resolved && (countAuthorResolved || t.resolvedBy !== author)) return null;
   const settled = settledIds(
     t.comments.map((c) => ({
       body: c.body,

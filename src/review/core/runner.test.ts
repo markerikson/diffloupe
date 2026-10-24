@@ -130,6 +130,18 @@ describe("agent", () => {
       delete process.env.FAKE_REPLY;
     }
   });
+
+  test("does not read the reply for a caller that names no answer keys", async () => {
+    const text = '```json\n{"title": "T"}\n```';
+    process.env.FAKE_REPLY = JSON.stringify({ type: "text", part: { type: "text", text } });
+    try {
+      const res = await agent("prompt", { budget: 1, outFile: path.join(tmp, "out-5.json"), tag: "run-5-x" });
+      expect(res.payload).toBeNull();
+      expect(res.failure?.kind).toBe("no-output");
+    } finally {
+      delete process.env.FAKE_REPLY;
+    }
+  });
 });
 
 describe("answerFromText", () => {

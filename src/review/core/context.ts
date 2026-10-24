@@ -94,6 +94,11 @@ export interface PriorComment {
   resolved: boolean;
   commit?: string | undefined;
   url?: string | undefined;
+  /**
+   * When GitHub says the comment was created. Review comments and issue
+   * comments number their ids separately, so this is what orders the two.
+   */
+  createdAt?: string;
   /** Written by this bot on an earlier push, rather than by a reviewer. */
   mine?: boolean;
   /** On the bot's own comments: the identity of the finding it reported. */
@@ -179,6 +184,7 @@ export interface GhComment {
   html_url?: string;
   in_reply_to_id?: number;
   author_association?: string;
+  created_at?: string;
 }
 
 export async function ghComments(endpoint: string, gh: GhText = ghText): Promise<GhComment[]> {
@@ -262,6 +268,7 @@ export async function gatherPriorComments(
         resolved: false,
         commit: c.original_commit_id,
         url: c.html_url,
+        ...(c.created_at ? { createdAt: c.created_at } : {}),
         mine,
         // Both a finding comment and a corroborating reply carry a fingerprint,
         // and both count as having been said, so this looks for the field rather
@@ -312,6 +319,7 @@ export async function gatherPriorComments(
         body: mine ? condenseOwnSummary(c.body ?? "") : (c.body ?? ""),
         resolved: false,
         url: c.html_url,
+        ...(c.created_at ? { createdAt: c.created_at } : {}),
         mine,
         ...(c.author_association ? { association: c.author_association } : {}),
         ...(runs ? { runs } : {}),

@@ -88,7 +88,9 @@ export function pendingDisputes(prior: PriorComment[]): Dispute[] {
     }
   }
   const latest = new Map<string, Dispute>();
-  for (const c of [...prior].sort((a, b) => a.id - b.id)) {
+  const order = (a: PriorComment, b: PriorComment) =>
+    (a.createdAt ?? "").localeCompare(b.createdAt ?? "") || a.id - b.id;
+  for (const c of [...prior].sort(order)) {
     if (c.mine) continue;
     for (const r of c.responses ?? []) {
       const claim = claims.get(r.fp);

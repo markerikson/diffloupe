@@ -498,7 +498,7 @@ export async function executeRun(prep: PreparedRun, opts: ExecuteRunOptions): Pr
     throw new Error(message, { cause: err });
   }
   const { roundLimit } = result;
-  if (roundLimit) run = { ...run, round: roundLimit.round };
+  if (roundLimit) run = { ...run, round: roundLimit.round, meta: { ...run.meta, roundLimit } };
   await writeRun(run);
   const reviewed = prep.kind === "diff" || result.record !== null;
   if (prep.kind === "review") opts.log(`  anchors: ${describeAnchors(run)}`);

@@ -151,7 +151,8 @@ jobs:
 
       # The labels endpoint creates the label if the repository lacks it.
       - name: Label PRs past the round limit
-        if: needs.review.outputs.skip-reason == 'round-limit'
+        # Also after a failed post, so the gate still passes the PR.
+        if: ${{ !cancelled() && needs.review.outputs.skip-reason == 'round-limit' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
@@ -159,13 +160,15 @@ jobs:
 
   gate:
     needs: [review, post]
-    # Runs after a review whether or not there was anything to post. When the
-    # review job fails, this job is skipped, and GitHub counts a skipped
-    # required check as passing, so an outage does not block merges.
+    # Runs after a review whether or not the post job ran or failed: it reads
+    # the PR itself, so findings that did get posted, and earlier rounds'
+    # findings, still count. When the review job fails, this job is skipped,
+    # and GitHub counts a skipped required check as passing, so an outage
+    # does not block merges.
     if: >-
       !cancelled() &&
       needs.review.result == 'success' &&
-      (needs.post.result == 'success' || needs.post.result == 'skipped')
+      needs.post.result != 'cancelled'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

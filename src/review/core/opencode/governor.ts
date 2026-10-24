@@ -309,7 +309,7 @@ const nestedCommands = (text: string): string[] =>
   [
     /\$\((?<inner>[^()]*)\)/g,
     /`(?<inner>[^`]*)`/g,
-    /\b(?:ba|z|da)?sh\s+-c\s+(['"])(?<inner>.*?)\1/g,
+    /\b(?:ba|z|da)?sh\s+(?:-[A-Za-z]+\s+)*-[A-Za-z]*c\s+(['"])(?<inner>.*?)\1/g,
     /\beval\s+(['"])(?<inner>.*?)\1/g,
   ].flatMap((re) => [...text.matchAll(re)].map((m) => m.groups?.inner ?? ""));
 
@@ -319,7 +319,7 @@ const reachesNetwork = (cmd: string, depth = 0): boolean => {
     let core = commandCore(segment.text);
     for (let prev = ""; prev !== core; ) {
       prev = core;
-      core = commandCore(core.replace(/^(?:sudo|exec|nice)\s+/, ""));
+      core = commandCore(core.replace(/^(?:sudo|exec|nice)\s+/, "").replace(/^[^\s'"]*\//, ""));
     }
     if (NETWORK_COMMAND.test(core)) return true;
     if (INTERPRETER.test(core) && NETWORK_CODE.test(core)) return true;
