@@ -280,8 +280,63 @@ const fileArgs = (core: string): string[] =>
         (tok.includes("/") || /\.[A-Za-z0-9]+$/.test(tok)),
     );
 
+/**
+ * Commands that reach the network, refused on sight wherever they appear in a
+ * command line, pipe targets included.
+ *
+ * Nothing a review needs is on the network: the pipeline gathers the PR's
+ * description and prior comments before any agent starts. What is out there is
+ * the rest of the PR thread, which carries the author's arguments and is how a
+ * reviewer gets argued out of a finding without judging the code, and on a CI
+ * runner the job's token is in the agent's environment. This catches the
+ * commands, not every way to open a socket, so CI should restrict outbound
+ * network as well. The web tools are denied in the agent config.
+ */
+const NETWORK_COMMAND = new RegExp(
+  [
+    /^(?:curl|wget|nc|ncat|netcat|telnet|ssh|scp|sftp|ftp|http|https|xh)\b/.source,
+    /^gh\s+(?:api|pr|issue|repo|run|search|browse|release|gist|workflow|auth)\b/.source,
+    /^git\s+(?:-[Cc]\s+\S+\s+)*(?:fetch|pull|push|clone|ls-remote|remote\s+update|submodule\s+update)\b/.source,
+  ].join("|"),
+);
+/** Interpreters whose inline code is checked for network calls. */
+const INTERPRETER = /^(?:node|bun|deno|python[0-9.]*|ruby|perl|php)\b/;
+const NETWORK_CODE =
+  /\bfetch\s*\(|\bhttps?\.(?:get|request)\b|['"](?:node:)?https?['"]|\burllib\b|\brequests\.|\bhttp\.client\b|\bsocket\b|Net::HTTP|LWP::|XMLHttpRequest|WebSocket|\b(?:Bun|Deno)\.connect\b/;
+
+/** Commands nested inside a segment: `$(...)`, backticks, `sh -c '...'` and `eval '...'`. */
+const nestedCommands = (text: string): string[] =>
+  [
+    /\$\((?<inner>[^()]*)\)/g,
+    /`(?<inner>[^`]*)`/g,
+    /\b(?:ba|z|da)?sh\s+-c\s+(['"])(?<inner>.*?)\1/g,
+    /\beval\s+(['"])(?<inner>.*?)\1/g,
+  ].flatMap((re) => [...text.matchAll(re)].map((m) => m.groups?.inner ?? ""));
+
+const reachesNetwork = (cmd: string, depth = 0): boolean => {
+  if (depth > 3) return false;
+  for (const segment of splitSegments(cmd)) {
+    let core = commandCore(segment.text);
+    for (let prev = ""; prev !== core; ) {
+      prev = core;
+      core = commandCore(core.replace(/^(?:sudo|exec|nice)\s+/, ""));
+    }
+    if (NETWORK_COMMAND.test(core)) return true;
+    if (INTERPRETER.test(core) && NETWORK_CODE.test(core)) return true;
+    if (nestedCommands(segment.text).some((inner) => reachesNetwork(inner, depth + 1))) return true;
+  }
+  return false;
+};
+
 /** Classify a shell command: refused outright, warned, or fine. */
 const checkShellCommand = (cmd: string): { rule: string; tip: string; deny: boolean } | null => {
+  if (reachesNetwork(cmd))
+    return {
+      rule: "network",
+      deny: true,
+      tip: "reach the network during a review. Everything the review needs is in the checkout and in your instructions; judge the code as it stands.",
+    };
+
   for (const segment of splitSegments(cmd)) {
     if (segment.sep === "|") continue;
     const core = commandCore(segment.text);

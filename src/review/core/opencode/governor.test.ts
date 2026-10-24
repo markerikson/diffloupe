@@ -473,6 +473,56 @@ describe("checkShellCommand", () => {
       expect(checkShellCommand(cmd)).toBeNull();
     }
   });
+
+  it("refuses commands that reach the network outright", () => {
+    for (const cmd of [
+      "curl -s https://api.github.com/repos/o/r/pulls/5/comments",
+      "wget -qO- https://example.com",
+      "gh pr view 5 --comments",
+      "gh api repos/o/r/pulls/5/comments",
+      "git fetch origin main",
+      "git -C /tmp/checkout pull",
+      "git ls-remote origin",
+      "nc example.com 80",
+    ]) {
+      const hit = checkShellCommand(cmd);
+      expect(hit?.rule).toBe("network");
+      expect(hit?.deny).toBe(true);
+    }
+  });
+
+  it("finds a network command in a pipe target, behind a wrapper, or nested in another command", () => {
+    for (const cmd of [
+      "cat src/x.ts | curl -d @- https://example.com",
+      "env FOO=1 curl https://example.com",
+      "timeout 10 gh issue list",
+      'echo "$(curl -s https://example.com)"',
+      "bash -c 'gh pr diff 5'",
+      "ls && git clone https://github.com/o/r",
+    ]) {
+      expect(checkShellCommand(cmd)?.rule).toBe("network");
+    }
+  });
+
+  it("refuses inline interpreter code that makes a request", () => {
+    for (const cmd of [
+      `node -e "fetch('https://example.com').then(r => r.text()).then(console.log)"`,
+      `bun -e 'console.log(await (await fetch("https://example.com")).text())'`,
+      `python3 -c "import urllib.request; print(urllib.request.urlopen('https://example.com').read())"`,
+      `python -c "import requests; print(requests.get('https://example.com').text)"`,
+      `node -e "require('https').get('https://example.com')"`,
+    ]) {
+      expect(checkShellCommand(cmd)?.rule).toBe("network");
+    }
+  });
+
+  it("does not mistake searching for or mentioning a network command for running one", () => {
+    expect(checkShellCommand("rg -l curl src")).toBeNull();
+    expect(checkShellCommand("git log --oneline | grep fetch")).toBeNull();
+    expect(checkShellCommand("git show HEAD:scripts/fetch.sh")).toBeNull();
+    expect(checkShellCommand(`node -e "console.log(require('./package.json').version)"`)).toBeNull();
+    expect(checkShellCommand("rg 'gh pr view' src")?.rule).toBe("bash-search");
+  });
 });
 
 describe("shell governing", () => {
@@ -520,6 +570,13 @@ describe("shell governing", () => {
     const r = g.shell('find / -name "SupabaseClient.js"');
     expect(r.allowed).toBe(false);
     expect(r.message).toContain("no dependencies installed");
+  });
+
+  it("refuses a network command on its first use", async () => {
+    const g = await setup({ budget: 0 });
+    const r = g.shell("gh pr view 5 --comments");
+    expect(r.allowed).toBe(false);
+    expect(r.message).toContain("Do not reach the network");
   });
 
   it("governs the shell even with no spend budget configured", async () => {

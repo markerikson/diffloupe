@@ -207,6 +207,8 @@ Checks Bun, git, OpenCode, tilth and `gh`; prints the model for each stage and w
 
 `--head` pins the review to the commit the workflow was triggered for, so a push during the run does not change what gets reviewed.
 
+Review agents may not reach the network. DiffLoupe gathers the PR description and comments itself before any agent starts, the web tools are turned off, and shell commands such as `curl`, `wget`, `gh pr`, `gh api` and `git fetch` are refused, as is inline `node -e`/`bun -e`/`python -c` code that makes a request. That check reads command lines and can be got around, so on CI also limit outbound traffic from the review job to the model provider and GitHub, and keep tokens that can write to the repository out of the review step.
+
 ### Exit codes
 
 | Code | Meaning |
