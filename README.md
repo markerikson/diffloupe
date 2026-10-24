@@ -308,25 +308,28 @@ To block merges until the findings are dealt with, run `diffloupe gate` in a job
 ```yaml
 gate:
   needs: [review, post]
-  if: ${{ !cancelled() && needs.post.result == 'success' }}
+  if: >-
+    !cancelled() && needs.review.result == 'success' &&
+    (needs.post.result == 'success' || needs.post.result == 'skipped')
   runs-on: ubuntu-latest
   permissions:
-    pull-requests: write
+    pull-requests: read
     statuses: write
-  env:
-    GH_TOKEN: ${{ github.token }}
   steps:
-    # The review job sets `skip-reason` from `.skipReason` in its result.json.
-    - if: ${{ needs.review.outputs.skip-reason == 'round-limit' }}
-      run: gh pr edit ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --add-label ai-review-max-rounds
     - uses: oven-sh/setup-bun@v2
-    - run: bun add -g @acemarke/diffloupe
-    - run: >
-        diffloupe gate '${{ github.repository }}#${{ github.event.pull_request.number }}'
+    - run: npm install -g @acemarke/diffloupe
+    - env:
+        GH_TOKEN: ${{ github.token }}
+        PR: ${{ github.event.pull_request.number }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      run: >-
+        diffloupe gate "$GITHUB_REPOSITORY#$PR"
         --fail-on blocker
         --override-label ai-review-max-rounds
-        --status ${{ github.event.pull_request.head.sha }}
+        --status "$HEAD_SHA"
 ```
+
+[`examples/github-actions/review.yml`](examples/github-actions/review.yml) is a complete workflow with the review, post and gate jobs and the round limit described below.
 
 A finding is open when:
 
@@ -337,9 +340,9 @@ A thread the PR author resolved still counts unless `--count-author-resolved` is
 
 With `--status`, the gate also sets a `diffloupe/gate` commit status on the PR head. Make that status the required check if you rerun the gate outside the PR's workflow, for example on `pull_request_review` events or after a dispute is ruled on, since a status on the head commit is replaced by the latest run.
 
-Gate on `blocker` only: findings vary between runs, and a lower threshold blocks merges on false positives. The `if:` above skips the gate when the review or post job fails, so an outage does not block merges; the required check then stays pending, so pick the behaviour you want there. "Require conversation resolution before merging" in the branch protection rules is a simpler option. It blocks on any unresolved inline comment, from the bot or a person, at any severity, but misses findings that are only in the summary.
+Gate on `blocker` only: findings vary between runs, and a lower threshold blocks merges on false positives. The `if:` above skips the gate when the review or post job fails, and GitHub counts a skipped required job as passing, so an outage does not block merges. "Require conversation resolution before merging" in the branch protection rules is a simpler option. It blocks on any unresolved inline comment, from the bot or a person, at any severity, but misses findings that are only in the summary.
 
-To stop an automated fix loop from running forever, pass `--max-rounds`. A review past that round is skipped before any model runs, exits 4 under `--headless`, and writes a `result.json` with `skipReason: "round-limit"`. Its `payloads.json` only updates the summary comment: a notice at the top says the push was not reviewed and why, and the rest of the comment, with its findings and rulings, stays as the last review left it. The example above then labels the PR and passes the gate with `--override-label`, so the PR can merge after a bounded number of fix attempts and the label marks the PRs that merged with findings still open. Treat exit 4 as success in the review job, or the post and gate jobs will not run.
+To stop an automated fix loop from running forever, pass `--max-rounds`. A review past that round is skipped before any model runs, exits 4 under `--headless`, and writes a `result.json` with `skipReason: "round-limit"`. Its `payloads.json` only updates the summary comment: a notice at the top says the push was not reviewed and why, and the rest of the comment, with its findings and rulings, stays as the last review left it. The example workflow posts that notice, labels the PR `ai-review-max-rounds`, and passes the gate with `--override-label`, so the PR can merge after a bounded number of fix attempts and the label marks the PRs that merged with findings still open. Treat exit 4 as success in the review job, and run the post job when `skipReason` is `round-limit` as well as when `reviewed` is true.
 
 Run `diffloupe doctor --strict` before the review to fail fast on a missing tool or credential.
 
