@@ -21,12 +21,12 @@ import { fingerprint } from "./lib/marker.ts";
 import { compactDeletedFiles, parseDiffHunks } from "./lib/hunks.ts";
 import { DIR, SUBJECT, ARTIFACTS, RUNNER, MODEL, EFFORT, MODEL_WALK, MODEL_MERGE, MODEL_INTENT, EFFORT_AUX, WALK_BUDGET, PART_BUDGET, GROUPING, SLICE_BUDGET, MERGE_BUDGET, POOL, MAX_SLICES, MAX_SLICE_TOKENS, WALK_DIFF_TOKENS, OUT, DROP_QUESTIONS, POST_MIN_SEVERITY, applyConfig, setRunState, resetRunState, releaseSubject, type ReviewConfig } from "./config.ts";
 import { classifyFile, type Finding } from "./findings.ts";
-import { gitText, diffOutline, gatherIntent, gatherPriorComments, renderPriorComments, type PriorComment } from "./context.ts";
+import { gitText, diffOutline, gatherIntent, gatherPriorComments, latestOwnSummary, renderPriorComments, type PriorComment } from "./context.ts";
 import { agent, CancelledError, killAgents, resetOpenCodeConfig, type AgentFailure } from "./runner.ts";
 import { slicePrompt, mergePrompt, promptVersion, instructionsHash, type ReviewUnit, coverUnits, packUnits, type Walkthrough, partitionPrompt, groupNamingPrompt, walkthroughPrompt } from "./prompts.ts";
 import { classifySurface, SURFACE_RANK, CONF, SEV } from "./surface.ts";
 import { saidFingerprints, readCheckedClaims, mergeBudgetFor, fallbackRank, coordinatorHasWork, type MergeDecisions, MAX_POSTED, MAX_POSTED_INCREMENTAL, MAX_PREEXISTING, applyDecisions, capFindings, otherSites } from "./coordinate.ts";
-import { writeArtifacts } from "./render.ts";
+import { stoppedSummary, writeArtifacts, writeStoppedArtifacts } from "./render.ts";
 import { draftIntent, type IntentDraftRecord } from "./intent-draft.ts";
 import { disputeRecord, earlierRulings, hasOpenDisputes, pendingDisputes, renderDisputes, rulingsFromDecisions } from "./disputes.ts";
 import { roundProgress } from "./progress.ts";
@@ -268,8 +268,19 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
   const round = options.local ? (options.round ?? 1) : reviewsSoFar + 1;
   if (options.maxRounds !== undefined && round > options.maxRounds) {
     console.error(`  not reviewing: this would be round ${round}, and --max-rounds is ${options.maxRounds}`);
-    // Nothing is written for posting: the summary comment carries the rulings
-    // and the round count, and must stay as the last review left it.
+    // The only thing posted is a notice on the summary comment. The rest of it
+    // carries the rulings and the round count, and stays as the last review left it.
+    if (pr && !options.local) {
+      const previous = await latestOwnSummary(slug, pr);
+      if (previous) {
+        await writeStoppedArtifacts({
+          dir: path.join(ARTIFACTS, "reviews"), tag: tagBase, slug, pr, head,
+          summary: stoppedSummary(previous, { round, maxRounds: options.maxRounds, head }),
+        });
+      } else {
+        console.error("  no summary comment from an earlier review to add the notice to");
+      }
+    }
     return {
       record: null,
       roundLimit: { maxRounds: options.maxRounds, round },

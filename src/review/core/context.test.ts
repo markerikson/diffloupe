@@ -1,10 +1,31 @@
 import { describe, expect, test } from "bun:test";
-import { gatherIntent, gatherPriorComments, renderPriorComments, type GhText, type PriorComment } from "./context.ts";
+import {
+  gatherIntent,
+  gatherPriorComments,
+  latestOwnSummary,
+  renderPriorComments,
+  type GhText,
+  type PriorComment,
+} from "./context.ts";
 import { marker } from "./lib/marker.ts";
 
 const offline: GhText = async () => {
   throw new Error("gh: could not resolve host");
 };
+
+describe("latestOwnSummary", () => {
+  test("returns the newest summary the bot wrote, markers included", async () => {
+    const summary = (n: number) => `review ${n}\n${marker("summary", { runs: n })}`;
+    const comments = [
+      { id: 7, body: summary(2), user: { login: "bot", type: "Bot" } },
+      { id: 3, body: summary(1), user: { login: "bot", type: "Bot" } },
+      { id: 9, body: `quoting\n${marker("summary", { runs: 5 })}`, user: { login: "dev", type: "User" } },
+    ];
+    const gh: GhText = async () => JSON.stringify(comments);
+    expect(await latestOwnSummary("o/r", "5", { gh })).toBe(summary(2));
+    expect(await latestOwnSummary("o/r", "5", { gh: async () => "[]" })).toBeNull();
+  });
+});
 
 describe("gatherPriorComments", () => {
   test("locally, a gh failure means reviewing without prior comments", async () => {

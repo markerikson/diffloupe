@@ -185,6 +185,15 @@ export async function ghComments(endpoint: string, gh: GhText = ghText): Promise
   return JSON.parse(await gh(["api", "--paginate", endpoint])) as GhComment[];
 }
 
+/** The raw body of the bot's newest summary comment on the pull request, markers included. */
+export async function latestOwnSummary(slug: string, pr: string, opts: { gh?: GhText } = {}): Promise<string | null> {
+  const mine = (await ghComments(`repos/${slug}/issues/${pr}/comments`, opts.gh)).filter((c) =>
+    isOwnComment(c.body ?? "", c.user?.type, "summary"),
+  );
+  const latest = mine.reduce<GhComment | undefined>((a, c) => (a && a.id > c.id ? a : c), undefined);
+  return latest?.body ?? null;
+}
+
 /**
  * The bot's own summary comment restated for the prompt.
  *

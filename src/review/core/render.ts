@@ -1,7 +1,15 @@
 import path from "node:path";
 import { text } from "./lib/proc.ts";
 import { removeIfPresent, writeJson, writeText } from "./lib/io.ts";
-import { COPY_BLOCK_END, COPY_BLOCK_START, fingerprint, marker, stripMarkers } from "./lib/marker.ts";
+import {
+  COPY_BLOCK_END,
+  COPY_BLOCK_START,
+  fingerprint,
+  marker,
+  readMarkers,
+  stripCopyBlock,
+  stripMarkers,
+} from "./lib/marker.ts";
 import { anchorFor, loadHunks } from "./lib/hunks.ts";
 import { code, fence } from "./lib/markdown.ts";
 import { INLINE_MODE, POST_MIN_SEVERITY, repoName } from "./config.ts";
@@ -910,6 +918,65 @@ export function fitComment(body: string, tail: string): string {
   const open = (kept.match(/<details/g) ?? []).length - (kept.match(/<\/details>/g) ?? []).length;
   const close = open > 0 ? `\n${closer.repeat(open)}` : "";
   return `${kept}${close}${notice}${tail}`;
+}
+
+/**
+ * The last review's summary comment with a notice at the top saying why this
+ * push was not reviewed.
+ *
+ * Everything else stays as the last review left it. Its findings and rulings
+ * are still the latest word, and the summary marker keeps its round count, so
+ * the next push is stopped too and the gate reads the same open findings.
+ */
+export function stoppedSummary(previous: string, o: { round: number; maxRounds: number; head: string }): string {
+  const kept = previous
+    .split("\n")
+    .filter((line) => !readMarkers(line).some((m) => m.kind === "stopped"))
+    .join("\n")
+    .trimStart();
+  const rounds = o.round - 1;
+  const notice =
+    `> ⏸️ **Reviews stopped.** Commit \`${o.head.slice(0, 10)}\` was not reviewed: this pull request already had ` +
+    `${rounds} round${rounds === 1 ? "" : "s"} of review, and the limit is ${o.maxRounds} (\`--max-rounds\`). ` +
+    `The findings below are from the last review and are left for a human reviewer. ` +
+    marker("stopped", { round: o.round, max: o.maxRounds, head: o.head });
+  // The copy section is the one part that can go without losing a finding.
+  for (const body of [kept, stripCopyBlock(kept)]) {
+    const out = `${notice}\n\n${body}`;
+    if (out.length <= COMMENT_LIMIT) return out;
+  }
+  return kept;
+}
+
+/**
+ * Writes the payloads for a push that was not reviewed: the stopped summary,
+ * and no inline comments or replies.
+ */
+export async function writeStoppedArtifacts(o: {
+  dir: string;
+  tag: string;
+  slug: string;
+  pr: string;
+  head: string;
+  summary: string;
+}): Promise<void> {
+  await writeText(
+    path.join(o.dir, `${o.tag}.md`),
+    `<!-- summary comment: replaces the existing one; no inline comments or replies -->\n\n${o.summary}\n`,
+  );
+  await writeJson(path.join(o.dir, `${o.tag}.payloads.json`), {
+    summary: {
+      method: "POST",
+      endpoint: `repos/${o.slug}/issues/${o.pr}/comments`,
+      body: { body: o.summary },
+    },
+    review: {
+      method: "POST",
+      endpoint: `repos/${o.slug}/pulls/${o.pr}/reviews`,
+      body: { commit_id: o.head, event: "COMMENT", comments: [] },
+    },
+    replies: [],
+  });
 }
 
 /** The name the workflow uploads a pull request review's files under. */

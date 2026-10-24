@@ -27,7 +27,7 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { isOwnComment, readMarker, settledIds } from "./core/lib/marker.ts";
+import { findMarker, isOwnComment, readMarker, settledIds } from "./core/lib/marker.ts";
 import { run, text } from "./core/lib/proc.ts";
 import { repoSlug } from "./core/lib/target.ts";
 
@@ -126,11 +126,13 @@ const COMMENT_LIMIT = 65536;
 /**
  * Points the summary's detail link at the uploaded artifact instead of the run
  * page. The review sized the body to GitHub's limit with the shorter run URL
- * in it, so the link stays as it is when the swap would go over.
+ * in it, so the link stays as it is when the swap would go over. A summary
+ * stopped by --max-rounds keeps its link: the detail file is in the artifact of
+ * the review that wrote it, not in this run's.
  */
 export function linkDetailArtifact(body: string, artifactUrl?: string): string {
   const url = artifactUrl?.trim();
-  if (!url) return body;
+  if (!url || findMarker(body, "stopped")) return body;
   const linked = body.replace(/(\[Full review detail\]\()[^)]*(\))/, `$1${url}$2`);
   return linked.length <= COMMENT_LIMIT ? linked : body;
 }

@@ -102,10 +102,11 @@ async function report(
 ): Promise<CiResult> {
   const dir = runDir(id);
   const outDir = opts.out ? path.resolve(opts.out) : null;
-  // A skipped run still has a payload file: the core writes a "nothing to
-  // review" summary for it. Posting that comment is noise, so only a complete
-  // run reports or copies one.
-  const postable = status === "complete";
+  // A run skipped for having no code files still has a payload file: the core
+  // writes a "nothing to review" summary for it. Posting that comment is noise,
+  // so it is not reported or copied. A run stopped by --max-rounds posts the
+  // notice saying why the push was not reviewed.
+  const postable = status === "complete" || skipReason === "round-limit";
   const rawPayloads = path.join(dir, "raw", "payloads.json");
   let payloads = postable && (await Bun.file(rawPayloads).exists()) ? rawPayloads : null;
   if (outDir) {

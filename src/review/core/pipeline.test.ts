@@ -27,6 +27,7 @@ import {
   renderPriorComments,
   renderReview,
   saidFingerprints,
+  stoppedSummary,
   openCodeConfig,
   openCodeInvocation,
   openCodeSettings,
@@ -39,7 +40,7 @@ import {
   type PriorComment,
 } from "./pipeline.ts";
 import { diagnoseMissingOutput } from "./runner.ts";
-import { readMarkers, settledIds } from "./lib/marker.ts";
+import { COPY_BLOCK_END, COPY_BLOCK_START, findMarker, isOwnComment, marker, readMarkers, settledIds } from "./lib/marker.ts";
 import type { DisputeRuling } from "./disputes.ts";
 import { ARTIFACTS, OUT, applyConfig } from "./config.ts";
 
@@ -649,6 +650,42 @@ describe("renderReview close-out replies", () => {
     const human = priorComment({ id: 22, author: "someone", mine: false, file: "a.ts", line: 3 });
     const out = renderReview({ ...base, prior: [human], resolved: [{ id: 22 }] });
     expect(out.replies).toHaveLength(0);
+  });
+});
+
+describe("stoppedSummary", () => {
+  const previous = [
+    "## Review",
+    `- a finding ${marker("summary-item", { file: "a.ts", line: 3, fp: "abcdef1234", sev: "blocker" })}`,
+    marker("summary", { runs: 3, head: "1111111111" }),
+  ].join("\n");
+
+  it("puts the reason at the top and keeps the last review's comment", () => {
+    const out = stoppedSummary(previous, { round: 4, maxRounds: 3, head: "2222222222abcdef" });
+    const [first, ...rest] = out.split("\n\n");
+    expect(first).toContain("Commit `2222222222` was not reviewed");
+    expect(first).toContain("already had 3 rounds of review, and the limit is 3");
+    expect(findMarker(out, "stopped")?.fields).toEqual({ round: "4", max: "3", head: "2222222222abcdef" });
+    expect(rest.join("\n\n")).toBe(previous);
+    expect(findMarker(out, "summary")?.fields).toEqual({ runs: "3", head: "1111111111" });
+    expect(isOwnComment(out, "Bot", "summary")).toBe(true);
+  });
+
+  it("replaces the notice from an earlier stopped push", () => {
+    const once = stoppedSummary(previous, { round: 4, maxRounds: 3, head: "2222222222" });
+    const twice = stoppedSummary(once, { round: 4, maxRounds: 3, head: "3333333333" });
+    expect(readMarkers(twice).filter((m) => m.kind === "stopped")).toHaveLength(1);
+    expect(twice).toContain("`3333333333`");
+    expect(twice).not.toContain("`2222222222`");
+  });
+
+  it("drops the copy section when the notice would pass the comment limit", () => {
+    const copy = `${COPY_BLOCK_START}\n${"x".repeat(65536 - previous.length - 100)}\n${COPY_BLOCK_END}`;
+    const out = stoppedSummary(`${previous}\n\n${copy}`, { round: 4, maxRounds: 3, head: "2222222222" });
+    expect(out.length).toBeLessThanOrEqual(65536);
+    expect(out).toContain("Reviews stopped");
+    expect(out).not.toContain(COPY_BLOCK_START);
+    expect(out).toContain("- a finding");
   });
 });
 

@@ -25,8 +25,12 @@ import { createHash } from "node:crypto";
  * its fingerprint and whether the review withdrew or upheld it. The summary is
  * the only state that survives between runs, so this is what stops a dispute
  * being judged twice.
+ *
+ * `stopped` marks the notice put at the top of the summary comment when a push
+ * was not reviewed because of `--max-rounds`. The next stopped push replaces it
+ * instead of stacking a second one.
  */
-export type MarkerKind = "summary" | "summary-item" | "inline" | "reply" | "dispute";
+export type MarkerKind = "summary" | "summary-item" | "inline" | "reply" | "dispute" | "stopped";
 
 const PREFIX = "ai-review";
 
@@ -95,7 +99,7 @@ export function stripCopyBlock(body: string): string {
   return `${body.slice(0, start).trimEnd()}\n\n${body.slice(end + COPY_BLOCK_END.length).trimStart()}`.trim();
 }
 
-const KINDS: readonly string[] = ["summary", "summary-item", "inline", "reply", "dispute"];
+const KINDS: readonly string[] = ["summary", "summary-item", "inline", "reply", "dispute", "stopped"];
 
 export interface ParsedMarker {
   kind: MarkerKind;

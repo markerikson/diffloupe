@@ -136,7 +136,7 @@ diffloupe runs
 | `--effort <level>` | Reasoning effort: `low`, `medium`, `high` |
 | `--config <file>` | Per-repo review settings (see below) |
 | `--max-cost <usd>` | Stop starting new review slices once spending reaches this amount. Slices already running finish, so the total can go over: by up to six slices at $3 each, plus the coordinator and walkthrough. |
-| `--max-rounds <n>` | Skip the review when it would be past round n. With `--github`, rounds are counted from the pull request's summary comment. With `--headless`, a skipped run exits 4. |
+| `--max-rounds <n>` | Skip the review when it would be past round n. With `--github`, rounds are counted from the pull request's summary comment, and the payloads only add a notice to it saying why the push was not reviewed. With `--headless`, a skipped run exits 4. |
 | `--host <host>`, `--port <port>` | Server address (default `127.0.0.1:4517`, or the next free port) |
 | `--open` | Open the run in a browser. On WSL this opens the Windows browser. |
 | `--full` | On a re-review, review every changed file instead of only the files changed since the last run |
@@ -311,16 +311,20 @@ gate:
   if: ${{ !cancelled() && needs.post.result == 'success' }}
   runs-on: ubuntu-latest
   permissions:
-    pull-requests: read
+    pull-requests: write
     statuses: write
   env:
     GH_TOKEN: ${{ github.token }}
   steps:
+    # The review job sets `skip-reason` from `.skipReason` in its result.json.
+    - if: ${{ needs.review.outputs.skip-reason == 'round-limit' }}
+      run: gh pr edit ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --add-label ai-review-max-rounds
     - uses: oven-sh/setup-bun@v2
     - run: bun add -g @acemarke/diffloupe
     - run: >
         diffloupe gate '${{ github.repository }}#${{ github.event.pull_request.number }}'
         --fail-on blocker
+        --override-label ai-review-max-rounds
         --status ${{ github.event.pull_request.head.sha }}
 ```
 
@@ -335,7 +339,7 @@ With `--status`, the gate also sets a `diffloupe/gate` commit status on the PR h
 
 Gate on `blocker` only: findings vary between runs, and a lower threshold blocks merges on false positives. The `if:` above skips the gate when the review or post job fails, so an outage does not block merges; the required check then stays pending, so pick the behaviour you want there. "Require conversation resolution before merging" in the branch protection rules is a simpler option. It blocks on any unresolved inline comment, from the bot or a person, at any severity, but misses findings that are only in the summary.
 
-To stop an automated fix loop from running forever, pass `--max-rounds`. A review past that round is skipped before any model runs, exits 4 under `--headless`, and writes a `result.json` with `skipReason: "round-limit"`. Nothing is posted, so the summary comment and its rulings stay as they were.
+To stop an automated fix loop from running forever, pass `--max-rounds`. A review past that round is skipped before any model runs, exits 4 under `--headless`, and writes a `result.json` with `skipReason: "round-limit"`. Its `payloads.json` only updates the summary comment: a notice at the top says the push was not reviewed and why, and the rest of the comment, with its findings and rulings, stays as the last review left it. The example above then labels the PR and passes the gate with `--override-label`, so the PR can merge after a bounded number of fix attempts and the label marks the PRs that merged with findings still open. Treat exit 4 as success in the review job, or the post and gate jobs will not run.
 
 Run `diffloupe doctor --strict` before the review to fail fast on a missing tool or credential.
 
