@@ -29,6 +29,7 @@ import { saidFingerprints, readCheckedClaims, mergeBudgetFor, fallbackRank, coor
 import { writeArtifacts } from "./render.ts";
 import { draftIntent, type IntentDraftRecord } from "./intent-draft.ts";
 import { disputeRecord, earlierRulings, hasOpenDisputes, pendingDisputes, renderDisputes, rulingsFromDecisions } from "./disputes.ts";
+import { roundProgress } from "./progress.ts";
 
 export * from "./config.ts";
 export * from "./findings.ts";
@@ -104,6 +105,14 @@ export interface RunReviewOptions {
    * changed since then are reviewed again, unless too many changed.
    */
   priorHead?: string;
+  /**
+   * Skip the review, before any model call, when it would be a later round
+   * than this. The round is counted from the pull request's summary comment,
+   * or taken from `round` on a local run.
+   */
+  maxRounds?: number;
+  /** A local run's round, from the prior runs of this target. */
+  round?: number;
 }
 
 const MIN_FILES_FOR_FALLBACK = 4;
@@ -136,6 +145,8 @@ export function chooseReviewScope(files: string[], changedSince: string[] | null
 export interface RunReviewResult {
   /** The run record written to runs/<tag>.json, or null when nothing was reviewable. */
   record: Record<string, unknown> | null;
+  /** Set when `maxRounds` stopped the review; `round` is the round it would have been. */
+  roundLimit?: { maxRounds: number; round: number };
   units: ReviewUnit[];
   byClass: { skip: string[]; docs: string[]; code: string[] };
   findings: Finding[];
@@ -253,6 +264,18 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
   const byClass = { skip: [] as string[], docs: [] as string[], code: [] as string[] };
   for (const f of changed) byClass[classifyFile(f)].push(f);
   const sliceFiles = byClass.code;
+
+  const round = options.local ? (options.round ?? 1) : reviewsSoFar + 1;
+  if (options.maxRounds !== undefined && round > options.maxRounds) {
+    console.error(`  not reviewing: this would be round ${round}, and --max-rounds is ${options.maxRounds}`);
+    // Nothing is written for posting: the summary comment carries the rulings
+    // and the round count, and must stay as the last review left it.
+    return {
+      record: null,
+      roundLimit: { maxRounds: options.maxRounds, round },
+      units: [], byClass, findings: [], costUsd: 0, wallMs: Date.now() - started, markdownPath,
+    };
+  }
 
   // `git diff <range> -- ` with an empty pathspec means "everything", not
   // "nothing". A docs-only or lockfile-only change leaves no code files, and
@@ -1005,6 +1028,13 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
       resolved,
       ...(pending.length || earlier.length ? { disputes: disputeRecord(earlier, rulings, pending) } : {}),
       ...(rulings.length ? { rulings } : {}),
+      roundProgress: roundProgress({
+        prior,
+        resolvedIds: resolved.map((r) => r.id),
+        earlierRulings: earlier,
+        rulings,
+        newFindings: verified.length,
+      }),
       runs: reviewsSoFar + 1,
       rejected,
     intentAlignment: mp2.intent_alignment ?? null,

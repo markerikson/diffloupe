@@ -31,6 +31,7 @@ export function formatEvent(e: RunEvent): string | null {
         const cost = e.costUsd ? ` · $${e.costUsd.toFixed(2)}` : "";
         return `${e.files ?? 0} file(s) changed${cost} · ${(e.wallMs / 1000).toFixed(1)}s`;
       }
+      if (e.roundLimit) return `Not reviewed: this change already had ${e.roundLimit} round(s) of review (--max-rounds).`;
       if (e.noChanges) return "No code changes to review.";
       const carried = e.carriedOver ?? 0;
       const found = carried

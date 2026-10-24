@@ -17,6 +17,7 @@ import type {
   RunFinding,
   RunGroup,
   RunKind,
+  RunRoundProgress,
   RunSlice,
 } from "../types/review-run.ts";
 import { actedOn } from "./acted-on.ts";
@@ -59,6 +60,7 @@ interface CoreRecord {
   instructionsHash?: string;
   resolved?: { id: number; note?: string }[];
   disputes?: RunDispute[];
+  roundProgress?: RunRoundProgress;
   rejected?: unknown[];
   intentAlignment?: {
     summary?: string;
@@ -558,6 +560,7 @@ export function buildReviewRun(input: BuildReviewRunInput): ReviewRun {
     overCapFindings,
     resolved,
     ...(record?.disputes?.length ? { disputes: record.disputes } : {}),
+    ...(record?.roundProgress ? { roundProgress: record.roundProgress } : {}),
     unreviewed: record?.unreviewed ?? { overCap: [], failed: [] },
     meta: {
       ...(record?.model ? { model: record.model } : {}),

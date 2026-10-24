@@ -188,10 +188,6 @@ export function runKind(run: { meta: { kind?: RunKind | undefined } }): RunKind 
   return run.meta.kind ?? "review";
 }
 
-/**
- * Per prior finding: whether the code at its lines changed before this run
- * (`acted`), and whether the same span 35 lines away did (`control`).
- */
 export const RunDisputeSchema = type({
   fp: "string",
   outcome: "'withdrawn' | 'upheld' | 'unjudged'",
@@ -203,6 +199,21 @@ export const RunDisputeSchema = type({
 });
 export type RunDispute = typeof RunDisputeSchema.infer;
 
+export const RunRoundProgressSchema = type({
+  open: "number",
+  fixed: "number",
+  withdrawn: "number",
+  upheld: "number",
+  fixedThisRound: "number",
+  withdrawnThisRound: "number",
+  new: "number",
+});
+export type RunRoundProgress = typeof RunRoundProgressSchema.infer;
+
+/**
+ * Per prior finding: whether the code at its lines changed before this run
+ * (`acted`), and whether the same span 35 lines away did (`control`).
+ */
 export const PriorActedOnSchema = type({ id: "string", acted: "boolean", control: "boolean" });
 export type PriorActedOn = typeof PriorActedOnSchema.infer;
 
@@ -213,6 +224,8 @@ export type PriorActedOn = typeof PriorActedOnSchema.infer;
  * - `disputes`: every finding the author disputed on this pull request, with
  *   the review's ruling. `earlier` marks a ruling carried forward from an
  *   earlier review; `unjudged` means no ruling yet.
+ * - `roundProgress`: where the bot's earlier findings stand after this review
+ *   (open, fixed, withdrawn, upheld) and how many findings it raised.
  * - `unreviewed`: code files no reviewer read: over the slice cap, in a failed
  *   slice, or skipped at the cost limit.
  * - `meta.budgetStopped`: the cost limit stopped new slices from starting.
@@ -260,6 +273,7 @@ export const ReviewRunSchema = type({
   overCapFindings: RunFindingSchema.array(),
   resolved: type({ id: "string", "note?": "string", "title?": "string", "file?": "string" }).array(),
   "disputes?": RunDisputeSchema.array(),
+  "roundProgress?": RunRoundProgressSchema,
   unreviewed: { overCap: "string[]", failed: "string[]", "budget?": "string[]" },
   meta: {
     "model?": "string",

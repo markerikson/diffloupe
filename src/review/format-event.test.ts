@@ -18,4 +18,10 @@ describe("formatEvent done line", () => {
   test("reports a target with no code changes", () => {
     expect(formatEvent({ ...base, findings: 0, noChanges: true })).toBe("No code changes to review.");
   });
+
+  test("reports a review skipped by --max-rounds", () => {
+    expect(formatEvent({ ...base, findings: 0, roundLimit: 3 })).toBe(
+      "Not reviewed: this change already had 3 round(s) of review (--max-rounds).",
+    );
+  });
 });

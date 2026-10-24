@@ -5,12 +5,20 @@
  *
  * Exit codes: 0 complete or skipped, 1 the run failed, 2 the run could not
  * start (bad target, missing tool or credential), 3 `--fail-on` matched,
- * 130 cancelled.
+ * 4 `--max-rounds` skipped the review, 130 cancelled.
  */
 import path from "node:path";
 import { defaultDriver, RunManager } from "../server/run-manager.ts";
 import type { ReviewRun } from "../types/review-run.ts";
-import { buildResult, failsGate, writeOutDir, writeResult, type CiResult, type ResultStatus } from "./ci-output.ts";
+import {
+  buildResult,
+  failsGate,
+  writeOutDir,
+  writeResult,
+  type CiResult,
+  type ResultStatus,
+  type SkipReason,
+} from "./ci-output.ts";
 import { formatEvent } from "./format-event.ts";
 import { formatDiffSummary, formatRunSummary } from "./format-run.ts";
 import type { ReviewCommandOptions } from "./options.ts";
@@ -49,7 +57,10 @@ export async function runHeadlessReview(opts: ReviewCommandOptions): Promise<num
   const run = outcome.status === "complete" ? outcome.run : await loadRun(started.id).catch(() => null);
   const status: ResultStatus =
     outcome.status === "complete" ? (outcome.reviewed ? "complete" : "skipped") : outcome.status;
-  const result = await report(started.id, run, status, skippedSlices, opts);
+  const roundLimit = outcome.status === "complete" ? outcome.roundLimit : undefined;
+  const skipReason: SkipReason | null =
+    status !== "skipped" ? null : roundLimit ? "round-limit" : "no-code-files";
+  const result = await report(started.id, run, status, skipReason, skippedSlices, opts);
   if (opts.json) process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 
   if (outcome.status === "cancelled") {
@@ -61,6 +72,10 @@ export async function runHeadlessReview(opts: ReviewCommandOptions): Promise<num
     return 1;
   }
   log(`Run saved: ${dir} (diffloupe runs show ${started.id})\n`);
+  if (roundLimit) {
+    log(`Not reviewed: round ${roundLimit.round} is past --max-rounds ${roundLimit.maxRounds}`);
+    return 4;
+  }
   if (!opts.json) {
     if (opts.kind === "diff") {
       process.stdout.write(`${formatDiffSummary(outcome.run)}\n`);
@@ -81,6 +96,7 @@ async function report(
   id: string,
   run: ReviewRun | null,
   status: ResultStatus,
+  skipReason: SkipReason | null,
   skippedSlices: number,
   opts: ReviewCommandOptions,
 ): Promise<CiResult> {
@@ -104,7 +120,7 @@ async function report(
     payloads,
     skippedSlices,
     ...(opts.github ? { round: await githubRound(dir) } : {}),
-    ...(status === "skipped" ? { skipReason: "no-code-files" as const } : {}),
+    skipReason,
   });
   if (outDir) await writeResult(outDir, result);
   return result;

@@ -4,14 +4,14 @@
  */
 import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { FindingSeverity, ReviewRun } from "../types/review-run.ts";
+import type { FindingSeverity, ReviewRun, RunRoundProgress } from "../types/review-run.ts";
 import { VERSION } from "../version.ts";
 import { artifactName, FINDINGS_FILE, isMinor } from "./core/render.ts";
 import { SEVERITY_ORDER } from "./export.ts";
 import { artifactsDir, runDir } from "./run-store.ts";
 
 export type ResultStatus = "complete" | "failed" | "cancelled" | "skipped";
-export type SkipReason = "no-code-files" | "over-size-limit";
+export type SkipReason = "no-code-files" | "over-size-limit" | "round-limit";
 
 export interface CiResult {
   id: string;
@@ -37,6 +37,8 @@ export interface CiResult {
     minor: number;
     bySeverity: Record<FindingSeverity, number>;
   };
+  /** Where the bot's earlier findings stand after this review. Null when nothing was reviewed. */
+  progress: RunRoundProgress | null;
   round: number;
   incremental: boolean;
   version: string;
@@ -82,6 +84,7 @@ export function buildResult(run: ReviewRun | null, extras: ResultExtras): CiResu
       minor,
       bySeverity,
     },
+    progress: run?.roundProgress ?? null,
     round: extras.round ?? run?.round ?? 1,
     incremental: run?.meta.reviewScope === "incremental",
     version: VERSION,

@@ -27,6 +27,8 @@ export const StartRunRequestSchema = type({
   },
   "effort?": "string",
   "maxCostUsd?": "number > 0",
+  /** Review runs only: skip the review when it would be a later round than this. */
+  "maxRounds?": "number.integer > 0",
   "settingsFile?": "string",
   "kind?": RunKindSchema,
   /** Diff runs only: add the walkthrough guide. */
@@ -98,8 +100,9 @@ export type GroupsEvent = typeof GroupsEventSchema.infer;
  * Events the run manager adds around the core's own. On `done`, `findings`
  * counts every finding in run.json, carried-over ones included; `carriedOver`
  * is absent in older event logs; `noChanges` means the target held no
- * reviewable code and nothing was sent to a model. Diff runs set `kind` and
- * `files` (the changed file count).
+ * reviewable code and nothing was sent to a model; `roundLimit` is the
+ * `--max-rounds` value that stopped the review before any model call. Diff
+ * runs set `kind` and `files` (the changed file count).
  */
 export const RunEventSchema = CoreEventSchema.or(GroupsEventSchema).or({
   type: "'done'",
@@ -109,6 +112,7 @@ export const RunEventSchema = CoreEventSchema.or(GroupsEventSchema).or({
   costUsd: "number",
   wallMs: "number",
   "noChanges?": "boolean",
+  "roundLimit?": "number",
   "kind?": RunKindSchema,
   "files?": "number",
 })

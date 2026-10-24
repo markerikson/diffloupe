@@ -58,9 +58,21 @@ describe("buildResult", () => {
     expect(r.findings).toMatchObject({ total: 3, posted: 1, minor: 2 });
   });
 
+  test("reports where earlier findings stand", () => {
+    const roundProgress = { open: 1, fixed: 2, withdrawn: 1, upheld: 0, fixedThisRound: 1, withdrawnThisRound: 1, new: 0 };
+    const run: ReviewRun = { ...withFindings([]), roundProgress };
+    expect(buildResult(run, { id: "x", status: "complete", runDir: "/runs/x" }).progress).toEqual(roundProgress);
+    expect(buildResult(withFindings([]), { id: "x", status: "complete", runDir: "/runs/x" }).progress).toBeNull();
+  });
+
+  test("a run skipped by --max-rounds", () => {
+    const r = buildResult(withFindings([]), { id: "x", status: "skipped", skipReason: "round-limit", runDir: "/runs/x", round: 4 });
+    expect(r).toMatchObject({ reviewed: false, skipReason: "round-limit", round: 4 });
+  });
+
   test("a run that failed before saving anything", () => {
     const r = buildResult(null, { id: "x", status: "failed", runDir: "/runs/x" });
-    expect(r).toMatchObject({ reviewed: false, pr: null, head: null, artifactName: null, payloads: null, costUsd: 0, round: 1 });
+    expect(r).toMatchObject({ reviewed: false, pr: null, head: null, artifactName: null, payloads: null, costUsd: 0, round: 1, progress: null });
     expect(r.findings.total).toBe(0);
   });
 
