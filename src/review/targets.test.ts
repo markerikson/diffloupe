@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { text } from "./core/lib/proc.ts";
@@ -202,6 +202,24 @@ describe("resolveTarget", () => {
     const files = (await git("diff", "--name-only", r.target.base, r.target.head)).trim().split("\n");
     expect(files.sort()).toEqual(["a.ts", "new.ts"]);
     expect((await git("rev-parse", `refs/diffloupe/${r.tag}`)).trim()).toBe(r.target.head);
+  });
+
+  it("sees a same-size edit made in the same second as the last index write", async () => {
+    // Pin the file, its cached stat and the index to one past second, so the
+    // edit is only visible through git's racy-clean check against the index mtime.
+    await git("config", "core.trustctime", "false");
+    const file = path.join(repo, "a.ts");
+    const index = path.join(repo, ".git", "index");
+    const second = Math.floor(Date.now() / 1000) - 60;
+    await utimes(file, second, second);
+    await git("update-index", "--refresh");
+    await writeFile(file, "export const a = 9;\n");
+    await utimes(file, second, second);
+    await utimes(index, second, second);
+
+    const r = await resolveTarget(repo, undefined);
+
+    expect((await git("diff", "--name-only", r.target.base, r.target.head)).trim()).toBe("a.ts");
   });
 
   it("snapshots only staged changes", async () => {
