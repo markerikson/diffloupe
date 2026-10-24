@@ -4,7 +4,7 @@ import { removeIfPresent, writeJson, writeText } from "./lib/io.ts";
 import { COPY_BLOCK_END, COPY_BLOCK_START, fingerprint, marker, stripMarkers } from "./lib/marker.ts";
 import { anchorFor, loadHunks } from "./lib/hunks.ts";
 import { code, fence } from "./lib/markdown.ts";
-import { INLINE_MODE, repoName } from "./config.ts";
+import { INLINE_MODE, POST_MIN_SEVERITY, repoName } from "./config.ts";
 import { type Finding } from "./findings.ts";
 import { type PriorComment } from "./context.ts";
 import { type Walkthrough } from "./prompts.ts";
@@ -13,6 +13,16 @@ import { mergeRisk, prodRisk, TIER_TITLE, type Verdict } from "./verdict.ts";
 
 const RISK_DOT = { high: "🔴", moderate: "🟡", low: "🟢" } as const;
 import { MAX_POSTED } from "./coordinate.ts";
+
+/** Severities from most to least serious, as `--fail-on` and `post.minSeverity` read them. */
+export const POST_ORDER = ["blocker", "should-fix", "nice-to-have", "question"] as const;
+
+/** Whether a finding falls below the posting threshold. Nothing does when there is none. */
+export function isMinor(minSeverity: Finding["severity"] | null | undefined): (f: Pick<Finding, "severity">) => boolean {
+  if (!minSeverity) return () => false;
+  const limit = POST_ORDER.indexOf(minSeverity);
+  return (f) => POST_ORDER.indexOf(f.severity) > limit;
+}
 
 export function renderReview(o: {
   /** Absent for a commit-range review, which is never posted anywhere. */
@@ -64,6 +74,8 @@ export function renderReview(o: {
   overCap?: Finding[] | undefined;
   /** See `INLINE_MODE`. Defaults to summary-only. */
   inlineMode?: "tier" | "none" | undefined;
+  /** See `POST_MIN_SEVERITY`. Absent lists every severity with the main findings. */
+  minSeverity?: Finding["severity"] | null | undefined;
 }): {
   summary: string;
   /**
@@ -279,18 +291,21 @@ export function renderReview(o: {
   const flat = (t: string) => t.replace(/\s+/g, " ").trim();
   const tier = primarySurface(o.changedFiles ?? [], reported);
   const inTier = (f: Finding) => SURFACE_RANK[classifySurface(f.file)] <= SURFACE_RANK[tier];
-  const tierFindings = reported.filter(inTier);
-  const otherFindings = reported.filter((f) => !inTier(f));
+  const minor = isMinor(o.minSeverity);
+  const major = reported.filter((f) => !minor(f));
+  const tierFindings = major.filter(inTier);
+  const otherFindings = major.filter((f) => !inTier(f));
+  const minorFindings = reported.filter(minor);
   // Which findings get an inline comment of their own. Computed up here rather
   // than beside the payload assembly because the bullet list needs the same
   // answer: a finding with an inline comment carries its fingerprint there, and
   // one without carries it on its summary bullet — never both, or the prompt
   // tells the next reviewer to repeat a claim it can already see.
-  const posted = (o.inlineMode ?? "none") === "none" ? [] : fresh.filter(inTier);
+  const posted = (o.inlineMode ?? "none") === "none" ? [] : fresh.filter((f) => inTier(f) && !minor(f));
   const postedSet = new Set(posted);
-  // Numbered across both groups in render order, so a bullet in either list can
+  // Numbered across every group in render order, so a bullet in any list can
   // point at its evidence block and the numbers never collide.
-  const evidenceOrder = [...tierFindings, ...otherFindings];
+  const evidenceOrder = [...tierFindings, ...otherFindings, ...minorFindings];
   const evidenceNo = new Map<Finding, number>();
   for (const f of evidenceOrder) evidenceNo.set(f, evidenceNo.size + 1);
 
@@ -546,6 +561,19 @@ export function renderReview(o: {
     );
     s.push("");
     s.push(...bulletList(otherFindings));
+    s.push("");
+    s.push("</details>");
+    s.push("");
+  }
+
+  // Below the repo's posting threshold. Still listed, with their fingerprints,
+  // so a human can read them and the next review does not raise them again.
+  if (minorFindings.length && o.minSeverity) {
+    s.push(
+      `<details><summary>Minor findings (${minorFindings.length}) — below ${o.minSeverity}</summary>`,
+    );
+    s.push("");
+    s.push(...bulletList(minorFindings));
     s.push("");
     s.push("</details>");
     s.push("");
@@ -986,6 +1014,7 @@ export async function writeArtifacts(o: {
     overCap: o.overCap,
     changedFiles,
     inlineMode: INLINE_MODE,
+    minSeverity: POST_MIN_SEVERITY,
   });
 
   const md = o.local

@@ -202,6 +202,8 @@ export type PriorActedOn = typeof PriorActedOnSchema.infer;
  * - `unreviewed`: code files no reviewer read: over the slice cap, in a failed
  *   slice, or skipped at the cost limit.
  * - `meta.budgetStopped`: the cost limit stopped new slices from starting.
+ * - `meta.postMinSeverity`: the repo's posting threshold; findings below it
+ *   were listed in a collapsed section rather than with the main findings.
  * - `meta.reviewScope`: `incremental` when a re-review looked only at files
  *   changed since the prior run's head; `meta.reviewedFiles` counts the files
  *   the reviewers read, `meta.scopeReason` says why a re-review went full.
@@ -272,6 +274,7 @@ export const ReviewRunSchema = type({
     coreSource: "string",
     "mergeMode?": "'coordinator' | 'nothing-to-merge' | 'deterministic-fallback'",
     "budgetStopped?": "boolean",
+    "postMinSeverity?": FindingSeveritySchema,
     "reviewScope?": "'full' | 'incremental'",
     "reviewedFiles?": "number",
     "scopeReason?": "string",

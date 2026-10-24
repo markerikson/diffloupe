@@ -209,7 +209,7 @@ export function createReviewCommand(): Command {
     .option("--intent-file <path>", "Read the intent from a file")
     .option("--model <stage=id>", "Model for a stage: review, coordinator, walkthrough, intent (repeatable)", collect, [])
     .option("--effort <level>", "Reasoning effort: the model variant to use, e.g. low, medium, high")
-    .option("--config <file>", "Per-repo review settings JSON (models, effort, surfaces, extraExcludes, instructions)")
+    .option("--config <file>", "Per-repo review settings JSON (models, effort, surfaces, extraExcludes, post, instructions)")
     .option(
       "--max-cost <usd>",
       "Stop starting new review slices once spending reaches this many US dollars. Slices already running " +

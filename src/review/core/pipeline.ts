@@ -19,7 +19,7 @@ import { openSubject } from "./lib/subject.ts";
 import { targetKey, type Target } from "./lib/target.ts";
 import { fingerprint } from "./lib/marker.ts";
 import { compactDeletedFiles, parseDiffHunks } from "./lib/hunks.ts";
-import { DIR, SUBJECT, ARTIFACTS, RUNNER, MODEL, EFFORT, MODEL_WALK, MODEL_MERGE, MODEL_INTENT, EFFORT_AUX, WALK_BUDGET, PART_BUDGET, GROUPING, SLICE_BUDGET, MERGE_BUDGET, POOL, MAX_SLICES, MAX_SLICE_TOKENS, WALK_DIFF_TOKENS, OUT, applyConfig, setRunState, resetRunState, releaseSubject, type ReviewConfig } from "./config.ts";
+import { DIR, SUBJECT, ARTIFACTS, RUNNER, MODEL, EFFORT, MODEL_WALK, MODEL_MERGE, MODEL_INTENT, EFFORT_AUX, WALK_BUDGET, PART_BUDGET, GROUPING, SLICE_BUDGET, MERGE_BUDGET, POOL, MAX_SLICES, MAX_SLICE_TOKENS, WALK_DIFF_TOKENS, OUT, DROP_QUESTIONS, POST_MIN_SEVERITY, applyConfig, setRunState, resetRunState, releaseSubject, type ReviewConfig } from "./config.ts";
 import { classifyFile, type Finding } from "./findings.ts";
 import { gitText, diffOutline, gatherIntent, gatherPriorComments, renderPriorComments, type PriorComment } from "./context.ts";
 import { agent, CancelledError, killAgents, resetOpenCodeConfig, type AgentFailure } from "./runner.ts";
@@ -752,6 +752,17 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
       return false;
     });
   };
+  // Questions the repo's settings keep out of the posted review. Taken out
+  // before the cap so they do not hold slots, and kept in the run record.
+  const droppedQuestions: Finding[] = [];
+  const dropQuestions = (list: Finding[]) => {
+    if (!DROP_QUESTIONS) return list;
+    return list.filter((f) => {
+      if (f.severity !== "question") return true;
+      droppedQuestions.push(f);
+      return false;
+    });
+  };
   // Every claim this review stands behind, captured before either the cap or
   // suppression thins the list. Both of those remove findings the review still
   // believes in, and this set is what stops a comment being closed out as fixed
@@ -778,11 +789,11 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     // they are exempt — a flat slice here would let a batch of high-severity
     // agreements sort to the front and push real findings past the cut.
     stillOpen = new Set([...byImportance, ...applied.capped].map((f) => fingerprint(f.file, f.title)));
-    const cut = capFindings(suppressSaid(byImportance), capLimits);
+    const cut = capFindings(dropQuestions(suppressSaid(byImportance)), capLimits);
     // The coordinator's own cap cuts rank below anything this cut leaves over,
     // and go through the same suppression so an already-posted claim is not
     // listed again as past the cap.
-    overCap = [...cut.overCap, ...suppressSaid(applied.capped.sort(importance))];
+    overCap = [...cut.overCap, ...dropQuestions(suppressSaid(applied.capped.sort(importance)))];
     finalFindings = cut.posted;
   }
   if (!mp2.keep) {
@@ -801,7 +812,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     // unvetted id would route the finding out of the review and into a reply
     // endpoint that may not accept it, losing a finding this path exists to
     // salvage.
-    const cut = capFindings(suppressSaid(ranked).map((f) => ({ ...f, repeat_of: undefined })), capLimits);
+    const cut = capFindings(dropQuestions(suppressSaid(ranked)).map((f) => ({ ...f, repeat_of: undefined })), capLimits);
     finalFindings = cut.posted;
     overCap = cut.overCap;
   }
@@ -823,6 +834,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     return !(c.fingerprint && stillOpen.has(c.fingerprint));
   });
   if (resolved.length) console.error(`  closing out ${resolved.length} earlier comments as fixed`);
+  if (droppedQuestions.length) console.error(`  left ${droppedQuestions.length} question(s) out of the posted review`);
 
   emit({ type: "stage", stage: "verifying" });
   // ---- deterministic verification: cited location must exist
@@ -862,6 +874,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     "raw findings": allFindings.length,
     "after merge": finalFindings.length,
     "after verification": verified.length,
+    ...(droppedQuestions.length ? { "questions not posted (settings)": droppedQuestions.length } : {}),
     "registry signals": reg.findings.length,
     "prior comments considered": prior.length,
     ...(incremental
@@ -952,6 +965,8 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     mergedFindings: finalFindings,
       verifiedFindings: verified,
       overCapFindings: overCap,
+      ...(droppedQuestions.length ? { droppedQuestions } : {}),
+      ...(POST_MIN_SEVERITY ? { postMinSeverity: POST_MIN_SEVERITY } : {}),
       checked,
       unreviewed: notReviewedFiles,
       resolved,

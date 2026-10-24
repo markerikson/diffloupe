@@ -42,11 +42,20 @@ describe("buildResult", () => {
       wallMs: 9000,
       budgetStopped: true,
       skippedSlices: 2,
-      findings: { total: 4, posted: 3, bySeverity: { blocker: 1, "should-fix": 0, "nice-to-have": 0, question: 2 } },
+      findings: { total: 4, posted: 3, minor: 0, bySeverity: { blocker: 1, "should-fix": 0, "nice-to-have": 0, question: 2 } },
       round: 2,
       incremental: true,
       version: VERSION,
     });
+  });
+
+  test("findings below the posting threshold are counted as minor, not posted", () => {
+    const run: ReviewRun = {
+      ...withFindings([{ severity: "blocker" }, { severity: "nice-to-have" }, { severity: "question" }]),
+      meta: { ...largePr.meta, postMinSeverity: "should-fix" },
+    };
+    const r = buildResult(run, { id: "x", status: "complete", runDir: "/runs/x" });
+    expect(r.findings).toMatchObject({ total: 3, posted: 1, minor: 2 });
   });
 
   test("a run that failed before saving anything", () => {

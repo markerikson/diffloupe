@@ -55,7 +55,22 @@ describe("settingsToConfig", () => {
   });
 
   test("leaves models and effort out", () => {
-    expect(settingsToConfig({ models: { review: "a" }, effort: "low" })).toEqual({});
+    const config = settingsToConfig({ models: { review: "a" }, effort: "low" });
+    expect(config).not.toHaveProperty("model");
+    expect(config).not.toHaveProperty("effort");
+  });
+
+  test("resets the posting rules when none are given", () => {
+    expect(settingsToConfig({})).toEqual({ postMinSeverity: null, dropQuestions: false });
+  });
+
+  test("reads the posting rules", () => {
+    const settings = parseReviewSettings({ post: { minSeverity: "should-fix", questions: "drop" } }, "test");
+    expect(settingsToConfig(settings)).toMatchObject({ postMinSeverity: "should-fix", dropQuestions: true });
+  });
+
+  test("rejects an unknown severity", () => {
+    expect(() => parseReviewSettings({ post: { minSeverity: "major" } }, "test")).toThrow(/invalid settings/);
   });
 });
 

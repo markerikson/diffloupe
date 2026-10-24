@@ -7,14 +7,17 @@
  *   "effort": "medium",
  *   "surfaces": { "deploy": ["^infra/"], "tooling": ["^docs/"] },
  *   "extraExcludes": ["vendor/openssl/"],
- *   "instructions": ["## What failure looks like here", "..."]
+ *   "instructions": ["## What failure looks like here", "..."],
+ *   "post": { "minSeverity": "should-fix", "questions": "drop" }
  * }
  *
  * surfaces are regex sources matched against repo-relative paths. They replace
  * the defaults for whichever list is given. extraExcludes are path substrings
  * left out of the code map and the registry check. instructions is free text
  * given to every reviewer and the coordinator, as one string or as an array of
- * lines joined with newlines.
+ * lines joined with newlines. post.minSeverity moves findings below that
+ * severity into a collapsed section of the summary; post.questions "drop"
+ * leaves questions out of the posted review.
  */
 import { readFile } from "node:fs/promises";
 import { type } from "arktype";
@@ -40,6 +43,11 @@ const ReviewSettings = type({
   },
   "extraExcludes?": "string[]",
   "instructions?": "string | string[]",
+  "post?": {
+    "+": "reject",
+    "minSeverity?": "'blocker' | 'should-fix' | 'nice-to-have' | 'question'",
+    "questions?": "'keep' | 'drop'",
+  },
 });
 
 export type ReviewSettings = typeof ReviewSettings.infer;
@@ -87,6 +95,10 @@ export function settingsToConfig(settings: ReviewSettings): Partial<ReviewConfig
     };
   }
   if (settings.extraExcludes) config.extraExcludes = settings.extraExcludes;
+  // Always set, so a server that runs several repos does not carry one repo's
+  // posting rules into the next run.
+  config.postMinSeverity = settings.post?.minSeverity ?? null;
+  config.dropQuestions = settings.post?.questions === "drop";
   return config;
 }
 

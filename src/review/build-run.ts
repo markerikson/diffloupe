@@ -50,6 +50,7 @@ interface CoreRecord {
   overCapFindings?: Finding[];
   unreviewed?: { overCap: string[]; failed: string[]; budget?: string[] };
   budgetStopped?: boolean;
+  postMinSeverity?: FindingSeverity;
   reviewScope?: string;
   reviewedFiles?: number;
   scopeReason?: string;
@@ -572,6 +573,7 @@ export function buildReviewRun(input: BuildReviewRunInput): ReviewRun {
           }
         : {}),
       ...(record?.budgetStopped ? { budgetStopped: true } : {}),
+      ...(record?.postMinSeverity ? { postMinSeverity: record.postMinSeverity } : {}),
       ...(record?.reviewScope === "full" || record?.reviewScope === "incremental"
         ? { reviewScope: record.reviewScope }
         : {}),

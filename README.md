@@ -241,6 +241,7 @@ Written to `--out` for every finished, failed, cancelled or skipped run, and pri
   "findings": {
     "total": 7,
     "posted": 6,
+    "minor": 0,
     "bySeverity": { "blocker": 0, "should-fix": 2, "nice-to-have": 3, "question": 1 }
   },
   "round": 2,
@@ -249,7 +250,7 @@ Written to `--out` for every finished, failed, cancelled or skipped run, and pri
 }
 ```
 
-`status` is `complete`, `failed`, `cancelled` or `skipped`. `skipReason` is `no-code-files` for a skipped run. `payloads` is `null` when there is nothing to post. `findings.posted` counts the findings in the comments; `total` adds the ones over the comment cap, and `bySeverity` counts only posted findings. `artifactName` is the name the summary comment links to, so upload `--out` under that name.
+`status` is `complete`, `failed`, `cancelled` or `skipped`. `skipReason` is `no-code-files` for a skipped run. `payloads` is `null` when there is nothing to post. `findings.posted` counts the findings in the comments; `minor` counts the ones folded into the summary's "Minor findings" section by the `post.minSeverity` setting; `total` adds the ones over the comment cap, and `bySeverity` counts posted and minor findings. `artifactName` is the name the summary comment links to, so upload `--out` under that name.
 
 `--out` also holds `review.md`, `payloads.json`, `findings.md`, `record.json`, `units.json`, `byClass.json`, `run.json` and the detail report `<run id>.detail.md`. Files a run did not produce are left out.
 
@@ -307,6 +308,7 @@ Run `diffloupe doctor --strict` before the review to fail fast on a missing tool
   "effort": "medium",
   "surfaces": { "deploy": ["^infra/"], "tooling": ["^docs/"] },
   "extraExcludes": ["vendor/openssl/"],
+  "post": { "minSeverity": "should-fix", "questions": "drop" },
   "instructions": [
     "## What failure looks like here",
     "A change that breaks runs already saved on disk.",
@@ -336,6 +338,8 @@ Every field is optional.
 **Effort** is passed to OpenCode as the model variant (`provider/model#high`), so it must be a variant the model offers. It is only added when you set it, or when the model is a built-in default. A model from your OpenCode config runs without a variant unless you set an effort. A `#variant` written in the model id always wins.
 
 `surfaces` are regex sources matched against repo-relative paths. They decide which findings count toward "prod risk": anything not matched as deploy or tooling counts as product code. `extraExcludes` are path substrings left out of the code map.
+
+`post` decides what the posted review shows. Findings below `minSeverity` (order: `blocker`, `should-fix`, `nice-to-have`, `question`) get no inline comment and are listed in a collapsed "Minor findings" section of the summary. They don't count toward `findings.posted` in `result.json`; `findings.minor` counts them. `"questions": "drop"` leaves questions out of the review entirely, so they don't take slots under the findings cap. By default every finding is posted.
 
 `instructions` is free text given to every reviewer and the coordinator, either one string or an array of lines. Keep it short and about what the code can't tell a reviewer: what counts as breaking in this repo, invariants that are easy to break and invisible in a diff, and what not to report. Where it conflicts with the built-in review guidance, it wins.
 

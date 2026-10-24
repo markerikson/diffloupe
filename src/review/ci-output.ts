@@ -6,7 +6,7 @@ import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { FindingSeverity, ReviewRun } from "../types/review-run.ts";
 import { VERSION } from "../version.ts";
-import { artifactName, FINDINGS_FILE } from "./core/render.ts";
+import { artifactName, FINDINGS_FILE, isMinor } from "./core/render.ts";
 import { SEVERITY_ORDER } from "./export.ts";
 import { artifactsDir, runDir } from "./run-store.ts";
 
@@ -31,7 +31,10 @@ export interface CiResult {
   skippedSlices: number;
   findings: {
     total: number;
+    /** Findings listed with the main findings: at or above the repo's posting threshold, within the cap. */
     posted: number;
+    /** Findings listed in the collapsed section below the posting threshold. */
+    minor: number;
     bySeverity: Record<FindingSeverity, number>;
   };
   round: number;
@@ -55,6 +58,7 @@ export interface ResultExtras {
 export function buildResult(run: ReviewRun | null, extras: ResultExtras): CiResult {
   const bySeverity: Record<FindingSeverity, number> = { blocker: 0, "should-fix": 0, "nice-to-have": 0, question: 0 };
   for (const f of run?.findings ?? []) bySeverity[f.severity]++;
+  const minor = (run?.findings ?? []).filter(isMinor(run?.meta.postMinSeverity)).length;
   const pr = run?.target.kind === "pr" ? run.target.number : null;
   return {
     id: extras.id,
@@ -74,7 +78,8 @@ export function buildResult(run: ReviewRun | null, extras: ResultExtras): CiResu
     skippedSlices: extras.skippedSlices ?? 0,
     findings: {
       total: (run?.findings.length ?? 0) + (run?.overCapFindings.length ?? 0),
-      posted: run?.findings.length ?? 0,
+      posted: (run?.findings.length ?? 0) - minor,
+      minor,
       bySeverity,
     },
     round: extras.round ?? run?.round ?? 1,

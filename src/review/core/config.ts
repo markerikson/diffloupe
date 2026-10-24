@@ -202,6 +202,16 @@ export let SURFACES: SurfacePatterns = {
 /** Repo-specific additions to the map builder's and registry check's EXCLUDE lists. */
 export let EXTRA_EXCLUDES: string[] = [];
 
+/**
+ * Lowest severity the summary lists with the main findings and inline comments
+ * can carry. Findings below it go in a collapsed "Minor findings" section and
+ * are not counted as posted in `result.json`. Null lists every severity.
+ */
+export let POST_MIN_SEVERITY: PostSeverity | null = null;
+export type PostSeverity = "blocker" | "should-fix" | "nice-to-have" | "question";
+/** Leaves questions out of the posted review entirely. They stay in the run record. */
+export let DROP_QUESTIONS = false;
+
 /** The `providers` block written into the generated OpenCode config. Empty writes none. */
 export let PROVIDERS: Record<string, unknown> = {};
 /** Extra environment for every OpenCode child: provider keys that must not reach this process's env. */
@@ -236,6 +246,8 @@ export interface ReviewConfig {
   out: string;
   extraExcludes: string[];
   surfaces: SurfacePatterns;
+  postMinSeverity: PostSeverity | null;
+  dropQuestions: boolean;
   providers: Record<string, unknown>;
   childEnv: Record<string, string>;
   authImport: string;
@@ -279,6 +291,8 @@ export function applyConfig(o: Partial<ReviewConfig>): void {
   if (o.out !== undefined) OUT = o.out;
   if (o.extraExcludes !== undefined) EXTRA_EXCLUDES = o.extraExcludes;
   if (o.surfaces !== undefined) SURFACES = o.surfaces;
+  if (o.postMinSeverity !== undefined) POST_MIN_SEVERITY = o.postMinSeverity;
+  if (o.dropQuestions !== undefined) DROP_QUESTIONS = o.dropQuestions;
   if (o.providers !== undefined) PROVIDERS = o.providers;
   if (o.childEnv !== undefined) CHILD_ENV = o.childEnv;
   if (o.authImport !== undefined) AUTH_IMPORT = o.authImport;

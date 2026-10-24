@@ -354,6 +354,28 @@ describe("renderReview detail split", () => {
     expect(readMarkers(out.summary).filter((m) => m.kind === "summary-item")).toHaveLength(1);
   });
 
+  it("folds findings below the posting threshold into their own section, with no inline comment", () => {
+    const findings = [
+      finding({ file: "src/a.ts", title: "real bug", severity: "should-fix" }),
+      finding({ file: "src/a.ts", title: "style nit", severity: "nice-to-have" }),
+      finding({ file: "src/b.ts", title: "why this way", severity: "question" }),
+    ];
+    const out = renderReview({ ...base, findings, inlineMode: "tier", changedFiles: ["src/a.ts", "src/b.ts"], minSeverity: "should-fix" });
+    const fold = out.summary.indexOf("<details><summary>Minor findings (2) — below should-fix</summary>");
+    expect(fold).toBeGreaterThan(-1);
+    expect(out.summary.indexOf("real bug")).toBeLessThan(fold);
+    expect(out.summary.indexOf("style nit")).toBeGreaterThan(fold);
+    expect(out.summary.indexOf("why this way")).toBeGreaterThan(fold);
+    expect(out.ordered.map((f) => f.title)).toEqual(["real bug"]);
+    // The folded findings keep their fingerprints so the next review does not raise them again.
+    expect(readMarkers(out.summary).filter((m) => m.kind === "summary-item")).toHaveLength(2);
+  });
+
+  it("lists every severity together without a threshold", () => {
+    const findings = [finding({ file: "src/a.ts", title: "style nit", severity: "nice-to-have" })];
+    expect(renderReview({ ...base, findings }).summary).not.toContain("Minor findings");
+  });
+
   /**
    * The badge comes from the walkthrough call and the sentence from the
    * coordinator, issued concurrently. The coordinator writes its sentence only
