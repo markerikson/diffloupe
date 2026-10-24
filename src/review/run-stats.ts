@@ -182,11 +182,18 @@ const emptySeverities = (): SeverityCounts => ({ blocker: 0, "should-fix": 0, "n
 const total = (counts: SeverityCounts) => Object.values(counts).reduce((n, c) => n + c, 0);
 
 /**
+ * Complete review runs that reviewed something. A run `--max-rounds` stopped is
+ * saved as complete but carries the previous round's findings and nothing new.
+ */
+const reviewed = ({ run }: StatsInput) =>
+  run.status === "complete" && run.meta.kind !== "diff" && !run.meta.roundLimit;
+
+/**
  * Groups complete review runs into re-review chains, each linked by
  * `priorRunId`, and counts what happened to their findings round by round.
  */
 export function chainStats(inputs: StatsInput[]): ChainStats[] {
-  const runs = inputs.filter(({ run }) => run.status === "complete" && run.meta.kind !== "diff");
+  const runs = inputs.filter(reviewed);
   const byId = new Map(runs.map((i) => [i.run.id, i]));
   const rootOf = (input: StatsInput): string => {
     const seen = new Set<string>();
@@ -329,7 +336,7 @@ export function statsTotals(chains: ChainStats[]): StatsTotals {
  * findings.
  */
 export function statsByVersion(inputs: StatsInput[]): VersionStats[] {
-  const runs = inputs.filter(({ run }) => run.status === "complete" && run.meta.kind !== "diff");
+  const runs = inputs.filter(reviewed);
   const byId = new Map(runs.map((i) => [i.run.id, i.run]));
   const groups = new Map<string, VersionStats>();
   const groupFor = (run: ReviewRun): VersionStats => {

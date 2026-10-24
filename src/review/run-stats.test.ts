@@ -54,6 +54,16 @@ describe("chainStats", () => {
     expect(chains.map((c) => c.rounds.map((r) => r.id))).toEqual([["r1", "r2", "r3"], ["lone"]]);
   });
 
+  test("leaves out a run --max-rounds stopped", () => {
+    const stopped = run("r4", "2026-10-05T00:00:00Z", {
+      round: 4,
+      priorRunId: "r3",
+      meta: { ...base.meta, roundLimit: { maxRounds: 3, round: 4 } },
+    });
+    const withStopped = chainStats([...inputs, input(stopped)]);
+    expect(withStopped.map((c) => c.rounds.map((r) => r.id))).toEqual([["r1", "r2", "r3"], ["lone"]]);
+  });
+
   test("counts new, carried and fixed findings per round", () => {
     expect(chains[0]!.rounds.map((r) => [r.new, r.newPreexisting, r.carried, r.resolved])).toEqual([
       [3, 1, 0, 0],

@@ -6,6 +6,7 @@ import {
   anchorCovers,
   applyDecisions,
   capFindings,
+  carriedClaims,
   chooseReviewScope,
   classifyFile,
   classifySurface,
@@ -738,6 +739,50 @@ describe("renderReview dispute rulings", () => {
  * behaviour and cannot be trusted with it: the previous bot was asked, and
  * 40-50% of its output was restatement of comments it had already posted.
  */
+describe("carriedClaims", () => {
+  const claims = [
+    { fp: "aaaaaaaaaa", file: "src/a.ts", line: "4", text: "Blocker in a", sev: "blocker" },
+    { fp: "bbbbbbbbbb", file: "src/b.ts", line: "9", text: "Issue in b", sev: "should-fix" },
+    { fp: "cccccccccc", file: "src/c.ts", line: "1", text: "Question in c", sev: "question" },
+  ];
+  const older = priorComment({ id: 10, body: "old summary", summaryClaims: [{ fp: "dddddddddd", file: "src/d.ts", line: "2" }] });
+  const latest = priorComment({ id: 20, body: "summary", summaryClaims: claims });
+
+  it("keeps findings from the newest summary in files this review did not read", () => {
+    const out = carriedClaims([older, latest], { unread: (f) => f !== "src/b.ts", settled: new Set() });
+    expect(out.map((c) => c.fp)).toEqual(["aaaaaaaaaa", "cccccccccc"]);
+  });
+
+  it("leaves out findings reported again, withdrawn, or dropped by the question setting", () => {
+    const out = carriedClaims([latest], { unread: () => true, settled: new Set(["aaaaaaaaaa"]), dropQuestions: true });
+    expect(out.map((c) => c.fp)).toEqual(["bbbbbbbbbb"]);
+  });
+
+  it("ignores the bot's inline comments and other people's comments", () => {
+    const inline = priorComment({ id: 30, file: "src/a.ts", body: "x", summaryClaims: claims });
+    const human = priorComment({ id: 40, body: "x", mine: false, summaryClaims: claims });
+    expect(carriedClaims([older, inline, human], { unread: () => true, settled: new Set() }).map((c) => c.fp)).toEqual([
+      "dddddddddd",
+    ]);
+  });
+});
+
+describe("renderReview carried findings", () => {
+  it("lists earlier summary findings again with their markers", () => {
+    const out = renderReview({
+      head: "abc1234567",
+      stats: {},
+      repo: "o/r",
+      findings: [],
+      carried: [{ fp: "aaaaaaaaaa", file: "src/a.ts", line: "4", text: "🔴 Blocker in a", sev: "blocker" }],
+    });
+    expect(out.summary).toContain("Still open from earlier reviews (1)");
+    expect(out.summary).toContain("- 🔴 Blocker in a");
+    const item = readMarkers(out.summary).find((m) => m.kind === "summary-item");
+    expect(item?.fields).toEqual({ file: "src/a.ts", line: "4", fp: "aaaaaaaaaa", sev: "blocker" });
+  });
+});
+
 describe("saidFingerprints", () => {
   /**
    * The summary is rewritten from scratch every run, so treating a bullet in it

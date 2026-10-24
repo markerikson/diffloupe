@@ -160,12 +160,13 @@ jobs:
     needs: [review, post]
     # Runs after a review whether or not the post job ran or failed: it reads
     # the PR itself, so findings that did get posted, and earlier rounds'
-    # findings, still count. When the review job fails this job is skipped,
-    # and GitHub counts a skipped required check as passing, so an outage
-    # does not block merges.
+    # findings, still count. It also runs when the review job fails, so a
+    # failed review of a later push does not clear earlier rounds' open
+    # findings. It is skipped only when the review job is (drafts, bots,
+    # forks), and GitHub counts a skipped required check as passing.
     if: >-
       !cancelled() &&
-      needs.review.result == 'success' &&
+      (needs.review.result == 'success' || needs.review.result == 'failure') &&
       needs.post.result != 'cancelled'
     runs-on: ubuntu-latest
     timeout-minutes: 10

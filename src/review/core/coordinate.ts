@@ -1,6 +1,38 @@
 import { type Finding } from "./findings.ts";
-import { type PriorComment } from "./context.ts";
+import { type PriorComment, type SummaryClaim } from "./context.ts";
 import { classifySurface, SURFACE_RANK, SEV } from "./surface.ts";
+
+/**
+ * Findings from the bot's last summary that this review never looked at again,
+ * to be listed in the new summary unchanged.
+ *
+ * The summary is rewritten on every review, and a summary-only finding survives
+ * only when the coordinator keeps it from this round's raw findings. A file this
+ * review did not read produced no raw findings, so without this its earlier
+ * findings would vanish from the summary — and from the gate, which reads the
+ * newest summary — without anyone having checked that they were fixed.
+ *
+ * `unread(file)` says whether this review left the file unread: outside an
+ * incremental review's scope, or in a slice that failed, ran out of budget or
+ * fell past the slice cap. `settled` holds the fingerprints this review already
+ * accounts for: findings it reported again, and findings withdrawn after a
+ * dispute.
+ */
+export function carriedClaims(
+  prior: PriorComment[],
+  o: { unread: (file: string) => boolean; settled: ReadonlySet<string>; dropQuestions?: boolean },
+): SummaryClaim[] {
+  const summary = prior
+    .filter((c) => c.mine && !c.file)
+    .reduce<PriorComment | undefined>((a, c) => (a && a.id > c.id ? a : c), undefined);
+  const seen = new Set<string>();
+  return (summary?.summaryClaims ?? []).filter((c) => {
+    if (seen.has(c.fp) || o.settled.has(c.fp) || !o.unread(c.file)) return false;
+    if (o.dropQuestions && c.sev === "question") return false;
+    seen.add(c.fp);
+    return true;
+  });
+}
 
 /**
  * Every claim the bot has already made in a comment of its own, by fingerprint.

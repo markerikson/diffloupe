@@ -21,7 +21,7 @@
  */
 import { readFile } from "node:fs/promises";
 import { type } from "arktype";
-import { SURFACES, type ReviewConfig } from "./core/config.ts";
+import { DEFAULT_SURFACES, type ReviewConfig } from "./core/config.ts";
 import { TargetError } from "./targets.ts";
 
 const ReviewSettings = type({
@@ -88,15 +88,13 @@ export async function loadReviewSettings(file: string): Promise<ReviewSettings> 
 /** Converts settings to review-core config. Model and effort keys are left to the caller's precedence rules. */
 export function settingsToConfig(settings: ReviewSettings): Partial<ReviewConfig> {
   const config: Partial<ReviewConfig> = {};
-  if (settings.surfaces) {
-    config.surfaces = {
-      deploy: settings.surfaces.deploy ?? SURFACES.deploy,
-      tooling: settings.surfaces.tooling ?? SURFACES.tooling,
-    };
-  }
-  if (settings.extraExcludes) config.extraExcludes = settings.extraExcludes;
-  // Always set, so a server that runs several repos does not carry one repo's
-  // posting rules into the next run.
+  // Every key is always set, so a server that runs several repos does not carry
+  // one repo's settings into the next run.
+  config.surfaces = {
+    deploy: settings.surfaces?.deploy ?? DEFAULT_SURFACES.deploy,
+    tooling: settings.surfaces?.tooling ?? DEFAULT_SURFACES.tooling,
+  };
+  config.extraExcludes = settings.extraExcludes ?? [];
   config.postMinSeverity = settings.post?.minSeverity ?? null;
   config.dropQuestions = settings.post?.questions === "drop";
   return config;

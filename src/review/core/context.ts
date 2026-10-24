@@ -127,7 +127,7 @@ export interface PriorComment {
    * On the bot's own summary comment: the findings reported inside its body
    * rather than as comments of their own, because they sit outside the diff.
    */
-  summaryClaims?: { fp: string; file: string; line: string; text?: string }[];
+  summaryClaims?: SummaryClaim[];
   /**
    * GitHub's account of the author's standing in this repository: `OWNER`,
    * `MEMBER`, `COLLABORATOR`, `CONTRIBUTOR`, `NONE` and so on.
@@ -144,6 +144,17 @@ export interface PriorComment {
    * read from the `dispute` markers it carries forward on each review.
    */
   rulings?: PriorRuling[];
+}
+
+/** A finding listed in the bot's summary comment, read from its `summary-item` marker. */
+export interface SummaryClaim {
+  fp: string;
+  file: string;
+  line: string;
+  /** The bullet's text without its marker. */
+  text?: string;
+  /** The severity the marker recorded. Absent on summaries written before markers carried it. */
+  sev?: string;
 }
 
 export type DisputeOutcome = "withdrawn" | "upheld";
@@ -304,12 +315,16 @@ export async function gatherPriorComments(
         ? (c.body ?? "").split("\n").flatMap((text) =>
             readMarkers(text)
               .filter((m) => m.kind === "summary-item" && m.fields.fp)
-              .map((m) => ({
-                fp: m.fields.fp,
-                file: m.fields.file ?? "?",
-                line: m.fields.line ?? "?",
-                text: stripMarkers(text).replace(/^\s*[-*]\s*/, "").trim(),
-              })),
+              .map((m) => {
+                const claim: SummaryClaim = {
+                  fp: m.fields.fp,
+                  file: m.fields.file ?? "?",
+                  line: m.fields.line ?? "?",
+                  text: stripMarkers(text).replace(/^\s*[-*]\s*/, "").trim(),
+                };
+                if (m.fields.sev) claim.sev = m.fields.sev;
+                return claim;
+              }),
           )
         : [];
       const rulings = mine ? readRulings(c.body ?? "") : [];

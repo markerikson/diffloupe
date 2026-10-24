@@ -14,7 +14,7 @@ import { anchorFor, loadHunks } from "./lib/hunks.ts";
 import { code, fence } from "./lib/markdown.ts";
 import { INLINE_MODE, POST_MIN_SEVERITY, repoName } from "./config.ts";
 import { type Finding } from "./findings.ts";
-import { type PriorComment, type PriorRuling } from "./context.ts";
+import { type PriorComment, type PriorRuling, type SummaryClaim } from "./context.ts";
 import { type DisputeRuling } from "./disputes.ts";
 import { type Walkthrough } from "./prompts.ts";
 import { classifySurface, SURFACE_RANK, primarySurface, SURFACE_TAG, CONF, SEV, EFFORT_TAG, anchorCovers, CAT, leadSentences } from "./surface.ts";
@@ -89,6 +89,8 @@ export function renderReview(o: {
   rulings?: DisputeRuling[] | undefined;
   /** Rulings from earlier reviews, carried forward in the summary unchanged. */
   earlierRulings?: PriorRuling[] | undefined;
+  /** Summary findings from files this review did not read, listed again unchanged. See `carriedClaims`. */
+  carried?: SummaryClaim[] | undefined;
 }): {
   summary: string;
   /**
@@ -614,6 +616,23 @@ export function renderReview(o: {
     s.push("");
   }
 
+  // Copied from the last summary as written. Dropping them would read as fixed
+  // when nobody looked, and the gate counts what this comment lists.
+  const carried = o.carried ?? [];
+  if (carried.length) {
+    s.push(
+      `<details><summary>Still open from earlier reviews (${carried.length}) — files this review did not read</summary>`,
+    );
+    s.push("");
+    for (const c of carried) {
+      const fields = { file: c.file, line: c.line, fp: c.fp, ...(c.sev ? { sev: c.sev } : {}) };
+      s.push(`- ${c.text || `\`${c.file}:${c.line}\``} ${marker("summary-item", fields)}`);
+    }
+    s.push("");
+    s.push("</details>");
+    s.push("");
+  }
+
   const overCap = o.overCap ?? [];
   if (overCap.length) {
     s.push(
@@ -1076,6 +1095,9 @@ export async function writeArtifacts(o: {
   /** See `renderReview`. */
   rulings?: DisputeRuling[] | undefined;
   earlierRulings?: PriorRuling[] | undefined;
+  carried?: SummaryClaim[] | undefined;
+  /** Overrides `POST_MIN_SEVERITY`, for re-rendering a stored run under the threshold it ran with. */
+  minSeverity?: Finding["severity"] | null | undefined;
   runs?: number | undefined;
   /** See `renderReview`. */
   noReviewers?: boolean | undefined;
@@ -1138,6 +1160,7 @@ export async function writeArtifacts(o: {
     resolved: o.resolved,
     rulings: o.rulings,
     earlierRulings: o.earlierRulings,
+    carried: o.carried,
     runs: o.runs,
     noReviewers: o.noReviewers,
     unreviewed: o.unreviewed,
@@ -1145,7 +1168,7 @@ export async function writeArtifacts(o: {
     overCap: o.overCap,
     changedFiles,
     inlineMode: INLINE_MODE,
-    minSeverity: POST_MIN_SEVERITY,
+    minSeverity: o.minSeverity === undefined ? POST_MIN_SEVERITY : o.minSeverity,
   });
 
   const md = o.local

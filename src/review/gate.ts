@@ -11,7 +11,9 @@
  *   replies that it is fixed or withdrawn (`settledIds`). An outdated thread
  *   still counts; a moved anchor does not mean the problem went away.
  * - A finding written into the summary comment is open while the latest summary
- *   lists it. Each review rewrites the summary with what it still finds.
+ *   lists it. Each review rewrites the summary with what it still finds, and
+ *   copies forward the earlier findings in files it did not read
+ *   (`carriedClaims`).
  */
 import type { FindingSeverity } from "../types/review-run.ts";
 import type { GhComment, GhText, PullRequestThreads, ReviewThread } from "./core/context.ts";

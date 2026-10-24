@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { SURFACES } from "./core/config.ts";
+import { applyConfig, DEFAULT_SURFACES } from "./core/config.ts";
 import { loadReviewSettings, parseReviewSettings, settingsInstructions, settingsToConfig } from "./settings.ts";
 
 describe("parseReviewSettings", () => {
@@ -50,7 +50,7 @@ describe("settingsInstructions", () => {
 describe("settingsToConfig", () => {
   test("keeps the default for a surface list that is not given", () => {
     const config = settingsToConfig({ surfaces: { deploy: ["^infra/"] }, extraExcludes: ["x/"] });
-    expect(config.surfaces).toEqual({ deploy: ["^infra/"], tooling: SURFACES.tooling });
+    expect(config.surfaces).toEqual({ deploy: ["^infra/"], tooling: DEFAULT_SURFACES.tooling });
     expect(config.extraExcludes).toEqual(["x/"]);
   });
 
@@ -60,8 +60,18 @@ describe("settingsToConfig", () => {
     expect(config).not.toHaveProperty("effort");
   });
 
-  test("resets the posting rules when none are given", () => {
-    expect(settingsToConfig({})).toEqual({ postMinSeverity: null, dropQuestions: false });
+  test("resets every setting to its default when none are given", () => {
+    applyConfig({ surfaces: { deploy: ["^other-repo/"], tooling: [] } });
+    try {
+      expect(settingsToConfig({})).toEqual({
+        surfaces: { deploy: [...DEFAULT_SURFACES.deploy], tooling: [...DEFAULT_SURFACES.tooling] },
+        extraExcludes: [],
+        postMinSeverity: null,
+        dropQuestions: false,
+      });
+    } finally {
+      applyConfig({ surfaces: { ...DEFAULT_SURFACES } });
+    }
   });
 
   test("reads the posting rules", () => {

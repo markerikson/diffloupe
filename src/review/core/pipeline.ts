@@ -25,7 +25,7 @@ import { gitText, diffOutline, gatherIntent, gatherPriorComments, latestOwnSumma
 import { agent, CancelledError, killAgents, resetOpenCodeConfig, type AgentFailure } from "./runner.ts";
 import { slicePrompt, mergePrompt, promptVersion, instructionsHash, type ReviewUnit, coverUnits, packUnits, type Walkthrough, partitionPrompt, groupNamingPrompt, walkthroughPrompt } from "./prompts.ts";
 import { classifySurface, SURFACE_RANK, CONF, SEV } from "./surface.ts";
-import { saidFingerprints, readCheckedClaims, mergeBudgetFor, fallbackRank, coordinatorHasWork, type MergeDecisions, MAX_POSTED, MAX_POSTED_INCREMENTAL, MAX_PREEXISTING, applyDecisions, capFindings, otherSites } from "./coordinate.ts";
+import { carriedClaims, saidFingerprints, readCheckedClaims, mergeBudgetFor, fallbackRank, coordinatorHasWork, type MergeDecisions, MAX_POSTED, MAX_POSTED_INCREMENTAL, MAX_PREEXISTING, applyDecisions, capFindings, otherSites } from "./coordinate.ts";
 import { stoppedSummary, writeArtifacts, writeStoppedArtifacts } from "./render.ts";
 import { draftIntent, type IntentDraftRecord } from "./intent-draft.ts";
 import { disputeRecord, earlierRulings, hasOpenDisputes, pendingDisputes, renderDisputes, rulingsFromDecisions } from "./disputes.ts";
@@ -920,6 +920,14 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
       .flatMap((r) => (r.files as string[] | undefined) ?? []),
     budget: budgetSkipped,
   };
+  const unreadFiles = new Set([...notReviewedFiles.overCap, ...notReviewedFiles.failed, ...notReviewedFiles.budget]);
+  const readFiles = new Set(capped.flatMap((s) => s.files).filter((f) => !unreadFiles.has(f)));
+  const carried = carriedClaims(prior, {
+    unread: incremental ? (f) => !readFiles.has(f) : (f) => unreadFiles.has(f),
+    settled: new Set([...stillOpen, ...withdrawn]),
+    dropQuestions: DROP_QUESTIONS,
+  });
+  if (carried.length) console.error(`  carrying forward ${carried.length} summary finding(s) from files this review did not read`);
   const checked = checkedBySlice.flat().filter(Boolean);
   const totalCost =
     sliceRuns.reduce((a, r) => a + (r.costUsd as number), 0) + merged.costUsd + walked.costUsd + intentDraft.costUsd;
@@ -936,6 +944,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     ...(droppedQuestions.length ? { "questions not posted (settings)": droppedQuestions.length } : {}),
     "registry signals": reg.findings.length,
     "prior comments considered": prior.length,
+    ...(carried.length ? { "carried forward unread": carried.length } : {}),
     ...(rulings.length
       ? {
         "disputes ruled": `${rulings.filter((r) => r.outcome === "withdrawn").length} withdrawn, ` +
@@ -987,6 +996,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     resolved,
     rulings,
     earlierRulings: earlier,
+    carried,
     runs: reviewsSoFar + 1,
     noReviewers: sliceRuns.length === 0,
     unreviewed: notReviewedFiles,
@@ -1037,6 +1047,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
       checked,
       unreviewed: notReviewedFiles,
       resolved,
+      ...(carried.length ? { carried } : {}),
       ...(pending.length || earlier.length ? { disputes: disputeRecord(earlier, rulings, pending) } : {}),
       ...(rulings.length ? { rulings } : {}),
       roundProgress: roundProgress({

@@ -194,10 +194,13 @@ export interface SurfacePatterns {
   tooling: string[];
 }
 
-export let SURFACES: SurfacePatterns = {
+/** `SURFACES` before any repo's settings replace it. */
+export const DEFAULT_SURFACES: Readonly<SurfacePatterns> = Object.freeze({
   deploy: [],
   tooling: ["^docs/", "(^|/)[^/]*\\.config\\.[cm]?[jt]s$"],
-};
+});
+
+export let SURFACES: SurfacePatterns = { ...DEFAULT_SURFACES };
 
 /** Repo-specific additions to the map builder's and registry check's EXCLUDE lists. */
 export let EXTRA_EXCLUDES: string[] = [];

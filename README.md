@@ -309,8 +309,8 @@ To block merges until the findings are dealt with, run `diffloupe gate` in a job
 gate:
   needs: [review, post]
   if: >-
-    !cancelled() && needs.review.result == 'success' &&
-    needs.post.result != 'cancelled'
+    !cancelled() && needs.post.result != 'cancelled' &&
+    (needs.review.result == 'success' || needs.review.result == 'failure')
   runs-on: ubuntu-latest
   permissions:
     pull-requests: read
@@ -334,13 +334,13 @@ gate:
 A finding is open when:
 
 - it has an inline thread from the bot that is not resolved and that the bot has not settled. The bot settles a thread when it closes the finding out as fixed or withdraws it after a dispute. An outdated thread still counts, since moving the code does not fix it.
-- or it is listed in the bot's latest summary comment and was not withdrawn. With inline comments off, every finding is only in the summary.
+- or it is listed in the bot's latest summary comment and was not withdrawn. With inline comments off, every finding is only in the summary. When a review does not read a file (an incremental review of a later push, or a file past a budget or size cap), the summary findings from earlier reviews in that file are carried forward under "Still open from earlier reviews", so they keep counting.
 
 A thread the PR author resolved still counts unless `--count-author-resolved` is given, so the author cannot clear a blocker by closing the thread. An upheld dispute stays open until someone other than the PR author resolves the thread. If an agent resolves threads with a different account than the one that opened the PR, those resolutions count as someone else's. Severity comes from the comment's marker; a finding whose severity cannot be read is listed as `unknown` and never fails the gate. `--override-label` passes the gate when the PR has that label, for a human to accept the open findings.
 
 With `--status`, the gate also sets a `diffloupe/gate` commit status on the PR head. Make that status the required check if you rerun the gate outside the PR's workflow, for example on `pull_request_review` events or after a dispute is ruled on, since a status on the head commit is replaced by the latest run.
 
-Gate on `blocker` only: findings vary between runs, and a lower threshold blocks merges on false positives. The `if:` above skips the gate when the review job fails, and GitHub counts a skipped required job as passing, so an outage does not block merges. The gate still runs when posting fails partway, since it reads the PR and sees whatever did get posted. "Require conversation resolution before merging" in the branch protection rules is a simpler option. It blocks on any unresolved inline comment, from the bot or a person, at any severity, but misses findings that are only in the summary.
+Gate on `blocker` only: findings vary between runs, and a lower threshold blocks merges on false positives. The `if:` above runs the gate even when the review or post job fails, since it reads the PR and sees whatever earlier rounds and this one did get posted. A failed review of a later push therefore does not clear open blockers from earlier rounds. If reviews keep failing, the PR stays blocked on those findings until they are resolved or a human adds the override label. The gate is skipped only when the review job is skipped, and GitHub counts a skipped required job as passing. "Require conversation resolution before merging" in the branch protection rules is a simpler option. It blocks on any unresolved inline comment, from the bot or a person, at any severity, but misses findings that are only in the summary.
 
 To stop an automated fix loop from running forever, pass `--max-rounds`. A review past that round is skipped before any model runs, exits 4 under `--headless`, and writes a `result.json` with `skipReason: "round-limit"`. Its `payloads.json` only updates the summary comment: a notice at the top says the push was not reviewed and why, and the rest of the comment, with its findings and rulings, stays as the last review left it. The example workflow posts that notice, labels the PR `ai-review-max-rounds`, and passes the gate with `--override-label`, so the PR can merge after a bounded number of fix attempts and the label marks the PRs that merged with findings still open. Treat exit 4 as success in the review job, and run the post job when `skipReason` is `round-limit` as well as when `reviewed` is true.
 
