@@ -14,6 +14,15 @@
  *   lists it. Each review rewrites the summary with what it still finds, and
  *   copies forward the earlier findings in files it did not read
  *   (`carriedClaims`).
+ *
+ * Findings in code the change did not touch (`pre=1` on the marker) are listed
+ * but never fail the gate: the author was not asked to fix them.
+ *
+ * With `reviewMissing`, the caller says this push's review never reached the
+ * pull request (the review or post job failed). The gate then fails when the
+ * bot has never reviewed the pull request at all, so a broken first review does
+ * not let a change merge unreviewed. A pull request with an earlier review is
+ * judged on what that review left open.
  */
 import type { FindingSeverity } from "../types/review-run.ts";
 import type { GhComment, GhText, PullRequestThreads, ReviewThread } from "./core/context.ts";
@@ -39,6 +48,8 @@ export interface OpenFinding {
   outdated?: true;
   /** The author disputed it and the review kept it: a person has to decide. */
   upheld?: true;
+  /** In code the change did not touch. Listed, never counted against `failOn`. */
+  preexisting?: true;
 }
 
 export interface GateOptions {
@@ -51,6 +62,8 @@ export interface GateOptions {
    * clear a finding by resolving it.
    */
   countAuthorResolved?: boolean;
+  /** This push's review did not reach the pull request. Fails when the bot never reviewed it. */
+  reviewMissing?: boolean;
 }
 
 export interface GateResult {
@@ -65,6 +78,8 @@ export interface GateResult {
   override: string | null;
   /** The bot's summary comment, when there is one. */
   summaryUrl: string | null;
+  /** `reviewMissing` was given and the bot has never reviewed the pull request. */
+  unreviewed: boolean;
   fails: boolean;
 }
 
@@ -114,6 +129,7 @@ function threadFinding(
     where: "thread",
     ...(t.outdated ? { outdated: true as const } : {}),
     ...(upheld ? { upheld: true as const } : {}),
+    ...(m.fields.pre === "1" ? { preexisting: true as const } : {}),
   };
 }
 
@@ -172,6 +188,7 @@ export function openFindings(
         url: summary.html_url ?? null,
         where: "summary",
         ...(upheld.has(fp) ? { upheld: true as const } : {}),
+        ...(m.fields.pre === "1" ? { preexisting: true as const } : {}),
       });
     }
   }
@@ -181,10 +198,13 @@ export function openFindings(
 /**
  * The open findings at or above `threshold`. Unknown severity never matches:
  * the gate reports those findings rather than guessing how serious they are.
+ * Neither do pre-existing findings.
  */
 export function failsOpenGate(open: OpenFinding[], threshold: FindingSeverity): OpenFinding[] {
   const limit = SEVERITY_ORDER.indexOf(threshold);
-  return open.filter((f) => f.severity !== "unknown" && SEVERITY_ORDER.indexOf(f.severity) <= limit);
+  return open.filter(
+    (f) => !f.preexisting && f.severity !== "unknown" && SEVERITY_ORDER.indexOf(f.severity) <= limit,
+  );
 }
 
 export function evaluateGate(
@@ -196,6 +216,7 @@ export function evaluateGate(
   const open = openFindings(pr, summary, opts);
   const matched = failsOpenGate(open, opts.failOn);
   const override = opts.overrideLabel && pr.labels.includes(opts.overrideLabel) ? opts.overrideLabel : null;
+  const unreviewed = opts.reviewMissing === true && !summary;
   return {
     pr: pr.number,
     url: pr.url,
@@ -205,7 +226,8 @@ export function evaluateGate(
     matched,
     override,
     summaryUrl: summary?.html_url ?? null,
-    fails: matched.length > 0 && !override,
+    unreviewed,
+    fails: (matched.length > 0 || unreviewed) && !override,
   };
 }
 
@@ -216,7 +238,11 @@ function plural(n: number, word: string): string {
 /** The commit status description. GitHub cuts it at 140 characters. */
 export function gateDescription(r: GateResult): string {
   const at = `at ${r.failOn} or above`;
-  const text = !r.matched.length
+  const text = r.unreviewed
+    ? r.override
+      ? `Not reviewed: the review failed, passed by the ${r.override} label`
+      : "Not reviewed: the review failed and no earlier review reached this PR"
+    : !r.matched.length
     ? `No open findings ${at}`
     : r.override
       ? `${plural(r.matched.length, "open finding")} ${at}, passed by the ${r.override} label`
@@ -232,6 +258,7 @@ export function formatGate(r: GateResult): string[] {
       f.where === "summary" ? "in the summary" : "",
       f.outdated ? "outdated" : "",
       f.upheld ? "upheld after a dispute, needs a person" : "",
+      f.preexisting ? "pre-existing, not counted" : "",
     ].filter(Boolean);
     return `  ${f.severity.padEnd(12)} ${where}  ${f.title}${notes.length ? ` (${notes.join(", ")})` : ""}${f.url ? `\n${" ".repeat(15)}${f.url}` : ""}`;
   };

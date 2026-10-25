@@ -14,6 +14,7 @@ interface GateCommandOptions {
   status?: string | true;
   overrideLabel?: string;
   countAuthorResolved?: boolean;
+  reviewMissing?: boolean;
 }
 
 /** Exit code when an open finding is at or above `--fail-on`, the same as `review --fail-on`. */
@@ -38,6 +39,10 @@ export function createGateCommand(): Command {
     )
     .option("--override-label <name>", "Pass whatever is open when the pull request has this label")
     .option("--count-author-resolved", "Treat threads the pull request's author resolved as closed")
+    .option(
+      "--review-missing",
+      "This push's review did not reach the PR (the review or post job failed): fail if the bot has never reviewed it",
+    )
     .action(async (target: string, options: GateCommandOptions) => {
       let spec;
       try {
@@ -61,6 +66,7 @@ export function createGateCommand(): Command {
             failOn: options.failOn,
             ...(options.overrideLabel ? { overrideLabel: options.overrideLabel } : {}),
             ...(options.countAuthorResolved ? { countAuthorResolved: true } : {}),
+            ...(options.reviewMissing ? { reviewMissing: true } : {}),
             ...(options.status ? { status: statusSha ? { sha: statusSha } : {} } : {}),
           },
           {

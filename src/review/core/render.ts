@@ -33,6 +33,20 @@ export function isMinor(minSeverity: Finding["severity"] | null | undefined): (f
   return (f) => POST_ORDER.indexOf(f.severity) > limit;
 }
 
+/**
+ * The identity a finding's comment carries. `pre` marks code the change did not
+ * touch, which the gate lists but does not fail on.
+ */
+function markerFields(f: Finding) {
+  return {
+    file: f.file,
+    line: f.line,
+    fp: fingerprint(f.file, f.title),
+    sev: f.severity,
+    ...(f.preexisting ? { pre: 1 } : {}),
+  };
+}
+
 export function renderReview(o: {
   /** Absent for a commit-range review, which is never posted anywhere. */
   pr?: string | undefined;
@@ -303,11 +317,11 @@ export function renderReview(o: {
     b.push("");
     b.push(
       mode === "inline"
-        ? marker("inline", { file: f.file, line: f.line, fp: fingerprint(f.file, f.title), sev: f.severity })
+        ? marker("inline", markerFields(f))
         : // A finding rendered into the summary has no comment of its own to carry
           // its fingerprint, so without this it is invisible to every check that
           // reads what was already said.
-          marker("summary-item", { file: f.file, line: f.line, fp: fingerprint(f.file, f.title), sev: f.severity }),
+          marker("summary-item", markerFields(f)),
     );
     return b.join("\n");
   };
@@ -574,7 +588,7 @@ export function renderReview(o: {
         // claim). One home per fingerprint.
         const fp = postedSet.has(f)
           ? ""
-          : ` ${marker("summary-item", { file: f.file, line: f.line, fp: fingerprint(f.file, f.title), sev: f.severity })}`;
+          : ` ${marker("summary-item", markerFields(f))}`;
         const also = f.also_at?.length ? ` · also ${f.also_at.map(siteLink).join(", ")}` : "";
         out.push(`  - ${sev} ${flat(f.title)} — ${where}${also} · _[${evidenceNo.get(f)}]_${fp}`);
       }
@@ -621,11 +635,11 @@ export function renderReview(o: {
   const carried = o.carried ?? [];
   if (carried.length) {
     s.push(
-      `<details><summary>Still open from earlier reviews (${carried.length}) — files this review did not read</summary>`,
+      `<details><summary>Still open from earlier reviews (${carried.length}) — not posted again this review</summary>`,
     );
     s.push("");
     for (const c of carried) {
-      const fields = { file: c.file, line: c.line, fp: c.fp, ...(c.sev ? { sev: c.sev } : {}) };
+      const fields = { file: c.file, line: c.line, fp: c.fp, ...(c.sev ? { sev: c.sev } : {}), ...(c.pre ? { pre: 1 } : {}) };
       s.push(`- ${c.text || `\`${c.file}:${c.line}\``} ${marker("summary-item", fields)}`);
     }
     s.push("");

@@ -231,7 +231,9 @@ const splitSegments = (cmd: string): { sep: string; text: string }[] => {
       continue;
     }
     const two = cmd.slice(i, i + 2);
-    const found = two === "&&" || two === "||" ? two : c === ";" || c === "|" ? c : "";
+    const background = c === "&" && cmd[i - 1] !== ">" && cmd[i - 1] !== "|" && cmd[i + 1] !== ">";
+    const found =
+      two === "&&" || two === "||" ? two : c === ";" || c === "|" || c === "\n" || background ? c : "";
     if (!found) continue;
     out.push({ sep, text: cmd.slice(start, i) });
     sep = found;
@@ -247,7 +249,8 @@ const commandCore = (segment: string): string =>
   segment
     .trim()
     .replace(/^(?:[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|"[^"]*"|\S*)\s+)+/, "")
-    .replace(/^(?:command|timeout\s+\S+|env|nohup|xargs)\s+/, "")
+    .replace(/^(?:timeout|env|xargs)(?:\s+(?:-\S+|\d[\w.]*|[A-Z][A-Z0-9_]*|[A-Za-z_]\w*=\S*|\{\}))*\s+/, "")
+    .replace(/^(?:command|nohup)\s+/, "")
     .trim();
 
 /**
@@ -319,7 +322,12 @@ const reachesNetwork = (cmd: string, depth = 0): boolean => {
     let core = commandCore(segment.text);
     for (let prev = ""; prev !== core; ) {
       prev = core;
-      core = commandCore(core.replace(/^(?:sudo|exec|nice)\s+/, "").replace(/^[^\s'"]*\//, ""));
+      core = commandCore(
+        core
+          .replace(/^[({!&]\s*/, "")
+          .replace(/^(?:sudo|exec|nice)\s+/, "")
+          .replace(/^[^\s'"]*\//, ""),
+      );
     }
     if (NETWORK_COMMAND.test(core)) return true;
     if (INTERPRETER.test(core) && NETWORK_CODE.test(core)) return true;

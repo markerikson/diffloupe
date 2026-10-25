@@ -195,8 +195,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # This push's review never reached the PR. The gate then fails if no
+          # earlier review did either, so a broken first review cannot merge
+          # unreviewed; otherwise it judges what earlier reviews left open.
+          REVIEW_MISSING: >-
+            ${{ (needs.review.result == 'failure' ||
+            (needs.review.outputs.reviewed == 'true' && needs.post.result == 'failure')) && 'yes' || '' }}
         run: >-
           bun src/index.ts gate "$GITHUB_REPOSITORY#$PR"
           --fail-on blocker
           --override-label ai-review-max-rounds
           --status "$HEAD_SHA"
+          ${REVIEW_MISSING:+--review-missing}

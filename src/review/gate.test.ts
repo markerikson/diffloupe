@@ -128,6 +128,26 @@ describe("evaluateGate", () => {
     expect(gateDescription(r)).toBe("1 open finding at should-fix or above, passed by the ai-review-override label");
   });
 
+  it("lists pre-existing findings without failing on them", () => {
+    const pre = `#### Old bug\n\nbody\n\n${marker("inline", { file: "a.ts", line: 1, fp: "eeeeeeeeee", sev: "blocker", pre: 1 })}`;
+    const s = summary([`- x ${marker("summary-item", { file: "b.ts", line: 2, fp: "1111111111", sev: "blocker", pre: 1 })}`]);
+    const r = evaluateGate(pr([thread(1, pre)]), [s], { failOn: "blocker" });
+    expect(r.open.map((f) => f.preexisting)).toEqual([true, true]);
+    expect(r.fails).toBe(false);
+    expect(formatGate(r).join("\n")).toContain("pre-existing, not counted");
+  });
+
+  it("with reviewMissing, fails a PR the bot never reviewed and judges a reviewed one on what is open", () => {
+    const never = evaluateGate(pr([]), [], { failOn: "blocker", reviewMissing: true });
+    expect(never.fails).toBe(true);
+    expect(gateDescription(never)).toBe("Not reviewed: the review failed and no earlier review reached this PR");
+    expect(evaluateGate(pr([], ["ok"]), [], { failOn: "blocker", reviewMissing: true, overrideLabel: "ok" }).fails).toBe(
+      false,
+    );
+    expect(evaluateGate(pr([]), [summary([])], { failOn: "blocker", reviewMissing: true }).fails).toBe(false);
+    expect(evaluateGate(pr([]), [], { failOn: "blocker" }).fails).toBe(false);
+  });
+
   it("uses the latest summary when there are two", () => {
     const older = summary([`- x ${marker("summary-item", { fp: "1111111111", sev: "blocker" })}`]);
     const newer = { ...summary([]), id: 60 };

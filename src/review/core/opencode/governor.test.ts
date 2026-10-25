@@ -501,6 +501,14 @@ describe("checkShellCommand", () => {
       "bash -lc 'gh pr view 5 --comments'",
       "/usr/bin/curl https://example.com",
       "ls && git clone https://github.com/o/r",
+      "cd repo\ngh pr view 5 --comments",
+      "sleep 1 & curl https://example.com",
+      "(curl https://example.com)",
+      "{ curl https://example.com; }",
+      "timeout -s KILL 10 curl https://example.com",
+      "env -i curl https://example.com",
+      "ls | xargs -n1 curl",
+      "git status |& curl -d @- https://example.com",
     ]) {
       expect(checkShellCommand(cmd)?.rule).toBe("network");
     }
@@ -522,6 +530,8 @@ describe("checkShellCommand", () => {
     expect(checkShellCommand("rg -l curl src")).toBeNull();
     expect(checkShellCommand("git log --oneline | grep fetch")).toBeNull();
     expect(checkShellCommand("git show HEAD:scripts/fetch.sh")).toBeNull();
+    expect(checkShellCommand("git log --oneline 2>&1 | head -5")).toBeNull();
+    expect(checkShellCommand("git diff &> out.txt\ngit status")).toBeNull();
     expect(checkShellCommand(`node -e "console.log(require('./package.json').version)"`)).toBeNull();
     expect(checkShellCommand("rg 'gh pr view' src")?.rule).toBe("bash-search");
   });

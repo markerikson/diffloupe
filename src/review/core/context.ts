@@ -155,6 +155,8 @@ export interface SummaryClaim {
   text?: string;
   /** The severity the marker recorded. Absent on summaries written before markers carried it. */
   sev?: string;
+  /** In code the change did not touch. */
+  pre?: true;
 }
 
 export type DisputeOutcome = "withdrawn" | "upheld";
@@ -323,6 +325,7 @@ export async function gatherPriorComments(
                   text: stripMarkers(text).replace(/^\s*[-*]\s*/, "").trim(),
                 };
                 if (m.fields.sev) claim.sev = m.fields.sev;
+                if (m.fields.pre === "1") claim.pre = true;
                 return claim;
               }),
           )

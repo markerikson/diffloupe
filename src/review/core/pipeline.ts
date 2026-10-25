@@ -924,10 +924,13 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
   const readFiles = new Set(capped.flatMap((s) => s.files).filter((f) => !unreadFiles.has(f)));
   const carried = carriedClaims(prior, {
     unread: incremental ? (f) => !readFiles.has(f) : (f) => unreadFiles.has(f),
-    settled: new Set([...stillOpen, ...withdrawn]),
+    refound: stillOpen,
+    rendered: new Set(verified.map((f) => fingerprint(f.file, f.title))),
+    withdrawn,
     dropQuestions: DROP_QUESTIONS,
   });
-  if (carried.length) console.error(`  carrying forward ${carried.length} summary finding(s) from files this review did not read`);
+  if (carried.length)
+    console.error(`  carrying forward ${carried.length} earlier summary finding(s) this review did not post again`);
   const checked = checkedBySlice.flat().filter(Boolean);
   const totalCost =
     sliceRuns.reduce((a, r) => a + (r.costUsd as number), 0) + merged.costUsd + walked.costUsd + intentDraft.costUsd;

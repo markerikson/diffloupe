@@ -747,21 +747,38 @@ describe("carriedClaims", () => {
   ];
   const older = priorComment({ id: 10, body: "old summary", summaryClaims: [{ fp: "dddddddddd", file: "src/d.ts", line: "2" }] });
   const latest = priorComment({ id: 20, body: "summary", summaryClaims: claims });
+  const none = { refound: new Set<string>(), rendered: new Set<string>(), withdrawn: new Set<string>() };
 
   it("keeps findings from the newest summary in files this review did not read", () => {
-    const out = carriedClaims([older, latest], { unread: (f) => f !== "src/b.ts", settled: new Set() });
+    const out = carriedClaims([older, latest], { ...none, unread: (f) => f !== "src/b.ts" });
     expect(out.map((c) => c.fp)).toEqual(["aaaaaaaaaa", "cccccccccc"]);
   });
 
-  it("leaves out findings reported again, withdrawn, or dropped by the question setting", () => {
-    const out = carriedClaims([latest], { unread: () => true, settled: new Set(["aaaaaaaaaa"]), dropQuestions: true });
-    expect(out.map((c) => c.fp)).toEqual(["bbbbbbbbbb"]);
+  it("keeps a finding found again in a read file but not posted, as when the cap cut it", () => {
+    const out = carriedClaims([latest], {
+      ...none,
+      unread: () => false,
+      refound: new Set(["aaaaaaaaaa", "bbbbbbbbbb"]),
+      rendered: new Set(["bbbbbbbbbb"]),
+    });
+    expect(out.map((c) => c.fp)).toEqual(["aaaaaaaaaa"]);
+  });
+
+  it("leaves out findings posted again, withdrawn, or dropped by the question setting", () => {
+    const out = carriedClaims([latest], {
+      ...none,
+      unread: () => true,
+      rendered: new Set(["aaaaaaaaaa"]),
+      withdrawn: new Set(["bbbbbbbbbb"]),
+      dropQuestions: true,
+    });
+    expect(out).toEqual([]);
   });
 
   it("ignores the bot's inline comments and other people's comments", () => {
     const inline = priorComment({ id: 30, file: "src/a.ts", body: "x", summaryClaims: claims });
     const human = priorComment({ id: 40, body: "x", mine: false, summaryClaims: claims });
-    expect(carriedClaims([older, inline, human], { unread: () => true, settled: new Set() }).map((c) => c.fp)).toEqual([
+    expect(carriedClaims([older, inline, human], { ...none, unread: () => true }).map((c) => c.fp)).toEqual([
       "dddddddddd",
     ]);
   });
