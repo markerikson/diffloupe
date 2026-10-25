@@ -215,7 +215,10 @@ export function mergePrompt(o: {
   maxNew?: number | undefined;
   /** On a re-review, the files reviewed again because they changed since the last review. */
   sinceLast?: string[] | undefined;
+  /** Answers to earlier findings, from `renderDisputes`. */
+  disputes?: string | undefined;
 }) {
+  const disputing = Boolean(o.disputes?.includes("## Findings the author disputes"));
   const sinceLast = o.sinceLast
     ? `\n## This is a re-review\nThis change was reviewed before. Only these files changed since then, and only they were reviewed again: ${o.sinceLast.map((f) => `\`${f}\``).join(", ")}. ${SINCE_LAST_FOCUS} Earlier findings in files that did not change stay open on their own; do not close them out as resolved.\n`
     : "";
@@ -235,7 +238,7 @@ ${description(o.intent, 4000)}${statedBlock(o.intent, 4000)}
 
 Commit messages:
 ${o.intent.commits.slice(0, 3000) || "(none)"}
-${o.draft ? `\n${intentDraftSection(o.draft).trimEnd()}\n` : ""}${o.prior ? `\n${o.prior}\n` : ""}${sinceLast}
+${o.draft ? `\n${intentDraftSection(o.draft).trimEnd()}\n` : ""}${o.prior ? `\n${o.prior}\n` : ""}${o.disputes ? `\n${o.disputes}\n` : ""}${sinceLast}
 ## Raw findings from the per-file reviewers
 Each carries an \`id\`. You will refer to them by that id; you never retype their text.
 The \`id\` is assigned here and overwrites anything a reviewer wrote, so it is always the
@@ -278,7 +281,7 @@ Write a single JSON object to \`${o.outFile}\`:
   "keep": [ { "id": 0, "severity": "blocker|should-fix|question|nice-to-have",
               "repeats": [5], "merge_with": [3, 7], "repeat_of": 123456, "preexisting": false, "note": "" } ],
   "drop": [ { "id": 1, "reason": "why it did not survive verification" } ],
-  "resolved": [ { "id": 987654, "note": "the null check was added in this push" } ],
+  "resolved": [ { "id": 987654, "note": "the null check was added in this push" } ],${disputing ? `\n  "disputes": [ { "fp": "1a2b3c4d5e", "outcome": "withdrawn|upheld", "note": "what in the code decided it" } ],` : ""}
   "intent_alignment": {
     "summary": "one sentence, or empty string if the diff matches the description",
     "unstated": ["behavior present in the diff that the description does not mention"],
@@ -286,7 +289,7 @@ Write a single JSON object to \`${o.outFile}\`:
   }
 }
 \`\`\`
-\`severity\`, \`repeats\`, \`merge_with\`, \`repeat_of\`, \`preexisting\` and \`note\` are all optional, and \`resolved\` is an empty array when nothing you previously raised has been fixed. Ids in \`resolved\` are comment ids from the "what you already told this author" section, not finding numbers. Write the file even if \`keep\` is empty.`;
+\`severity\`, \`repeats\`, \`merge_with\`, \`repeat_of\`, \`preexisting\` and \`note\` are all optional, and \`resolved\` is an empty array when nothing you previously raised has been fixed. Ids in \`resolved\` are comment ids from the "what you already told this author" section, not finding numbers.${disputing ? " `disputes` has one entry per disputed finding, keyed by the `fp` it was listed with." : ""} Write the file even if \`keep\` is empty.`;
 }
 
 function shortHash(text: string): string {

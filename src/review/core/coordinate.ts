@@ -1,6 +1,46 @@
 import { type Finding } from "./findings.ts";
-import { type PriorComment } from "./context.ts";
+import { type PriorComment, type SummaryClaim } from "./context.ts";
 import { classifySurface, SURFACE_RANK, SEV } from "./surface.ts";
+
+/**
+ * Findings from the bot's last summary that are still open but that this
+ * review will not post again, to be listed in the new summary unchanged.
+ *
+ * The summary is rewritten on every review, and a summary-only finding survives
+ * only when this review posts it again. Two kinds would otherwise vanish from
+ * the summary — and from the gate, which reads the newest summary — without
+ * anyone having checked that they were fixed: findings in a file this review
+ * did not read, which produced no raw findings, and findings this review found
+ * again but cut at the cap or at line verification.
+ *
+ * `unread(file)` says whether this review left the file unread: outside an
+ * incremental review's scope, or in a slice that failed, ran out of budget or
+ * fell past the slice cap. `refound` holds the fingerprints this review found
+ * again before the cap, `rendered` the ones it posts, and `withdrawn` the ones
+ * withdrawn after a dispute.
+ */
+export function carriedClaims(
+  prior: PriorComment[],
+  o: {
+    unread: (file: string) => boolean;
+    refound: ReadonlySet<string>;
+    rendered: ReadonlySet<string>;
+    withdrawn: ReadonlySet<string>;
+    dropQuestions?: boolean;
+  },
+): SummaryClaim[] {
+  const summary = prior
+    .filter((c) => c.mine && !c.file)
+    .reduce<PriorComment | undefined>((a, c) => (a && a.id > c.id ? a : c), undefined);
+  const seen = new Set<string>();
+  return (summary?.summaryClaims ?? []).filter((c) => {
+    if (seen.has(c.fp) || o.rendered.has(c.fp) || o.withdrawn.has(c.fp)) return false;
+    if (!o.unread(c.file) && !o.refound.has(c.fp)) return false;
+    if (o.dropQuestions && c.sev === "question") return false;
+    seen.add(c.fp);
+    return true;
+  });
+}
 
 /**
  * Every claim the bot has already made in a comment of its own, by fingerprint.
@@ -120,6 +160,8 @@ export interface MergeDecisions {
   }[];
   drop?: { id: number; reason: string }[];
   resolved?: { id: number; note?: string }[];
+  /** Rulings on disputed findings, by fingerprint: see `rulingsFromDecisions`. */
+  disputes?: { fp?: unknown; outcome?: unknown; note?: unknown }[];
   intent_alignment?: { summary?: string; unstated?: string[]; missing?: string[] };
 }
 

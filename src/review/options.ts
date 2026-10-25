@@ -21,6 +21,8 @@ export interface ReviewCommandOptions {
   config?: string;
   /** Stop starting new slices once the run has cost this many dollars. */
   maxCost?: number;
+  /** Skip the review, before any model call, when it would be a later round than this. Headless exits 4 then. */
+  maxRounds?: number;
   /** Review everything even when an earlier run of this target exists. */
   full?: boolean;
   headless?: boolean;

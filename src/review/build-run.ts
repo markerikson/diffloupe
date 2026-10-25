@@ -13,9 +13,11 @@ import type {
   ReviewTarget,
   RunFile,
   RunFileStatus,
+  RunDispute,
   RunFinding,
   RunGroup,
   RunKind,
+  RunRoundProgress,
   RunSlice,
 } from "../types/review-run.ts";
 import { actedOn } from "./acted-on.ts";
@@ -50,12 +52,15 @@ interface CoreRecord {
   overCapFindings?: Finding[];
   unreviewed?: { overCap: string[]; failed: string[]; budget?: string[] };
   budgetStopped?: boolean;
+  postMinSeverity?: FindingSeverity;
   reviewScope?: string;
   reviewedFiles?: number;
   scopeReason?: string;
   promptVersion?: string;
   instructionsHash?: string;
   resolved?: { id: number; note?: string }[];
+  disputes?: RunDispute[];
+  roundProgress?: RunRoundProgress;
   rejected?: unknown[];
   intentAlignment?: {
     summary?: string;
@@ -554,6 +559,8 @@ export function buildReviewRun(input: BuildReviewRunInput): ReviewRun {
     findings,
     overCapFindings,
     resolved,
+    ...(record?.disputes?.length ? { disputes: record.disputes } : {}),
+    ...(record?.roundProgress ? { roundProgress: record.roundProgress } : {}),
     unreviewed: record?.unreviewed ?? { overCap: [], failed: [] },
     meta: {
       ...(record?.model ? { model: record.model } : {}),
@@ -572,6 +579,7 @@ export function buildReviewRun(input: BuildReviewRunInput): ReviewRun {
           }
         : {}),
       ...(record?.budgetStopped ? { budgetStopped: true } : {}),
+      ...(record?.postMinSeverity ? { postMinSeverity: record.postMinSeverity } : {}),
       ...(record?.reviewScope === "full" || record?.reviewScope === "incremental"
         ? { reviewScope: record.reviewScope }
         : {}),

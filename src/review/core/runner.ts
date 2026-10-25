@@ -625,6 +625,50 @@ export function diagnoseMissingOutput(o: {
   return { kind: "no-output", message: "finished without writing its output file" };
 }
 
+/** The text of the agent's last non-empty reply in an `opencode run --format json` stream. */
+export function lastReplyText(stdout: string): string | undefined {
+  let last: string | undefined;
+  for (const line of stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("{")) continue;
+    let event: { part?: { type?: string; text?: unknown } };
+    try {
+      event = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    const text = event.part?.type === "text" ? event.part.text : undefined;
+    if (typeof text === "string" && text.trim()) last = text;
+  }
+  return last;
+}
+
+/**
+ * The answer an agent put in its final reply instead of writing its output
+ * file. Some models (GLM-5.3-Flash most often) finish with the JSON in a fenced
+ * block and never call the write tool. Tries the fenced blocks, last first, then
+ * the span from the first `{` to the last `}`. A candidate counts only when it is
+ * an object with at least one of `keys`, so a stray code snippet in a prose
+ * reply is not mistaken for an empty answer.
+ */
+export function answerFromText(text: string, keys: readonly string[]): unknown {
+  const candidates = [...text.matchAll(/```[a-zA-Z]*\s*\n([\s\S]*?)```/g)].map((m) => m[1] ?? "").reverse();
+  const open = text.indexOf("{");
+  const close = text.lastIndexOf("}");
+  if (open !== -1 && close > open) candidates.push(text.slice(open, close + 1));
+  for (const candidate of candidates) {
+    let value: unknown;
+    try {
+      value = parseAgentJson(candidate.trim());
+    } catch {
+      continue;
+    }
+    if (typeof value !== "object" || value === null || Array.isArray(value)) continue;
+    if (keys.length === 0 || keys.some((k) => k in value)) return value;
+  }
+  return undefined;
+}
+
 export async function agent(
   prompt: string,
   opts: {
@@ -636,6 +680,11 @@ export async function agent(
     tools?: AgentTools;
     /** Replaces the reviewer contract in `system.md`, for a call that does not review. */
     system?: AgentSystem;
+    /**
+     * Top-level keys the answer has, at least one of which must be present for
+     * JSON in the final reply to stand in for a missing output file.
+     */
+    answerKeys?: readonly string[];
   },
 ) {
   if (SIGNAL?.aborted) throw new CancelledError();
@@ -677,7 +726,7 @@ async function importCredentials(env: Record<string, string | undefined>, dataDi
 
 async function runAgent(
   prompt: string,
-  opts: { outFile: string; tag: string },
+  opts: { outFile: string; tag: string; answerKeys?: readonly string[] },
   spec: Invocation,
   env: Record<string, string | undefined>,
 ) {
@@ -743,5 +792,18 @@ async function runAgent(
       : undefined;
     failure = diagnoseMissingOutput({ outFile: opts.outFile, stdout, stderr, exitCode, cwd: spec.cwd, parseError });
   }
-  return { wallMs, exitCode, ...meta, tools, payload, failure };
+  let deliveredAs: "text" | undefined;
+  if (failure?.kind === "no-output") {
+    const reply = lastReplyText(stdout);
+    const answer = reply === undefined || !opts.answerKeys?.length ? undefined : answerFromText(reply, opts.answerKeys);
+    if (answer !== undefined) {
+      payload = answer;
+      failure = undefined;
+      deliveredAs = "text";
+      // Written out so a rerun that reuses this call's output finds it where it expects.
+      await writeText(opts.outFile, `${JSON.stringify(answer, null, 2)}\n`);
+      console.error(`  ${opts.tag}: no output file; read the answer from the final reply`);
+    }
+  }
+  return { wallMs, exitCode, ...meta, tools, payload, failure, ...(deliveredAs ? { deliveredAs } : {}) };
 }

@@ -4,7 +4,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises
 import os from "node:os";
 import path from "node:path";
 import { applyConfig, resetRunState, setRunState } from "./config.ts";
-import { agent, parseAgentJson, resetOpenCodeConfig } from "./runner.ts";
+import { agent, answerFromText, lastReplyText, parseAgentJson, resetOpenCodeConfig } from "./runner.ts";
 
 describe("parseAgentJson", () => {
   test("escapes raw tabs and newlines inside string values", () => {
@@ -51,6 +51,10 @@ cat > /dev/null
 mkdir -p "$XDG_DATA_HOME" "$XDG_STATE_HOME"
 echo "$XDG_DATA_HOME" > "$FAKE_RECORD"
 echo "$XDG_STATE_HOME" >> "$FAKE_RECORD"
+if [ -n "$FAKE_REPLY" ]; then
+  printf '%s\\n' "$FAKE_REPLY"
+  exit 0
+fi
 echo '{}' > "$REVIEW_GOVERNOR_OUT_FILE"
 `;
 
@@ -98,5 +102,75 @@ describe("agent", () => {
       delete process.env.FAKE_IMPORT_FAIL;
     }
     expect(existsSync(path.join(tmp, "out", "oc", "shared", "data", "run-2-s00"))).toBe(false);
+  });
+
+  test("reads the answer from the final reply when no output file is written", async () => {
+    const text = 'Here is the draft:\n```json\n{"title": "T", "goal": "G"}\n```';
+    process.env.FAKE_REPLY = JSON.stringify({ type: "text", part: { type: "text", text } });
+    const outFile = path.join(tmp, "out-3.json");
+    try {
+      const res = await agent("prompt", { budget: 1, outFile, tag: "run-3-intent", answerKeys: ["title", "goal"] });
+      expect(res.payload).toEqual({ title: "T", goal: "G" });
+      expect(res.failure).toBeUndefined();
+      expect(res.deliveredAs).toBe("text");
+      expect(JSON.parse(await readFile(outFile, "utf8"))).toEqual({ title: "T", goal: "G" });
+    } finally {
+      delete process.env.FAKE_REPLY;
+    }
+  });
+
+  test("still reports no output when the reply holds no answer", async () => {
+    process.env.FAKE_REPLY = JSON.stringify({ type: "text", part: { type: "text", text: "I ran out of steps." } });
+    try {
+      const res = await agent("prompt", { budget: 1, outFile: path.join(tmp, "out-4.json"), tag: "run-4-s00", answerKeys: ["findings"] });
+      expect(res.payload).toBeNull();
+      expect(res.failure?.kind).toBe("no-output");
+      expect(res.deliveredAs).toBeUndefined();
+    } finally {
+      delete process.env.FAKE_REPLY;
+    }
+  });
+
+  test("does not read the reply for a caller that names no answer keys", async () => {
+    const text = '```json\n{"title": "T"}\n```';
+    process.env.FAKE_REPLY = JSON.stringify({ type: "text", part: { type: "text", text } });
+    try {
+      const res = await agent("prompt", { budget: 1, outFile: path.join(tmp, "out-5.json"), tag: "run-5-x" });
+      expect(res.payload).toBeNull();
+      expect(res.failure?.kind).toBe("no-output");
+    } finally {
+      delete process.env.FAKE_REPLY;
+    }
+  });
+});
+
+describe("answerFromText", () => {
+  test("takes the last fenced block that has an answer key", () => {
+    const text = 'First try:\n```json\n{"findings": [1]}\n```\nCorrected:\n```json\n{"findings": [2]}\n```';
+    expect(answerFromText(text, ["findings"])).toEqual({ findings: [2] });
+  });
+
+  test("falls back to the outermost braces when there is no fence", () => {
+    expect(answerFromText('Result: {"keep": [], "resolved": []} done', ["keep"])).toEqual({ keep: [], resolved: [] });
+  });
+
+  test("ignores JSON without any answer key", () => {
+    expect(answerFromText('See `package.json`:\n```json\n{"type": "module"}\n```', ["findings"])).toBeUndefined();
+  });
+
+  test("repairs raw newlines the way the output file parse does", () => {
+    expect(answerFromText('```\n{"title": "a\nb", "goal": "g"}\n```', ["title"])).toEqual({ title: "a\nb", goal: "g" });
+  });
+});
+
+describe("lastReplyText", () => {
+  test("returns the last non-empty text part", () => {
+    const stream = [
+      JSON.stringify({ type: "step_start", part: { type: "step-start" } }),
+      JSON.stringify({ type: "text", part: { type: "text", text: "first" } }),
+      JSON.stringify({ type: "text", part: { type: "text", text: "  " } }),
+      JSON.stringify({ type: "text", part: { type: "text", text: "second" } }),
+    ].join("\n");
+    expect(lastReplyText(stream)).toBe("second");
   });
 });

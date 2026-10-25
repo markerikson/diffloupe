@@ -257,6 +257,7 @@ export async function listRuns(): Promise<RunHeader[]> {
         findingCounts: countBySeverity(run),
         costUsd: run.meta?.costUsd ?? 0,
         ...(run.meta?.kind ? { kind: run.meta.kind } : {}),
+        ...(run.meta?.roundLimit ? { roundLimited: true as const } : {}),
       });
     } catch (err) {
       // Otherwise a directory without a finished run.json: interrupted before the end.
@@ -284,7 +285,12 @@ export async function findPriorRunId(
   const key = targetKey(repo, target);
   const runs = await listRuns();
   return runs.find(
-    (r) => r.status === "complete" && r.kind !== "diff" && r.createdAt < before && targetKey(r.repo, r.target) === key,
+    (r) =>
+      r.status === "complete" &&
+      r.kind !== "diff" &&
+      !r.roundLimited &&
+      r.createdAt < before &&
+      targetKey(r.repo, r.target) === key,
   )?.id;
 }
 

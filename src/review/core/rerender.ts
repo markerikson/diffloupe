@@ -15,6 +15,8 @@ import path from "node:path";
 import { writeArtifacts, type Finding, type PriorComment, type Walkthrough } from "./pipeline.ts";
 import { repoSlug } from "./lib/target.ts";
 import { readJson } from "./lib/io.ts";
+import { type SummaryClaim } from "./context.ts";
+import { earlierRulings, type DisputeRuling } from "./disputes.ts";
 
 interface RunRecord {
   /** Absent when the run reviewed a bare commit range. */
@@ -29,6 +31,9 @@ interface RunRecord {
   walkthrough?: Walkthrough;
   prior?: PriorComment[];
   resolved?: { id: number; note?: string }[];
+  rulings?: DisputeRuling[];
+  carried?: SummaryClaim[];
+  postMinSeverity?: Finding["severity"];
   /** Which review of this pull request the record came from, counting from 1. */
   runs?: number;
   overCapFindings?: Finding[];
@@ -75,6 +80,10 @@ async function main() {
       walkthrough: r.walkthrough,
       prior: r.prior,
       resolved: r.resolved,
+      rulings: r.rulings,
+      earlierRulings: earlierRulings(r.prior ?? []),
+      carried: r.carried,
+      minSeverity: r.postMinSeverity ?? null,
       runs: r.runs,
       overCap: r.overCapFindings,
       checked: r.checked,

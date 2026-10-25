@@ -19,15 +19,17 @@ import { openSubject } from "./lib/subject.ts";
 import { targetKey, type Target } from "./lib/target.ts";
 import { fingerprint } from "./lib/marker.ts";
 import { compactDeletedFiles, parseDiffHunks } from "./lib/hunks.ts";
-import { DIR, SUBJECT, ARTIFACTS, RUNNER, MODEL, EFFORT, MODEL_WALK, MODEL_MERGE, MODEL_INTENT, EFFORT_AUX, WALK_BUDGET, PART_BUDGET, GROUPING, SLICE_BUDGET, MERGE_BUDGET, POOL, MAX_SLICES, MAX_SLICE_TOKENS, WALK_DIFF_TOKENS, OUT, applyConfig, setRunState, resetRunState, releaseSubject, type ReviewConfig } from "./config.ts";
+import { DIR, SUBJECT, ARTIFACTS, RUNNER, MODEL, EFFORT, MODEL_WALK, MODEL_MERGE, MODEL_INTENT, EFFORT_AUX, WALK_BUDGET, PART_BUDGET, GROUPING, SLICE_BUDGET, MERGE_BUDGET, POOL, MAX_SLICES, MAX_SLICE_TOKENS, WALK_DIFF_TOKENS, OUT, DROP_QUESTIONS, POST_MIN_SEVERITY, applyConfig, setRunState, resetRunState, releaseSubject, type ReviewConfig } from "./config.ts";
 import { classifyFile, type Finding } from "./findings.ts";
-import { gitText, diffOutline, gatherIntent, gatherPriorComments, renderPriorComments, type PriorComment } from "./context.ts";
+import { gitText, diffOutline, gatherIntent, gatherPriorComments, latestOwnSummary, renderPriorComments, type PriorComment } from "./context.ts";
 import { agent, CancelledError, killAgents, resetOpenCodeConfig, type AgentFailure } from "./runner.ts";
 import { slicePrompt, mergePrompt, promptVersion, instructionsHash, type ReviewUnit, coverUnits, packUnits, type Walkthrough, partitionPrompt, groupNamingPrompt, walkthroughPrompt } from "./prompts.ts";
 import { classifySurface, SURFACE_RANK, CONF, SEV } from "./surface.ts";
-import { saidFingerprints, readCheckedClaims, mergeBudgetFor, fallbackRank, coordinatorHasWork, type MergeDecisions, MAX_POSTED, MAX_POSTED_INCREMENTAL, MAX_PREEXISTING, applyDecisions, capFindings, otherSites } from "./coordinate.ts";
-import { writeArtifacts } from "./render.ts";
+import { carriedClaims, saidFingerprints, readCheckedClaims, mergeBudgetFor, fallbackRank, coordinatorHasWork, type MergeDecisions, MAX_POSTED, MAX_POSTED_INCREMENTAL, MAX_PREEXISTING, applyDecisions, capFindings, otherSites } from "./coordinate.ts";
+import { stoppedSummary, writeArtifacts, writeStoppedArtifacts } from "./render.ts";
 import { draftIntent, type IntentDraftRecord } from "./intent-draft.ts";
+import { disputeRecord, earlierRulings, hasOpenDisputes, pendingDisputes, renderDisputes, rulingsFromDecisions } from "./disputes.ts";
+import { roundProgress } from "./progress.ts";
 
 export * from "./config.ts";
 export * from "./findings.ts";
@@ -103,6 +105,14 @@ export interface RunReviewOptions {
    * changed since then are reviewed again, unless too many changed.
    */
   priorHead?: string;
+  /**
+   * Skip the review, before any model call, when it would be a later round
+   * than this. The round is counted from the pull request's summary comment,
+   * or taken from `round` on a local run.
+   */
+  maxRounds?: number;
+  /** A local run's round, from the prior runs of this target. */
+  round?: number;
 }
 
 const MIN_FILES_FOR_FALLBACK = 4;
@@ -135,6 +145,8 @@ export function chooseReviewScope(files: string[], changedSince: string[] | null
 export interface RunReviewResult {
   /** The run record written to runs/<tag>.json, or null when nothing was reviewable. */
   record: Record<string, unknown> | null;
+  /** Set when `maxRounds` stopped the review; `round` is the round it would have been. */
+  roundLimit?: { maxRounds: number; round: number };
   units: ReviewUnit[];
   byClass: { skip: string[]; docs: string[]; code: string[] };
   findings: Finding[];
@@ -237,6 +249,12 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
   const intent = await gatherIntent(slug, pr, base, head, options.intent, { strict });
   const prior = [...(await gatherPriorComments(slug, pr, { strict })), ...(options.prior ?? [])];
   const priorMd = renderPriorComments(prior, intent.body);
+  const pending = pendingDisputes(prior);
+  const earlier = earlierRulings(prior);
+  if (pending.length) {
+    const disputed = pending.filter((d) => d.verdict === "disputed").length;
+    console.error(`  ${disputed} disputed and ${pending.length - disputed} reported-fixed answers to earlier findings`);
+  }
 
   // Counted for the run record.
   const reviewsSoFar = Math.max(0, ...prior.filter((c) => c.mine).map((c) => c.runs ?? 0));
@@ -246,6 +264,29 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
   const byClass = { skip: [] as string[], docs: [] as string[], code: [] as string[] };
   for (const f of changed) byClass[classifyFile(f)].push(f);
   const sliceFiles = byClass.code;
+
+  const round = options.local ? (options.round ?? 1) : reviewsSoFar + 1;
+  if (options.maxRounds !== undefined && round > options.maxRounds) {
+    console.error(`  not reviewing: this would be round ${round}, and --max-rounds is ${options.maxRounds}`);
+    // The only thing posted is a notice on the summary comment. The rest of it
+    // carries the rulings and the round count, and stays as the last review left it.
+    if (pr && !options.local) {
+      const previous = await latestOwnSummary(slug, pr);
+      if (previous) {
+        await writeStoppedArtifacts({
+          dir: path.join(ARTIFACTS, "reviews"), tag: tagBase, slug, pr, head,
+          summary: stoppedSummary(previous, { round, maxRounds: options.maxRounds, head }),
+        });
+      } else {
+        console.error("  no summary comment from an earlier review to add the notice to");
+      }
+    }
+    return {
+      record: null,
+      roundLimit: { maxRounds: options.maxRounds, round },
+      units: [], byClass, findings: [], costUsd: 0, wallMs: Date.now() - started, markdownPath,
+    };
+  }
 
   // `git diff <range> -- ` with an empty pathspec means "everything", not
   // "nothing". A docs-only or lockfile-only change leaves no code files, and
@@ -376,6 +417,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
   if (!singleGroup) {
     parted = await agent(pp, {
       budget: PART_BUDGET, outFile: partOut, tag: partTag, model: MODEL_WALK, effort: EFFORT_AUX,
+      answerKeys: ["groups", "review_units"],
     });
     addCost(parted.costUsd);
   }
@@ -525,7 +567,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
       // the other slices are still running inside it.
       let r: Awaited<ReturnType<typeof agent>>;
       try {
-        r = await agent(prompt, { budget: SLICE_BUDGET, outFile, tag });
+        r = await agent(prompt, { budget: SLICE_BUDGET, outFile, tag, answerKeys: ["findings"] });
         addCost(r.costUsd);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -583,6 +625,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
         // code says how the process ended, which is a different question.
         ok: r.payload !== null,
         ...(r.failure ? { failure: r.failure } : {}),
+        ...(r.deliveredAs ? { deliveredAs: r.deliveredAs } : {}),
       });
       console.error(
         `  [w${id}] ${slice.unitId}${slice.parts > 1 ? ` ${slice.part}/${slice.parts}` : ""} ` +
@@ -633,6 +676,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
   await removeIfPresent(mergeOut);
   const mp = mergePrompt({
     findings: toMerge, intent, draft, files: sliceFiles, prior: priorMd, outFile: mergeOut, instructions: options.instructions,
+    disputes: renderDisputes(pending),
     changedLines: parseDiffHunks(diffU0),
     maxNew: incremental ? MAX_POSTED_INCREMENTAL : MAX_POSTED,
     sinceLast: incremental ? scope.files : undefined,
@@ -700,8 +744,11 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     return { wallMs: 0, exitCode: -1, costUsd: 0, numTurns: 0, usage: null, payload: null };
   };
     const skipped = { wallMs: 0, exitCode: 0, costUsd: 0, numTurns: 0, usage: null, payload: null };
-    const nothingChanged = incremental && scope.files.length === 0;
-    const mergeIdle = nothingChanged || !coordinatorHasWork(toMerge, prior);
+    // A dispute needs a ruling even when no code changed: the author's answer
+    // is new, and leaving it unread stalls the pull request.
+    const disputesOpen = hasOpenDisputes(pending);
+    const nothingChanged = incremental && scope.files.length === 0 && !disputesOpen;
+    const mergeIdle = nothingChanged || (!disputesOpen && !coordinatorHasWork(toMerge, prior));
     if (nothingChanged) console.error("  coordinator skipped: no code changed since the last review");
     else if (mergeIdle) console.error("  coordinator skipped: no findings and no earlier comments to close out");
     emit({ type: "stage", stage: "coordinating" });
@@ -709,10 +756,16 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     const [merged, walked] = await Promise.all([
       mergeIdle
         ? Promise.resolve({ ...skipped, payload: { keep: [] } satisfies MergeDecisions })
-        : agent(mp, { budget: mergeBudget, outFile: mergeOut, tag: mergeTag, model: MODEL_MERGE, effort: EFFORT_AUX })
+        : agent(mp, {
+          budget: mergeBudget, outFile: mergeOut, tag: mergeTag, model: MODEL_MERGE, effort: EFFORT_AUX,
+          answerKeys: ["keep"],
+        })
           .then((r) => (addCost(r.costUsd), r))
           .catch(survive("coordinator")),
-      agent(wp, { budget: WALK_BUDGET, outFile: walkOut, tag: walkTag, model: MODEL_WALK, effort: EFFORT_AUX })
+      agent(wp, {
+        budget: WALK_BUDGET, outFile: walkOut, tag: walkTag, model: MODEL_WALK, effort: EFFORT_AUX,
+        answerKeys: ["chapters"],
+      })
         .then((r) => (addCost(r.costUsd), r))
         .catch(survive("walkthrough")),
     ]);
@@ -724,6 +777,12 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
   let coordinatorDropped: { title: string; reason: string }[] = [];
   let mergeMode = mergeIdle ? "nothing-to-merge" : "coordinator";
 
+  // Rulings are only taken from the coordinator. When it did not run, the
+  // disputes stay open and the next review rules on them.
+  const rulings = rulingsFromDecisions(mp2.disputes, pending);
+  for (const r of rulings) console.error(`  ${r.outcome} "${r.claim}" after @${r.author} disputed it`);
+  const withdrawn = new Set([...earlier, ...rulings].filter((r) => r.outcome === "withdrawn").map((r) => r.fp));
+
   // ---- deterministic suppression of things already said
   const alreadySaid = saidFingerprints(prior);
   // Run before the cap, not after. The slices re-find the same top-ranked
@@ -732,15 +791,32 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
   // deleted, and nothing promotes the eleventh into a slot the third vacated —
   // the review shrinks by the number of repeats instead of showing what is new.
   const suppressSaid = (list: Finding[]) => {
-    if (!alreadySaid.size) return list;
+    if (!alreadySaid.size && !withdrawn.size) return list;
     return list.filter((f) => {
-      const hit = alreadySaid.get(fingerprint(f.file, f.title));
+      const fp = fingerprint(f.file, f.title);
+      if (withdrawn.has(fp)) {
+        coordinatorDropped.push({ title: f.title, reason: "withdrawn after the author disputed it" });
+        console.error(`  suppressed "${f.title}" — withdrawn after a dispute`);
+        return false;
+      }
+      const hit = alreadySaid.get(fp);
       if (!hit) return true;
       coordinatorDropped.push({
         title: f.title,
         reason: `already posted on an earlier push (comment ${hit.id})`,
       });
       console.error(`  suppressed "${f.title}" — same claim as comment ${hit.id}`);
+      return false;
+    });
+  };
+  // Questions the repo's settings keep out of the posted review. Taken out
+  // before the cap so they do not hold slots, and kept in the run record.
+  const droppedQuestions: Finding[] = [];
+  const dropQuestions = (list: Finding[]) => {
+    if (!DROP_QUESTIONS) return list;
+    return list.filter((f) => {
+      if (f.severity !== "question") return true;
+      droppedQuestions.push(f);
       return false;
     });
   };
@@ -770,11 +846,11 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     // they are exempt — a flat slice here would let a batch of high-severity
     // agreements sort to the front and push real findings past the cut.
     stillOpen = new Set([...byImportance, ...applied.capped].map((f) => fingerprint(f.file, f.title)));
-    const cut = capFindings(suppressSaid(byImportance), capLimits);
+    const cut = capFindings(dropQuestions(suppressSaid(byImportance)), capLimits);
     // The coordinator's own cap cuts rank below anything this cut leaves over,
     // and go through the same suppression so an already-posted claim is not
     // listed again as past the cap.
-    overCap = [...cut.overCap, ...suppressSaid(applied.capped.sort(importance))];
+    overCap = [...cut.overCap, ...dropQuestions(suppressSaid(applied.capped.sort(importance)))];
     finalFindings = cut.posted;
   }
   if (!mp2.keep) {
@@ -793,7 +869,7 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     // unvetted id would route the finding out of the review and into a reply
     // endpoint that may not accept it, losing a finding this path exists to
     // salvage.
-    const cut = capFindings(suppressSaid(ranked).map((f) => ({ ...f, repeat_of: undefined })), capLimits);
+    const cut = capFindings(dropQuestions(suppressSaid(ranked)).map((f) => ({ ...f, repeat_of: undefined })), capLimits);
     finalFindings = cut.posted;
     overCap = cut.overCap;
   }
@@ -812,9 +888,12 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     // no `file` — sending one there is a 404, and the post job counts that as a
     // failed call and goes red. `file` is what distinguishes the two.
     if (!c.file) return false;
+    // A ruled dispute gets its own reply below; a second one would contradict it.
+    if (c.fingerprint && rulings.some((d) => d.fp === c.fingerprint)) return false;
     return !(c.fingerprint && stillOpen.has(c.fingerprint));
   });
   if (resolved.length) console.error(`  closing out ${resolved.length} earlier comments as fixed`);
+  if (droppedQuestions.length) console.error(`  left ${droppedQuestions.length} question(s) out of the posted review`);
 
   emit({ type: "stage", stage: "verifying" });
   // ---- deterministic verification: cited location must exist
@@ -841,6 +920,17 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
       .flatMap((r) => (r.files as string[] | undefined) ?? []),
     budget: budgetSkipped,
   };
+  const unreadFiles = new Set([...notReviewedFiles.overCap, ...notReviewedFiles.failed, ...notReviewedFiles.budget]);
+  const readFiles = new Set(capped.flatMap((s) => s.files).filter((f) => !unreadFiles.has(f)));
+  const carried = carriedClaims(prior, {
+    unread: incremental ? (f) => !readFiles.has(f) : (f) => unreadFiles.has(f),
+    refound: stillOpen,
+    rendered: new Set(verified.map((f) => fingerprint(f.file, f.title))),
+    withdrawn,
+    dropQuestions: DROP_QUESTIONS,
+  });
+  if (carried.length)
+    console.error(`  carrying forward ${carried.length} earlier summary finding(s) this review did not post again`);
   const checked = checkedBySlice.flat().filter(Boolean);
   const totalCost =
     sliceRuns.reduce((a, r) => a + (r.costUsd as number), 0) + merged.costUsd + walked.costUsd + intentDraft.costUsd;
@@ -854,8 +944,16 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     "raw findings": allFindings.length,
     "after merge": finalFindings.length,
     "after verification": verified.length,
+    ...(droppedQuestions.length ? { "questions not posted (settings)": droppedQuestions.length } : {}),
     "registry signals": reg.findings.length,
     "prior comments considered": prior.length,
+    ...(carried.length ? { "carried forward unread": carried.length } : {}),
+    ...(rulings.length
+      ? {
+        "disputes ruled": `${rulings.filter((r) => r.outcome === "withdrawn").length} withdrawn, ` +
+          `${rulings.filter((r) => r.outcome === "upheld").length} upheld`,
+      }
+      : {}),
     ...(incremental
       ? { "review scope": `${scope.files.length} of ${sliceFiles.length} code files changed since the last review` }
       : scope.reason ? { "review scope": `full: ${scope.reason}` } : {}),
@@ -899,6 +997,9 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     walkthrough,
     prior,
     resolved,
+    rulings,
+    earlierRulings: earlier,
+    carried,
     runs: reviewsSoFar + 1,
     noReviewers: sliceRuns.length === 0,
     unreviewed: notReviewedFiles,
@@ -921,9 +1022,11 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     merge: {
       wallMs: merged.wallMs, costUsd: merged.costUsd, numTurns: merged.numTurns, usage: merged.usage,
       tools: "tools" in merged ? merged.tools : undefined,
+      ...("deliveredAs" in merged ? { deliveredAs: merged.deliveredAs } : {}),
     },
     walk: {
       model: MODEL_WALK, wallMs: walked.wallMs, costUsd: walked.costUsd, numTurns: walked.numTurns, usage: walked.usage,
+      ...("deliveredAs" in walked ? { deliveredAs: walked.deliveredAs } : {}),
     },
     walkthrough: walkthrough ?? null,
     intentDraft,
@@ -942,9 +1045,21 @@ async function main(options: RunReviewOptions): Promise<RunReviewResult> {
     mergedFindings: finalFindings,
       verifiedFindings: verified,
       overCapFindings: overCap,
+      ...(droppedQuestions.length ? { droppedQuestions } : {}),
+      ...(POST_MIN_SEVERITY ? { postMinSeverity: POST_MIN_SEVERITY } : {}),
       checked,
       unreviewed: notReviewedFiles,
       resolved,
+      ...(carried.length ? { carried } : {}),
+      ...(pending.length || earlier.length ? { disputes: disputeRecord(earlier, rulings, pending) } : {}),
+      ...(rulings.length ? { rulings } : {}),
+      roundProgress: roundProgress({
+        prior,
+        resolvedIds: resolved.map((r) => r.id),
+        earlierRulings: earlier,
+        rulings,
+        newFindings: verified.length,
+      }),
       runs: reviewsSoFar + 1,
       rejected,
     intentAlignment: mp2.intent_alignment ?? null,

@@ -63,7 +63,15 @@ export interface ChainStats {
   usage: UsageTotals;
   /** Over the rounds that recorded which prior findings had their code edited. */
   acted: ActedStats;
+  /** Where the author's disputes stood at the last run. */
+  disputes: DisputeCounts;
   lastAt: string;
+}
+
+export interface DisputeCounts {
+  withdrawn: number;
+  upheld: number;
+  unjudged: number;
 }
 
 export interface VersionStats {
@@ -96,6 +104,7 @@ export interface StatsTotals {
   costUsd: number;
   usage: UsageTotals;
   acted: ActedStats;
+  disputes: DisputeCounts;
 }
 
 const UNRECORDED = "unrecorded";
@@ -173,11 +182,18 @@ const emptySeverities = (): SeverityCounts => ({ blocker: 0, "should-fix": 0, "n
 const total = (counts: SeverityCounts) => Object.values(counts).reduce((n, c) => n + c, 0);
 
 /**
+ * Complete review runs that reviewed something. A run `--max-rounds` stopped is
+ * saved as complete but carries the previous round's findings and nothing new.
+ */
+const reviewed = ({ run }: StatsInput) =>
+  run.status === "complete" && run.meta.kind !== "diff" && !run.meta.roundLimit;
+
+/**
  * Groups complete review runs into re-review chains, each linked by
  * `priorRunId`, and counts what happened to their findings round by round.
  */
 export function chainStats(inputs: StatsInput[]): ChainStats[] {
-  const runs = inputs.filter(({ run }) => run.status === "complete" && run.meta.kind !== "diff");
+  const runs = inputs.filter(reviewed);
   const byId = new Map(runs.map((i) => [i.run.id, i]));
   const rootOf = (input: StatsInput): string => {
     const seen = new Set<string>();
@@ -260,8 +276,21 @@ function summarizeChain(members: StatsInput[], byId: Map<string, StatsInput>): C
     costUsd: rounds.reduce((n, r) => n + r.costUsd, 0),
     usage,
     acted,
+    disputes: countDisputes(last.run),
     lastAt: last.run.createdAt,
   };
+}
+
+/** Each run carries every dispute on the pull request so far, so the last run's list is the whole history. */
+function countDisputes(run: ReviewRun): DisputeCounts {
+  const counts: DisputeCounts = { withdrawn: 0, upheld: 0, unjudged: 0 };
+  for (const d of run.disputes ?? []) counts[d.outcome]++;
+  return counts;
+}
+
+function formatDisputes(d: DisputeCounts): string | null {
+  if (!d.withdrawn && !d.upheld && !d.unjudged) return null;
+  return `${d.withdrawn} withdrawn, ${d.upheld} upheld for a human, ${d.unjudged} awaiting a ruling`;
 }
 
 export function statsTotals(chains: ChainStats[]): StatsTotals {
@@ -289,6 +318,14 @@ export function statsTotals(chains: ChainStats[]): StatsTotals {
       return sum;
     }, emptyUsageTotals()),
     acted: sumActed(chains.map((c) => c.acted)),
+    disputes: chains.reduce(
+      (sum, c) => ({
+        withdrawn: sum.withdrawn + c.disputes.withdrawn,
+        upheld: sum.upheld + c.disputes.upheld,
+        unjudged: sum.unjudged + c.disputes.unjudged,
+      }),
+      { withdrawn: 0, upheld: 0, unjudged: 0 },
+    ),
   };
 }
 
@@ -299,7 +336,7 @@ export function statsTotals(chains: ChainStats[]): StatsTotals {
  * findings.
  */
 export function statsByVersion(inputs: StatsInput[]): VersionStats[] {
-  const runs = inputs.filter(({ run }) => run.status === "complete" && run.meta.kind !== "diff");
+  const runs = inputs.filter(reviewed);
   const byId = new Map(runs.map((i) => [i.run.id, i.run]));
   const groups = new Map<string, VersionStats>();
   const groupFor = (run: ReviewRun): VersionStats => {
@@ -394,6 +431,8 @@ export function formatStats(chains: ChainStats[], versions?: VersionStats[]): st
     );
     const acted = formatActed(c.acted);
     if (acted) lines.push(`  acted on: ${acted}`);
+    const disputes = formatDisputes(c.disputes);
+    if (disputes) lines.push(`  disputes: ${disputes}`);
     lines.push("");
   }
   const t = statsTotals(chains);
@@ -406,6 +445,8 @@ export function formatStats(chains: ChainStats[], versions?: VersionStats[]): st
   if (usage) lines.push(`tokens over ${t.usage.calls} agent calls: ${usage}`);
   const acted = formatActed(t.acted);
   if (acted) lines.push(`prior findings acted on: ${acted}`);
+  const disputes = formatDisputes(t.disputes);
+  if (disputes) lines.push(`disputes: ${disputes}`);
   if (versions) {
     lines.push("", "By prompt version / instructions:");
     for (const v of versions) {

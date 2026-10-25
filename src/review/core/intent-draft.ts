@@ -32,6 +32,8 @@ export interface IntentDraftRecord {
   failure?: string;
   /** Characters of diff the model was shown, after compaction. */
   diffChars: number;
+  /** Set when the model put the draft in its reply instead of writing the output file. */
+  deliveredAs?: "text";
 }
 
 interface CachedDraft {
@@ -100,8 +102,15 @@ export async function draftIntent(o: {
     effort: EFFORT_AUX,
     tools: "none",
     system: { name: "intent", text: INTENT_DRAFT_SYSTEM },
+    answerKeys: ["title", "goal"],
   });
-  const spent = { costUsd: res.costUsd, wallMs: res.wallMs, cached: false, ...(res.usage ? { usage: res.usage } : {}) };
+  const spent = {
+    costUsd: res.costUsd,
+    wallMs: res.wallMs,
+    cached: false,
+    ...(res.usage ? { usage: res.usage } : {}),
+    ...(res.deliveredAs ? { deliveredAs: res.deliveredAs } : {}),
+  };
   const draft = parseIntentDraft(res.payload);
   if (!draft) {
     const failure = res.failure?.message ?? "the draft has no title or goal";

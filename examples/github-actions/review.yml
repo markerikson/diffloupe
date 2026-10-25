@@ -1,0 +1,201 @@
+# DiffLoupe review for pull requests: review, post, gate.
+#
+# Copy to .github/workflows/ in your repository and set the ANTHROPIC_API_KEY
+# secret (or the key for the provider your models use; see `diffloupe doctor`).
+# Make the `gate` job a required check in the branch protection rules.
+#
+# Policy in this example:
+# - The review job never fails on findings, only when the review itself breaks.
+# - The gate job fails while a blocker the bot posted is still open on the PR.
+# - After three rounds of review, later pushes are not reviewed. The summary
+#   comment says so, the PR gets the `ai-review-max-rounds` label, and the gate
+#   passes, so a PR in an automated fix loop can merge after a bounded number
+#   of attempts. Search for the label to find PRs merged with open findings.
+
+name: AI code review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+
+# A push makes an in-flight review obsolete, and a review costs real money.
+concurrency:
+  group: ai-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions: {}
+
+env:
+  DIFFLOUPE_VERSION: "0.5.0"
+
+jobs:
+  review:
+    # Fork pull requests get no secrets, so the first model call would fail.
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # No write scope: the model reads text the PR author wrote, and nothing it
+    # produces may act on GitHub. The write token lives in the post job.
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      reviewed: ${{ steps.result.outputs.reviewed }}
+      skip-reason: ${{ steps.result.outputs.skip-reason }}
+      artifact: ${{ steps.result.outputs.artifact }}
+      artifact_url: ${{ steps.upload.outputs.artifact-url }}
+    steps:
+      # Outside the workspace, so the review never reads its own output.
+      - run: echo "OUT=$RUNNER_TEMP/diffloupe-out" >> "$GITHUB_ENV"
+
+      # The head commit, not the merge commit GitHub synthesizes: line numbers
+      # must match the Files Changed tab. Full history for the merge base.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+
+      # DiffLoupe needs OpenCode 2.x, from @opencode/cli. `opencode-ai` is 1.x.
+      - run: npm install -g @opencode/cli@2.0.32 tilth@0.9.0 "@acemarke/diffloupe@$DIFFLOUPE_VERSION"
+
+      - name: Doctor
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: diffloupe doctor
+
+      # Exit codes: 0 reviewed or skipped, 1 run failed, 2 could not start,
+      # 4 skipped by --max-rounds. The post job still posts the notice for 4.
+      - name: Review
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          code=0
+          diffloupe review "#$PR" --headless --github --head "$HEAD_SHA" \
+            --out "$OUT" --max-cost 10 --max-rounds 3 || code=$?
+          [ "$code" -eq 4 ] && exit 0
+          exit "$code"
+
+      - name: Read result
+        id: result
+        if: always()
+        run: |
+          set -euo pipefail
+          # Absent when the run could not start (exit 2).
+          [ -f "$OUT/result.json" ] || exit 0
+          echo "reviewed=$(jq -r '.reviewed' "$OUT/result.json")" >> "$GITHUB_OUTPUT"
+          echo "skip-reason=$(jq -r '.skipReason // empty' "$OUT/result.json")" >> "$GITHUB_OUTPUT"
+          echo "artifact=$(jq -r '.artifactName // empty' "$OUT/result.json")" >> "$GITHUB_OUTPUT"
+          jq -r '"**\(.status)** — \(.findings.posted) finding(s), $\(.costUsd * 100 | round / 100), round \(.round)"' \
+            "$OUT/result.json" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f "$OUT/findings.md" ]; then
+            { echo; cat "$OUT/findings.md"; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # The summary comment links here for the walkthrough and the evidence
+      # behind each finding, so the retention is how long that link works.
+      - name: Upload review
+        id: upload
+        if: always() && steps.result.outputs.artifact != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.result.outputs.artifact }}
+          path: ${{ runner.temp }}/diffloupe-out/
+          retention-days: 90
+
+  post:
+    needs: review
+    if: >-
+      needs.review.outputs.reviewed == 'true' ||
+      needs.review.outputs.skip-reason == 'round-limit'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The only job that writes comments, and it runs no model. It sends the
+    # payload file the review job wrote to the PR named by the event.
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      # The posting script runs from the DiffLoupe source at the same version.
+      # It imports only node builtins and its own modules, so it needs no install.
+      - uses: actions/checkout@v4
+        with:
+          repository: markerikson/diffloupe
+          ref: v${{ env.DIFFLOUPE_VERSION }}
+          path: diffloupe
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.review.outputs.artifact }}
+          path: review
+
+      - name: Post review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          ARTIFACT_URL: ${{ needs.review.outputs.artifact_url }}
+          DRY_RUN: "0"
+        run: bun diffloupe/src/review/post.ts review/payloads.json
+
+      # The labels endpoint creates the label if the repository lacks it.
+      - name: Label PRs past the round limit
+        # Also after a failed post, so the gate still passes the PR.
+        if: ${{ !cancelled() && needs.review.outputs.skip-reason == 'round-limit' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PR/labels" -f 'labels[]=ai-review-max-rounds'
+
+  gate:
+    needs: [review, post]
+    # Runs after a review whether or not the post job ran or failed: it reads
+    # the PR itself, so findings that did get posted, and earlier rounds'
+    # findings, still count. It also runs when the review job fails, so a
+    # failed review of a later push does not clear earlier rounds' open
+    # findings. It is skipped only when the review job is, and GitHub counts
+    # a skipped required check as passing.
+    if: >-
+      !cancelled() &&
+      (needs.review.result == 'success' || needs.review.result == 'failure') &&
+      needs.post.result != 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+      statuses: write
+    steps:
+      - uses: oven-sh/setup-bun@v2
+
+      - run: npm install -g "@acemarke/diffloupe@$DIFFLOUPE_VERSION"
+
+      # Exits 3 while an open finding is a blocker. Only blocker: findings vary
+      # between runs, and a lower threshold blocks merges on false positives.
+      - name: Gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # This push's review never reached the PR. The gate then fails if no
+          # earlier review did either, so a broken first review cannot merge
+          # unreviewed; otherwise it judges what earlier reviews left open.
+          REVIEW_MISSING: >-
+            ${{ (needs.review.result == 'failure' ||
+            (needs.review.outputs.reviewed == 'true' && needs.post.result == 'failure')) && 'yes' || '' }}
+        run: >-
+          diffloupe gate "$GITHUB_REPOSITORY#$PR"
+          --fail-on blocker
+          --override-label ai-review-max-rounds
+          --status "$HEAD_SHA"
+          ${REVIEW_MISSING:+--review-missing}

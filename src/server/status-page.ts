@@ -32,6 +32,7 @@ function line(e) {
   if (e.type === "log") return e.message;
   if (e.type === "slice") return "  [" + (e.index + 1) + "/" + e.total + "] " + e.status + " " + e.title + (e.costUsd != null ? " $" + e.costUsd.toFixed(2) : "");
   if (e.type === "budget") return "  cost limit reached at $" + e.totalUsd.toFixed(2) + "; " + e.skippedSlices + " slice(s) not started";
+  if (e.type === "done" && e.roundLimit) return "Not reviewed: this change already had " + e.roundLimit + " round(s) of review (--max-rounds).";
   if (e.type === "done" && e.noChanges) return "No code changes to review.";
   if (e.type === "done") return (e.carriedOver ? (e.findings - e.carriedOver) + " new finding(s), " + e.carriedOver + " carried over" : e.findings + " finding(s)") + " · $" + e.costUsd.toFixed(2) + " · " + Math.round(e.wallMs / 1000) + "s";
   if (e.type === "cancelled") return "Cancelled.";

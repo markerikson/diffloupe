@@ -6,6 +6,7 @@ import {
   anchorCovers,
   applyDecisions,
   capFindings,
+  carriedClaims,
   chooseReviewScope,
   classifyFile,
   classifySurface,
@@ -27,6 +28,7 @@ import {
   renderPriorComments,
   renderReview,
   saidFingerprints,
+  stoppedSummary,
   openCodeConfig,
   openCodeInvocation,
   openCodeSettings,
@@ -39,7 +41,8 @@ import {
   type PriorComment,
 } from "./pipeline.ts";
 import { diagnoseMissingOutput } from "./runner.ts";
-import { readMarkers } from "./lib/marker.ts";
+import { COPY_BLOCK_END, COPY_BLOCK_START, findMarker, isOwnComment, marker, readMarkers, settledIds } from "./lib/marker.ts";
+import type { DisputeRuling } from "./disputes.ts";
 import { ARTIFACTS, OUT, applyConfig } from "./config.ts";
 
 // Repo-specific surface patterns that the classifySurface assertions below rely on.
@@ -324,13 +327,15 @@ describe("renderReview detail split", () => {
 
   it("keeps a fingerprint in the comment for every finding it lists", () => {
     const findings = [
-      finding({ file: "src/a.ts", title: "first claim", explanation: "long argument here" }),
-      finding({ file: "src/b.ts", title: "second claim", explanation: "another argument" }),
+      finding({ file: "src/a.ts", title: "first claim", explanation: "long argument here", severity: "should-fix" }),
+      finding({ file: "src/b.ts", title: "second claim", explanation: "another argument", severity: "blocker" }),
     ];
     const out = renderReview({ ...base, findings });
     const fps = readMarkers(out.summary).filter((m) => m.kind === "summary-item");
     expect(fps).toHaveLength(2);
     expect(new Set(fps.map((m) => m.fields.fp)).size).toBe(2);
+    // The gate reads severity from the marker.
+    expect(fps.map((m) => m.fields.sev).sort()).toEqual(["blocker", "should-fix"]);
   });
 
   it("shows the other copies of a defect outside the collapsed sections", () => {
@@ -352,6 +357,28 @@ describe("renderReview detail split", () => {
     const bullet = out.summary.split("\n").find((l) => l.includes("uses url.origin"));
     expect(bullet).toContain(" · also `src/b.ts:7`, `src/c.ts:9` · ");
     expect(readMarkers(out.summary).filter((m) => m.kind === "summary-item")).toHaveLength(1);
+  });
+
+  it("folds findings below the posting threshold into their own section, with no inline comment", () => {
+    const findings = [
+      finding({ file: "src/a.ts", title: "real bug", severity: "should-fix" }),
+      finding({ file: "src/a.ts", title: "style nit", severity: "nice-to-have" }),
+      finding({ file: "src/b.ts", title: "why this way", severity: "question" }),
+    ];
+    const out = renderReview({ ...base, findings, inlineMode: "tier", changedFiles: ["src/a.ts", "src/b.ts"], minSeverity: "should-fix" });
+    const fold = out.summary.indexOf("<details><summary>Minor findings (2) — below should-fix</summary>");
+    expect(fold).toBeGreaterThan(-1);
+    expect(out.summary.indexOf("real bug")).toBeLessThan(fold);
+    expect(out.summary.indexOf("style nit")).toBeGreaterThan(fold);
+    expect(out.summary.indexOf("why this way")).toBeGreaterThan(fold);
+    expect(out.ordered.map((f) => f.title)).toEqual(["real bug"]);
+    // The folded findings keep their fingerprints so the next review does not raise them again.
+    expect(readMarkers(out.summary).filter((m) => m.kind === "summary-item")).toHaveLength(2);
+  });
+
+  it("lists every severity together without a threshold", () => {
+    const findings = [finding({ file: "src/a.ts", title: "style nit", severity: "nice-to-have" })];
+    expect(renderReview({ ...base, findings }).summary).not.toContain("Minor findings");
   });
 
   /**
@@ -627,11 +654,152 @@ describe("renderReview close-out replies", () => {
   });
 });
 
+describe("stoppedSummary", () => {
+  const previous = [
+    "## Review",
+    `- a finding ${marker("summary-item", { file: "a.ts", line: 3, fp: "abcdef1234", sev: "blocker" })}`,
+    marker("summary", { runs: 3, head: "1111111111" }),
+  ].join("\n");
+
+  it("puts the reason at the top and keeps the last review's comment", () => {
+    const out = stoppedSummary(previous, { round: 4, maxRounds: 3, head: "2222222222abcdef" });
+    const [first, ...rest] = out.split("\n\n");
+    expect(first).toContain("Commit `2222222222` was not reviewed");
+    expect(first).toContain("already had 3 rounds of review, and the limit is 3");
+    expect(findMarker(out, "stopped")?.fields).toEqual({ round: "4", max: "3", head: "2222222222abcdef" });
+    expect(rest.join("\n\n")).toBe(previous);
+    expect(findMarker(out, "summary")?.fields).toEqual({ runs: "3", head: "1111111111" });
+    expect(isOwnComment(out, "Bot", "summary")).toBe(true);
+  });
+
+  it("replaces the notice from an earlier stopped push", () => {
+    const once = stoppedSummary(previous, { round: 4, maxRounds: 3, head: "2222222222" });
+    const twice = stoppedSummary(once, { round: 4, maxRounds: 3, head: "3333333333" });
+    expect(readMarkers(twice).filter((m) => m.kind === "stopped")).toHaveLength(1);
+    expect(twice).toContain("`3333333333`");
+    expect(twice).not.toContain("`2222222222`");
+  });
+
+  it("drops the copy section when the notice would pass the comment limit", () => {
+    const copy = `${COPY_BLOCK_START}\n${"x".repeat(65536 - previous.length - 100)}\n${COPY_BLOCK_END}`;
+    const out = stoppedSummary(`${previous}\n\n${copy}`, { round: 4, maxRounds: 3, head: "2222222222" });
+    expect(out.length).toBeLessThanOrEqual(65536);
+    expect(out).toContain("Reviews stopped");
+    expect(out).not.toContain(COPY_BLOCK_START);
+    expect(out).toContain("- a finding");
+  });
+});
+
+describe("renderReview dispute rulings", () => {
+  const base = { head: "abc1234567", findings: [], stats: {}, repo: "o/r" };
+  const ruling = (over: Partial<DisputeRuling> = {}): DisputeRuling => ({
+    fp: "abcdef12",
+    outcome: "withdrawn",
+    file: "a.ts",
+    line: "3",
+    claim: "null check missing",
+    author: "alice",
+    commentId: 21,
+    note: "validated upstream",
+    ...over,
+  });
+
+  it("closes a withdrawn finding's thread and records the ruling in the summary", () => {
+    const out = renderReview({ ...base, rulings: [ruling()] });
+    expect(out.replies).toHaveLength(1);
+    const reply = out.replies[0]!;
+    expect(reply.comment_id).toBe(21);
+    expect(reply.body).toContain("Withdrawn after @alice's reply");
+    expect(settledIds([{ in_reply_to_id: 21, body: reply.body, user: { type: "Bot" } }])).toContain(21);
+    const disputes = readMarkers(out.summary).filter((m) => m.kind === "dispute");
+    expect(disputes.map((m) => m.fields)).toEqual([{ fp: "abcdef12", outcome: "withdrawn" }]);
+  });
+
+  it("leaves an upheld finding's thread open for a human", () => {
+    const out = renderReview({ ...base, rulings: [ruling({ outcome: "upheld" })] });
+    const reply = out.replies[0]!;
+    expect(reply.body).toContain("still stands");
+    expect(readMarkers(reply.body)[0]!.fields.addressed).toBeUndefined();
+    expect(out.summary).toContain("Upheld, for a human reviewer");
+  });
+
+  it("carries earlier rulings forward without replying again", () => {
+    const out = renderReview({
+      ...base,
+      earlierRulings: [{ fp: "abcdef12", outcome: "withdrawn", label: "Withdrawn: `a.ts:3` null check" }],
+    });
+    expect(out.replies).toHaveLength(0);
+    expect(out.summary).toContain("- Withdrawn: `a.ts:3` null check");
+    expect(readMarkers(out.summary).filter((m) => m.kind === "dispute")).toHaveLength(1);
+  });
+});
+
 /**
  * The mechanical half of "say a thing once". The prompt asks for the same
  * behaviour and cannot be trusted with it: the previous bot was asked, and
  * 40-50% of its output was restatement of comments it had already posted.
  */
+describe("carriedClaims", () => {
+  const claims = [
+    { fp: "aaaaaaaaaa", file: "src/a.ts", line: "4", text: "Blocker in a", sev: "blocker" },
+    { fp: "bbbbbbbbbb", file: "src/b.ts", line: "9", text: "Issue in b", sev: "should-fix" },
+    { fp: "cccccccccc", file: "src/c.ts", line: "1", text: "Question in c", sev: "question" },
+  ];
+  const older = priorComment({ id: 10, body: "old summary", summaryClaims: [{ fp: "dddddddddd", file: "src/d.ts", line: "2" }] });
+  const latest = priorComment({ id: 20, body: "summary", summaryClaims: claims });
+  const none = { refound: new Set<string>(), rendered: new Set<string>(), withdrawn: new Set<string>() };
+
+  it("keeps findings from the newest summary in files this review did not read", () => {
+    const out = carriedClaims([older, latest], { ...none, unread: (f) => f !== "src/b.ts" });
+    expect(out.map((c) => c.fp)).toEqual(["aaaaaaaaaa", "cccccccccc"]);
+  });
+
+  it("keeps a finding found again in a read file but not posted, as when the cap cut it", () => {
+    const out = carriedClaims([latest], {
+      ...none,
+      unread: () => false,
+      refound: new Set(["aaaaaaaaaa", "bbbbbbbbbb"]),
+      rendered: new Set(["bbbbbbbbbb"]),
+    });
+    expect(out.map((c) => c.fp)).toEqual(["aaaaaaaaaa"]);
+  });
+
+  it("leaves out findings posted again, withdrawn, or dropped by the question setting", () => {
+    const out = carriedClaims([latest], {
+      ...none,
+      unread: () => true,
+      rendered: new Set(["aaaaaaaaaa"]),
+      withdrawn: new Set(["bbbbbbbbbb"]),
+      dropQuestions: true,
+    });
+    expect(out).toEqual([]);
+  });
+
+  it("ignores the bot's inline comments and other people's comments", () => {
+    const inline = priorComment({ id: 30, file: "src/a.ts", body: "x", summaryClaims: claims });
+    const human = priorComment({ id: 40, body: "x", mine: false, summaryClaims: claims });
+    expect(carriedClaims([older, inline, human], { ...none, unread: () => true }).map((c) => c.fp)).toEqual([
+      "dddddddddd",
+    ]);
+  });
+});
+
+describe("renderReview carried findings", () => {
+  it("lists earlier summary findings again with their markers", () => {
+    const out = renderReview({
+      head: "abc1234567",
+      stats: {},
+      repo: "o/r",
+      findings: [],
+      carried: [{ fp: "aaaaaaaaaa", file: "src/a.ts", line: "4", text: "🔴 Blocker in a", sev: "blocker" }],
+    });
+    expect(out.summary).toContain("Still open from earlier reviews (1)");
+    expect(out.summary).toContain("- 🔴 Blocker in a");
+    const item = readMarkers(out.summary).find((m) => m.kind === "summary-item");
+    expect(item?.fields).toEqual({ file: "src/a.ts", line: "4", fp: "aaaaaaaaaa", sev: "blocker" });
+  });
+});
+
 describe("saidFingerprints", () => {
   /**
    * The summary is rewritten from scratch every run, so treating a bullet in it

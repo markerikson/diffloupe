@@ -1,18 +1,51 @@
 import path from "node:path";
 import { text } from "./lib/proc.ts";
 import { removeIfPresent, writeJson, writeText } from "./lib/io.ts";
-import { COPY_BLOCK_END, COPY_BLOCK_START, fingerprint, marker, stripMarkers } from "./lib/marker.ts";
+import {
+  COPY_BLOCK_END,
+  COPY_BLOCK_START,
+  fingerprint,
+  marker,
+  readMarkers,
+  stripCopyBlock,
+  stripMarkers,
+} from "./lib/marker.ts";
 import { anchorFor, loadHunks } from "./lib/hunks.ts";
 import { code, fence } from "./lib/markdown.ts";
-import { INLINE_MODE, repoName } from "./config.ts";
+import { INLINE_MODE, POST_MIN_SEVERITY, repoName } from "./config.ts";
 import { type Finding } from "./findings.ts";
-import { type PriorComment } from "./context.ts";
+import { type PriorComment, type PriorRuling, type SummaryClaim } from "./context.ts";
+import { type DisputeRuling } from "./disputes.ts";
 import { type Walkthrough } from "./prompts.ts";
 import { classifySurface, SURFACE_RANK, primarySurface, SURFACE_TAG, CONF, SEV, EFFORT_TAG, anchorCovers, CAT, leadSentences } from "./surface.ts";
 import { mergeRisk, prodRisk, TIER_TITLE, type Verdict } from "./verdict.ts";
 
 const RISK_DOT = { high: "🔴", moderate: "🟡", low: "🟢" } as const;
 import { MAX_POSTED } from "./coordinate.ts";
+
+/** Severities from most to least serious, as `--fail-on` and `post.minSeverity` read them. */
+export const POST_ORDER = ["blocker", "should-fix", "nice-to-have", "question"] as const;
+
+/** Whether a finding falls below the posting threshold. Nothing does when there is none. */
+export function isMinor(minSeverity: Finding["severity"] | null | undefined): (f: Pick<Finding, "severity">) => boolean {
+  if (!minSeverity) return () => false;
+  const limit = POST_ORDER.indexOf(minSeverity);
+  return (f) => POST_ORDER.indexOf(f.severity) > limit;
+}
+
+/**
+ * The identity a finding's comment carries. `pre` marks code the change did not
+ * touch, which the gate lists but does not fail on.
+ */
+function markerFields(f: Finding) {
+  return {
+    file: f.file,
+    line: f.line,
+    fp: fingerprint(f.file, f.title),
+    sev: f.severity,
+    ...(f.preexisting ? { pre: 1 } : {}),
+  };
+}
 
 export function renderReview(o: {
   /** Absent for a commit-range review, which is never posted anywhere. */
@@ -64,6 +97,14 @@ export function renderReview(o: {
   overCap?: Finding[] | undefined;
   /** See `INLINE_MODE`. Defaults to summary-only. */
   inlineMode?: "tier" | "none" | undefined;
+  /** See `POST_MIN_SEVERITY`. Absent lists every severity with the main findings. */
+  minSeverity?: Finding["severity"] | null | undefined;
+  /** This review's rulings on disputed findings. Each gets a reply in its thread. */
+  rulings?: DisputeRuling[] | undefined;
+  /** Rulings from earlier reviews, carried forward in the summary unchanged. */
+  earlierRulings?: PriorRuling[] | undefined;
+  /** Summary findings from files this review did not read, listed again unchanged. See `carriedClaims`. */
+  carried?: SummaryClaim[] | undefined;
 }): {
   summary: string;
   /**
@@ -80,6 +121,8 @@ export function renderReview(o: {
     author?: string | undefined;
     url?: string | undefined;
     finding?: Finding | undefined;
+    /** What a reply without a finding does, for the preview. Absent on a close-out. */
+    about?: string | undefined;
     body: string;
   }[];
 } {
@@ -118,6 +161,26 @@ export function renderReview(o: {
   // file the PR never opened.
   const fresh = reported.filter((f) => f._anchor?.kind !== "off-diff");
   const priorById = new Map((o.prior ?? []).map((c) => [c.id, c]));
+  const rulings = o.rulings ?? [];
+  // Every ruling on the pull request so far, one bullet each. The bullet text
+  // is read back as the label on the next review, so an earlier one is copied
+  // verbatim rather than rebuilt.
+  const disputeSection = () => {
+    const ruledNow = new Set(rulings.map((r) => r.fp));
+    const lines = [
+      ...(o.earlierRulings ?? [])
+        .filter((r) => !ruledNow.has(r.fp))
+        .map((r) => `- ${r.label} ${marker("dispute", { fp: r.fp, outcome: r.outcome })}`),
+      ...rulings.map((r) => {
+        const what = r.outcome === "withdrawn" ? "↩️ Withdrawn" : "Upheld, for a human reviewer";
+        const note = r.note ? ` — ${r.note}` : "";
+        return `- ${what}: \`${r.file}:${r.line}\` ${r.claim} (disputed by @${r.author})${note} ` +
+          marker("dispute", { fp: r.fp, outcome: r.outcome });
+      }),
+    ];
+    if (!lines.length) return "";
+    return [`<details><summary>Disputed findings (${lines.length})</summary>`, "", ...lines, "", "</details>"].join("\n");
+  };
   const summaryMarker = marker("summary", {
     ...(o.pr ? { pr: o.pr } : {}),
     ...(o.runs ? { runs: o.runs } : {}),
@@ -254,11 +317,11 @@ export function renderReview(o: {
     b.push("");
     b.push(
       mode === "inline"
-        ? marker("inline", { file: f.file, line: f.line, fp: fingerprint(f.file, f.title) })
+        ? marker("inline", markerFields(f))
         : // A finding rendered into the summary has no comment of its own to carry
           // its fingerprint, so without this it is invisible to every check that
           // reads what was already said.
-          marker("summary-item", { file: f.file, line: f.line, fp: fingerprint(f.file, f.title) }),
+          marker("summary-item", markerFields(f)),
     );
     return b.join("\n");
   };
@@ -279,18 +342,21 @@ export function renderReview(o: {
   const flat = (t: string) => t.replace(/\s+/g, " ").trim();
   const tier = primarySurface(o.changedFiles ?? [], reported);
   const inTier = (f: Finding) => SURFACE_RANK[classifySurface(f.file)] <= SURFACE_RANK[tier];
-  const tierFindings = reported.filter(inTier);
-  const otherFindings = reported.filter((f) => !inTier(f));
+  const minor = isMinor(o.minSeverity);
+  const major = reported.filter((f) => !minor(f));
+  const tierFindings = major.filter(inTier);
+  const otherFindings = major.filter((f) => !inTier(f));
+  const minorFindings = reported.filter(minor);
   // Which findings get an inline comment of their own. Computed up here rather
   // than beside the payload assembly because the bullet list needs the same
   // answer: a finding with an inline comment carries its fingerprint there, and
   // one without carries it on its summary bullet — never both, or the prompt
   // tells the next reviewer to repeat a claim it can already see.
-  const posted = (o.inlineMode ?? "none") === "none" ? [] : fresh.filter(inTier);
+  const posted = (o.inlineMode ?? "none") === "none" ? [] : fresh.filter((f) => inTier(f) && !minor(f));
   const postedSet = new Set(posted);
-  // Numbered across both groups in render order, so a bullet in either list can
+  // Numbered across every group in render order, so a bullet in any list can
   // point at its evidence block and the numbers never collide.
-  const evidenceOrder = [...tierFindings, ...otherFindings];
+  const evidenceOrder = [...tierFindings, ...otherFindings, ...minorFindings];
   const evidenceNo = new Map<Finding, number>();
   for (const f of evidenceOrder) evidenceNo.set(f, evidenceNo.size + 1);
 
@@ -522,7 +588,7 @@ export function renderReview(o: {
         // claim). One home per fingerprint.
         const fp = postedSet.has(f)
           ? ""
-          : ` ${marker("summary-item", { file: f.file, line: f.line, fp: fingerprint(f.file, f.title) })}`;
+          : ` ${marker("summary-item", markerFields(f))}`;
         const also = f.also_at?.length ? ` · also ${f.also_at.map(siteLink).join(", ")}` : "";
         out.push(`  - ${sev} ${flat(f.title)} — ${where}${also} · _[${evidenceNo.get(f)}]_${fp}`);
       }
@@ -546,6 +612,36 @@ export function renderReview(o: {
     );
     s.push("");
     s.push(...bulletList(otherFindings));
+    s.push("");
+    s.push("</details>");
+    s.push("");
+  }
+
+  // Below the repo's posting threshold. Still listed, with their fingerprints,
+  // so a human can read them and the next review does not raise them again.
+  if (minorFindings.length && o.minSeverity) {
+    s.push(
+      `<details><summary>Minor findings (${minorFindings.length}) — below ${o.minSeverity}</summary>`,
+    );
+    s.push("");
+    s.push(...bulletList(minorFindings));
+    s.push("");
+    s.push("</details>");
+    s.push("");
+  }
+
+  // Copied from the last summary as written. Dropping them would read as fixed
+  // when nobody looked, and the gate counts what this comment lists.
+  const carried = o.carried ?? [];
+  if (carried.length) {
+    s.push(
+      `<details><summary>Still open from earlier reviews (${carried.length}) — not posted again this review</summary>`,
+    );
+    s.push("");
+    for (const c of carried) {
+      const fields = { file: c.file, line: c.line, fp: c.fp, ...(c.sev ? { sev: c.sev } : {}), ...(c.pre ? { pre: 1 } : {}) };
+      s.push(`- ${c.text || `\`${c.file}:${c.line}\``} ${marker("summary-item", fields)}`);
+    }
     s.push("");
     s.push("</details>");
     s.push("");
@@ -674,9 +770,12 @@ export function renderReview(o: {
   s.push("");
   s.push("</details>");
   // Invisible, and the only reason the next push updates this comment instead
-  // of adding another one below it.
+  // of adding another one below it. The dispute rulings travel with it: the
+  // summary is the only state carried between reviews, so a ruling cut off by
+  // truncation would be argued again on the next push.
+  const tail = [disputeSection(), summaryMarker].filter(Boolean).join("\n\n");
   s.push("");
-  s.push(summaryMarker);
+  s.push(tail);
 
   // These two must stay index-parallel: `writeArtifacts` pairs `ordered[i]` with
   // `inline[i]` to build both the preview and the review payload. `posted` is
@@ -693,6 +792,7 @@ export function renderReview(o: {
     author?: string | undefined;
     url?: string | undefined;
     finding?: Finding | undefined;
+    about?: string | undefined;
     body: string;
   }[] = echoed.map((f) => {
     const id = f.repeat_of!;
@@ -737,8 +837,36 @@ export function renderReview(o: {
     });
   }
 
+  // A withdrawn finding's thread is closed the same way a fixed one is, so the
+  // next review and the gate both read it as settled. An upheld one is left
+  // open: someone other than the bot and the author has to decide it.
+  for (const r of rulings) {
+    if (!r.commentId) continue;
+    const c = priorById.get(r.commentId);
+    const note = r.note ? ` ${r.note}` : "";
+    replies.push({
+      comment_id: r.commentId,
+      author: c?.author,
+      url: c?.url,
+      about: `${r.outcome} after a dispute`,
+      body: r.outcome === "withdrawn"
+        ? [
+          `↩️ Withdrawn after @${r.author}'s reply.${note}`,
+          "",
+          marker("reply", { of: r.commentId, addressed: 1, fp: r.fp, dispute: "withdrawn" }),
+        ].join("\n")
+        : [
+          `Checked @${r.author}'s reply against \`${o.head.slice(0, 12)}\` — this still stands.${note}`,
+          "",
+          "Leaving it for a human reviewer to decide.",
+          "",
+          marker("reply", { of: r.commentId, fp: r.fp, dispute: "upheld" }),
+        ].join("\n"),
+    });
+  }
+
   return {
-    summary: fitComment(s.join("\n"), summaryMarker),
+    summary: fitComment(s.join("\n"), tail),
     // Not passed through `fitComment`: it is a file, not a comment, so the
     // 65,536-byte limit that forces truncation does not apply to it. That is the
     // point of splitting them — the detail that used to be dropped on a large
@@ -823,6 +951,65 @@ export function fitComment(body: string, tail: string): string {
   const open = (kept.match(/<details/g) ?? []).length - (kept.match(/<\/details>/g) ?? []).length;
   const close = open > 0 ? `\n${closer.repeat(open)}` : "";
   return `${kept}${close}${notice}${tail}`;
+}
+
+/**
+ * The last review's summary comment with a notice at the top saying why this
+ * push was not reviewed.
+ *
+ * Everything else stays as the last review left it. Its findings and rulings
+ * are still the latest word, and the summary marker keeps its round count, so
+ * the next push is stopped too and the gate reads the same open findings.
+ */
+export function stoppedSummary(previous: string, o: { round: number; maxRounds: number; head: string }): string {
+  const kept = previous
+    .split("\n")
+    .filter((line) => !readMarkers(line).some((m) => m.kind === "stopped"))
+    .join("\n")
+    .trimStart();
+  const rounds = o.round - 1;
+  const notice =
+    `> ⏸️ **Reviews stopped.** Commit \`${o.head.slice(0, 10)}\` was not reviewed: this pull request already had ` +
+    `${rounds} round${rounds === 1 ? "" : "s"} of review, and the limit is ${o.maxRounds} (\`--max-rounds\`). ` +
+    `The findings below are from the last review and are left for a human reviewer. ` +
+    marker("stopped", { round: o.round, max: o.maxRounds, head: o.head });
+  // The copy section is the one part that can go without losing a finding.
+  for (const body of [kept, stripCopyBlock(kept)]) {
+    const out = `${notice}\n\n${body}`;
+    if (out.length <= COMMENT_LIMIT) return out;
+  }
+  return kept;
+}
+
+/**
+ * Writes the payloads for a push that was not reviewed: the stopped summary,
+ * and no inline comments or replies.
+ */
+export async function writeStoppedArtifacts(o: {
+  dir: string;
+  tag: string;
+  slug: string;
+  pr: string;
+  head: string;
+  summary: string;
+}): Promise<void> {
+  await writeText(
+    path.join(o.dir, `${o.tag}.md`),
+    `<!-- summary comment: replaces the existing one; no inline comments or replies -->\n\n${o.summary}\n`,
+  );
+  await writeJson(path.join(o.dir, `${o.tag}.payloads.json`), {
+    summary: {
+      method: "POST",
+      endpoint: `repos/${o.slug}/issues/${o.pr}/comments`,
+      body: { body: o.summary },
+    },
+    review: {
+      method: "POST",
+      endpoint: `repos/${o.slug}/pulls/${o.pr}/reviews`,
+      body: { commit_id: o.head, event: "COMMENT", comments: [] },
+    },
+    replies: [],
+  });
 }
 
 /** The name the workflow uploads a pull request review's files under. */
@@ -919,6 +1106,12 @@ export async function writeArtifacts(o: {
   walkthrough?: Walkthrough | undefined;
   prior?: PriorComment[] | undefined;
   resolved?: { id: number; note?: string | undefined }[] | undefined;
+  /** See `renderReview`. */
+  rulings?: DisputeRuling[] | undefined;
+  earlierRulings?: PriorRuling[] | undefined;
+  carried?: SummaryClaim[] | undefined;
+  /** Overrides `POST_MIN_SEVERITY`, for re-rendering a stored run under the threshold it ran with. */
+  minSeverity?: Finding["severity"] | null | undefined;
   runs?: number | undefined;
   /** See `renderReview`. */
   noReviewers?: boolean | undefined;
@@ -979,6 +1172,9 @@ export async function writeArtifacts(o: {
     repo: o.slug,
     prior: o.prior,
     resolved: o.resolved,
+    rulings: o.rulings,
+    earlierRulings: o.earlierRulings,
+    carried: o.carried,
     runs: o.runs,
     noReviewers: o.noReviewers,
     unreviewed: o.unreviewed,
@@ -986,6 +1182,7 @@ export async function writeArtifacts(o: {
     overCap: o.overCap,
     changedFiles,
     inlineMode: INLINE_MODE,
+    minSeverity: o.minSeverity === undefined ? POST_MIN_SEVERITY : o.minSeverity,
   });
 
   const md = o.local
@@ -1025,7 +1222,7 @@ export async function writeArtifacts(o: {
           "",
           ...replies.map((r, i) =>
             [
-              `<!-- reply ${i + 1} of ${replies.length} — to ${r.author ? `@${r.author}` : "comment"} ${r.comment_id}${r.finding ? ` on ${r.finding.file}:${r.finding.line}` : " — closing it out as fixed"} -->`,
+              `<!-- reply ${i + 1} of ${replies.length} — to ${r.author ? `@${r.author}` : "comment"} ${r.comment_id}${r.finding ? ` on ${r.finding.file}:${r.finding.line}` : ` — ${r.about ?? "closing it out as fixed"}`} -->`,
               "",
               ...(r.url ? [`In reply to ${r.url}`, ""] : []),
               r.body,

@@ -73,6 +73,17 @@ describe("run store", () => {
     expect(await findPriorRunId(first.repo, first.target, first.createdAt)).toBeUndefined();
     expect(await findPriorRunId(first.repo, { kind: "worktree", branch: "other" }, "9999")).toBeUndefined();
 
+    const stopped = {
+      ...base,
+      id: "local-3",
+      createdAt: "2026-10-08T03:00:00.000Z",
+      meta: { ...base.meta, roundLimit: { maxRounds: 2, round: 3 } },
+    };
+    await createRunDir(stopped.id);
+    await writeRun(stopped);
+    expect(await findPriorRunId(base.repo, base.target, "9999")).toBe("local-2");
+    await deleteRun(stopped.id);
+
     const reviews = path.join(artifactsDir(), "reviews");
     await mkdir(reviews, { recursive: true });
     await writeFile(path.join(reviews, "local-1.md"), "x");

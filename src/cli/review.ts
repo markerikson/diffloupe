@@ -35,7 +35,13 @@ function parseCost(value: string): number {
   return n;
 }
 
-function parseSeverity(value: string): FindingSeverity {
+function parseRounds(value: string): number {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1) throw new InvalidArgumentError("must be a whole number of rounds, 1 or more");
+  return n;
+}
+
+export function parseSeverity(value: string): FindingSeverity {
   if (!(SEVERITY_ORDER as readonly string[]).includes(value)) {
     throw new InvalidArgumentError(`must be one of ${SEVERITY_ORDER.join(", ")}`);
   }
@@ -209,13 +215,19 @@ export function createReviewCommand(): Command {
     .option("--intent-file <path>", "Read the intent from a file")
     .option("--model <stage=id>", "Model for a stage: review, coordinator, walkthrough, intent (repeatable)", collect, [])
     .option("--effort <level>", "Reasoning effort: the model variant to use, e.g. low, medium, high")
-    .option("--config <file>", "Per-repo review settings JSON (models, effort, surfaces, extraExcludes, instructions)")
+    .option("--config <file>", "Per-repo review settings JSON (models, effort, surfaces, extraExcludes, post, instructions)")
     .option(
       "--max-cost <usd>",
       "Stop starting new review slices once spending reaches this many US dollars. Slices already running " +
         "finish, so the total can exceed the limit by up to 6 slices at $3 each plus the coordinator and walkthrough " +
         "(default: maxCostUsd from ~/.config/diffloupe/config.json, else no limit)",
       parseCost,
+    )
+    .option(
+      "--max-rounds <n>",
+      "Skip the review, before any model call, when this change has already been reviewed <n> times " +
+        "(with --headless, exit 4). With --github the rounds are counted from the PR's summary comment",
+      parseRounds,
     )
     .option(
       "--full",

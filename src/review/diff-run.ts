@@ -153,6 +153,7 @@ async function diffMain(options: RunDiffOptions): Promise<RunDiffResult> {
     model: MODEL_WALK,
     effort: EFFORT_AUX,
     tools: "none",
+    answerKeys: ["chapters"],
   }).catch((err: unknown) => {
     checkAbort();
     emit({ type: "log", message: `  walkthrough failed: ${err instanceof Error ? err.message : String(err)}` });

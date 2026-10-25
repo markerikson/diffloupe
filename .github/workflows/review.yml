@@ -34,6 +34,7 @@ jobs:
       pull-requests: read
     outputs:
       reviewed: ${{ steps.result.outputs.reviewed }}
+      skip-reason: ${{ steps.result.outputs.skip-reason }}
       artifact: ${{ steps.result.outputs.artifact }}
       artifact_url: ${{ steps.upload.outputs.artifact-url }}
     steps:
@@ -66,17 +67,20 @@ jobs:
         run: bun src/index.ts doctor
 
       # Default models: Opus for the review and coordinator, Sonnet for the
-      # rest. Exit codes: 0 reviewed or skipped, 1 run failed, 2 could not start.
+      # rest. Exit codes: 0 reviewed or skipped, 1 run failed, 2 could not start,
+      # 4 skipped by --max-rounds, which the post job still posts a notice for.
       - name: Review
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: >-
-          bun src/index.ts review "#$PR"
-          --headless --github --head "$HEAD_SHA"
-          --out "$OUT" --max-cost 10
+        run: |
+          code=0
+          bun src/index.ts review "#$PR" --headless --github --head "$HEAD_SHA" \
+            --out "$OUT" --max-cost 10 --max-rounds 5 || code=$?
+          [ "$code" -eq 4 ] && exit 0
+          exit "$code"
 
       - name: Read result
         id: result
@@ -86,6 +90,7 @@ jobs:
           # Absent when the run could not start (exit 2).
           [ -f "$OUT/result.json" ] || exit 0
           echo "reviewed=$(jq -r '.reviewed' "$OUT/result.json")" >> "$GITHUB_OUTPUT"
+          echo "skip-reason=$(jq -r '.skipReason // empty' "$OUT/result.json")" >> "$GITHUB_OUTPUT"
           echo "artifact=$(jq -r '.artifactName // empty' "$OUT/result.json")" >> "$GITHUB_OUTPUT"
           jq -r '"**\(.status)** — \(.findings.posted) finding(s), $\(.costUsd * 100 | round / 100), \(.wallMs / 1000 | round)s, round \(.round)"' \
             "$OUT/result.json" >> "$GITHUB_STEP_SUMMARY"
@@ -106,7 +111,9 @@ jobs:
 
   post:
     needs: review
-    if: needs.review.outputs.reviewed == 'true'
+    if: >-
+      needs.review.outputs.reviewed == 'true' ||
+      needs.review.outputs.skip-reason == 'round-limit'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # The only job with write scope, and it runs no model. It sends the payload
@@ -139,3 +146,64 @@ jobs:
           ARTIFACT_URL: ${{ needs.review.outputs.artifact_url }}
           DRY_RUN: "0"
         run: bun src/review/post.ts review/payloads.json
+
+      # The labels endpoint creates the label if the repository lacks it.
+      - name: Label PRs past the round limit
+        # Also after a failed post, so the gate still passes the PR.
+        if: ${{ !cancelled() && needs.review.outputs.skip-reason == 'round-limit' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PR/labels" -f 'labels[]=ai-review-max-rounds'
+
+  gate:
+    needs: [review, post]
+    # Runs after a review whether or not the post job ran or failed: it reads
+    # the PR itself, so findings that did get posted, and earlier rounds'
+    # findings, still count. It also runs when the review job fails, so a
+    # failed review of a later push does not clear earlier rounds' open
+    # findings. It is skipped only when the review job is (drafts, bots,
+    # forks), and GitHub counts a skipped required check as passing.
+    if: >-
+      !cancelled() &&
+      (needs.review.result == 'success' || needs.review.result == 'failure') &&
+      needs.post.result != 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Runs the branch's own gate code, like the post job, so a change to the
+    # gate is exercised on the change itself.
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+
+      # Exits 3 while an open finding is a blocker. A PR past --max-rounds has
+      # the label and passes.
+      - name: Gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # This push's review never reached the PR. The gate then fails if no
+          # earlier review did either, so a broken first review cannot merge
+          # unreviewed; otherwise it judges what earlier reviews left open.
+          REVIEW_MISSING: >-
+            ${{ (needs.review.result == 'failure' ||
+            (needs.review.outputs.reviewed == 'true' && needs.post.result == 'failure')) && 'yes' || '' }}
+        run: >-
+          bun src/index.ts gate "$GITHUB_REPOSITORY#$PR"
+          --fail-on blocker
+          --override-label ai-review-max-rounds
+          --status "$HEAD_SHA"
+          ${REVIEW_MISSING:+--review-missing}

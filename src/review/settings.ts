@@ -7,18 +7,21 @@
  *   "effort": "medium",
  *   "surfaces": { "deploy": ["^infra/"], "tooling": ["^docs/"] },
  *   "extraExcludes": ["vendor/openssl/"],
- *   "instructions": ["## What failure looks like here", "..."]
+ *   "instructions": ["## What failure looks like here", "..."],
+ *   "post": { "minSeverity": "should-fix", "questions": "drop" }
  * }
  *
  * surfaces are regex sources matched against repo-relative paths. They replace
  * the defaults for whichever list is given. extraExcludes are path substrings
  * left out of the code map and the registry check. instructions is free text
  * given to every reviewer and the coordinator, as one string or as an array of
- * lines joined with newlines.
+ * lines joined with newlines. post.minSeverity moves findings below that
+ * severity into a collapsed section of the summary; post.questions "drop"
+ * leaves questions out of the posted review.
  */
 import { readFile } from "node:fs/promises";
 import { type } from "arktype";
-import { SURFACES, type ReviewConfig } from "./core/config.ts";
+import { DEFAULT_SURFACES, type ReviewConfig } from "./core/config.ts";
 import { TargetError } from "./targets.ts";
 
 const ReviewSettings = type({
@@ -40,6 +43,11 @@ const ReviewSettings = type({
   },
   "extraExcludes?": "string[]",
   "instructions?": "string | string[]",
+  "post?": {
+    "+": "reject",
+    "minSeverity?": "'blocker' | 'should-fix' | 'nice-to-have' | 'question'",
+    "questions?": "'keep' | 'drop'",
+  },
 });
 
 export type ReviewSettings = typeof ReviewSettings.infer;
@@ -80,13 +88,15 @@ export async function loadReviewSettings(file: string): Promise<ReviewSettings> 
 /** Converts settings to review-core config. Model and effort keys are left to the caller's precedence rules. */
 export function settingsToConfig(settings: ReviewSettings): Partial<ReviewConfig> {
   const config: Partial<ReviewConfig> = {};
-  if (settings.surfaces) {
-    config.surfaces = {
-      deploy: settings.surfaces.deploy ?? SURFACES.deploy,
-      tooling: settings.surfaces.tooling ?? SURFACES.tooling,
-    };
-  }
-  if (settings.extraExcludes) config.extraExcludes = settings.extraExcludes;
+  // Every key is always set, so a server that runs several repos does not carry
+  // one repo's settings into the next run.
+  config.surfaces = {
+    deploy: settings.surfaces?.deploy ?? DEFAULT_SURFACES.deploy,
+    tooling: settings.surfaces?.tooling ?? DEFAULT_SURFACES.tooling,
+  };
+  config.extraExcludes = settings.extraExcludes ?? [];
+  config.postMinSeverity = settings.post?.minSeverity ?? null;
+  config.dropQuestions = settings.post?.questions === "drop";
   return config;
 }
 

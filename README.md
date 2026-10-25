@@ -136,6 +136,7 @@ diffloupe runs
 | `--effort <level>` | Reasoning effort: `low`, `medium`, `high` |
 | `--config <file>` | Per-repo review settings (see below) |
 | `--max-cost <usd>` | Stop starting new review slices once spending reaches this amount. Slices already running finish, so the total can go over: by up to six slices at $3 each, plus the coordinator and walkthrough. |
+| `--max-rounds <n>` | Skip the review when it would be past round n. With `--github`, rounds are counted from the pull request's summary comment, and the payloads only add a notice to it saying why the push was not reviewed. With `--headless`, a skipped run exits 4. |
 | `--host <host>`, `--port <port>` | Server address (default `127.0.0.1:4517`, or the next free port) |
 | `--open` | Open the run in a browser. On WSL this opens the Windows browser. |
 | `--full` | On a re-review, review every changed file instead of only the files changed since the last run |
@@ -193,6 +194,19 @@ Runs are stored under `$XDG_DATA_HOME/diffloupe/runs/<id>/` (`~/.local/share/dif
 
 Checks Bun, git, OpenCode, tilth and `gh`; prints the model for each stage and where it came from, and the source of each provider credential; and shows how much disk the data directory uses. Exits non-zero if a review could not run. `--config <file>` includes a per-repo settings file in the model lookup. `--strict` also exits non-zero on warnings, such as `gh` not being logged in or a model with no known cost. `--json` prints the checks as a JSON array of `{ name, status, detail }`.
 
+### `diffloupe gate`
+
+`diffloupe gate '#<n>' --fail-on <severity>` reads a pull request's comments on GitHub and lists the bot's findings that are still open. It exits 3 when one of them is at or above `--fail-on`, and 0 otherwise. It runs no model and needs only `gh`. `#<n>` takes the repository from the current checkout or `GH_REPO`; outside a checkout, pass `owner/repo#<n>`. See [Failing the check on findings](#failing-the-check-on-findings) for what counts as open.
+
+| Option | Meaning |
+|--------|---------|
+| `--fail-on <severity>` | Required. `blocker`, `should-fix`, `nice-to-have` or `question` |
+| `--json` | Print the result as JSON |
+| `--status [sha]` | Also set the `diffloupe/gate` commit status on that commit, or on the PR head when no sha is given |
+| `--override-label <name>` | Pass the gate when the PR has this label |
+| `--count-author-resolved` | Treat a thread the PR author resolved as closed. By default the author's own resolutions do not close findings |
+| `--review-missing` | Say that this push's review never reached the PR (the review or post job failed). The gate then fails when the bot has never reviewed the PR |
+
 ## Running in CI
 
 `diffloupe review '#<n>' --headless --github --head <sha> --out <dir>` reviews a pull request for a bot that posts the result. DiffLoupe itself does not post anything: it writes the GitHub API payloads, and a later step sends them.
@@ -207,6 +221,26 @@ Checks Bun, git, OpenCode, tilth and `gh`; prints the model for each stage and w
 
 `--head` pins the review to the commit the workflow was triggered for, so a push during the run does not change what gets reviewed.
 
+Review agents may not reach the network. DiffLoupe gathers the PR description and comments itself before any agent starts, the web tools are turned off, and shell commands such as `curl`, `wget`, `gh pr`, `gh api` and `git fetch` are refused, as is inline `node -e`/`bun -e`/`python -c` code that makes a request. That check reads command lines and can be got around, so on CI also limit outbound traffic from the review job to the model provider and GitHub, and keep tokens that can write to the repository out of the review step.
+
+### Answering a finding
+
+The PR author, or an agent fixing the PR for them, can answer a finding with a marker and a reason, either as a reply in the finding's thread or as a PR comment:
+
+```markdown
+<!-- ai-review-response fp=3f9c2a1b verdict=disputed -->
+The value is validated in `parseInput` before it gets here.
+```
+
+`fp` is the finding's fingerprint, from the `fp=` field of the marker on the bot's comment or summary bullet. `verdict` is `disputed` (the finding is wrong) or `fixed` (the code now handles it); `action` works in place of `verdict`. One comment can answer several findings with one marker per paragraph. Answers are read from any account, bots included.
+
+On the next review the coordinator rules once on each disputed finding:
+
+- **Withdrawn**: the bot replies in the thread and marks it settled, and the finding is never reported again on that PR.
+- **Upheld**: the bot replies that the finding still stands and leaves the thread open for a human reviewer. It does not argue the point again.
+
+Rulings are listed in a "Disputed findings" fold at the end of the summary comment, which is how later reviews remember them. A `fixed` answer is not a ruling: the coordinator checks the code and closes the finding out as usual if the fix is there. `run.json` lists each disputed finding under `disputes` with its outcome (`withdrawn`, `upheld`, or `unjudged` when the coordinator did not rule), and `diffloupe runs stats` counts them.
+
 ### Exit codes
 
 | Code | Meaning |
@@ -214,7 +248,8 @@ Checks Bun, git, OpenCode, tilth and `gh`; prints the model for each stage and w
 | 0 | The review finished, or was skipped because the change has no code files |
 | 1 | The run failed, including a `gh` failure under `--github` |
 | 2 | The run could not start: a bad flag, target, model or credential |
-| 3 | `--fail-on` was given and a finding posted in this round is at or above that severity |
+| 3 | `--fail-on` was given and a finding posted in this round is at or above that severity. For `diffloupe gate`: an open finding is at or above `--fail-on` |
+| 4 | `--max-rounds` was given and this review would have been past that round, so it was skipped |
 | 130 | The run was cancelled |
 
 ### `result.json`
@@ -241,7 +276,17 @@ Written to `--out` for every finished, failed, cancelled or skipped run, and pri
   "findings": {
     "total": 7,
     "posted": 6,
+    "minor": 0,
     "bySeverity": { "blocker": 0, "should-fix": 2, "nice-to-have": 3, "question": 1 }
+  },
+  "progress": {
+    "open": 1,
+    "fixed": 3,
+    "withdrawn": 1,
+    "upheld": 0,
+    "fixedThisRound": 2,
+    "withdrawnThisRound": 1,
+    "new": 6
   },
   "round": 2,
   "incremental": false,
@@ -249,35 +294,60 @@ Written to `--out` for every finished, failed, cancelled or skipped run, and pri
 }
 ```
 
-`status` is `complete`, `failed`, `cancelled` or `skipped`. `skipReason` is `no-code-files` for a skipped run. `payloads` is `null` when there is nothing to post. `findings.posted` counts the findings in the comments; `total` adds the ones over the comment cap, and `bySeverity` counts only posted findings. `artifactName` is the name the summary comment links to, so upload `--out` under that name.
+`status` is `complete`, `failed`, `cancelled` or `skipped`. `skipReason` is `no-code-files` or `round-limit` (from `--max-rounds`) for a skipped run. `payloads` is `null` when there is nothing to post. `findings.posted` counts the findings in the comments; `minor` counts the ones folded into the summary's "Minor findings" section by the `post.minSeverity` setting; `total` adds the ones over the comment cap, and `bySeverity` counts posted and minor findings. `artifactName` is the name the summary comment links to, so upload `--out` under that name.
+
+`progress` says where the bot's findings from earlier rounds stand after this review, counted by their inline comments: `open` are still unresolved (upheld disputes included), `fixed` were closed out as fixed, `withdrawn` were withdrawn after a dispute, and `upheld` were disputed but still stand and wait for a human reviewer. The `ThisRound` counts are the part of `fixed` and `withdrawn` this review decided, and `new` is the number of findings this review raised. When `new` stays above zero round after round and `fixedThisRound` stays at zero, the rounds are not converging. `progress` is `null` when nothing was reviewed. `run.json` keeps the same counts under `roundProgress`.
 
 `--out` also holds `review.md`, `payloads.json`, `findings.md`, `record.json`, `units.json`, `byClass.json`, `run.json` and the detail report `<run id>.detail.md`. Files a run did not produce are left out.
 
 ### Failing the check on findings
 
-Use a separate gate job instead of `--fail-on` when the comments are posted by a later job. The review job then fails only when the review breaks, and the gate job, which is the required check, fails only on findings:
+`--fail-on` on the review counts only the findings posted in this round. On a re-review, a finding already posted in an earlier round is not posted again, so a later push can pass while an earlier blocker is still unfixed. It suits a single job or a local script: it exits 3 after writing `--out`, and ignores findings over the comment cap.
+
+To block merges until the findings are dealt with, run `diffloupe gate` in a job after the comments are posted, and make that job the required check. It reads the PR on GitHub, so it sees every round's findings:
 
 ```yaml
 gate:
   needs: [review, post]
-  if: ${{ !cancelled() }}
+  if: >-
+    !cancelled() && needs.post.result != 'cancelled' &&
+    (needs.review.result == 'success' || needs.review.result == 'failure')
   runs-on: ubuntu-latest
+  permissions:
+    pull-requests: read
+    statuses: write
   steps:
-    - uses: actions/download-artifact@v4
-      if: ${{ needs.review.outputs.artifact != '' }}
-      with:
-        name: ${{ needs.review.outputs.artifact }}
-        path: review
-    - run: |
-        [ "${{ needs.review.result }}" = "success" ] || exit 0
-        [ -f review/result.json ] || exit 0
-        blockers=$(jq '.findings.bySeverity.blocker // 0' review/result.json)
-        [ "$blockers" -eq 0 ] || { echo "::error::$blockers blocker finding(s)"; exit 1; }
+    - uses: oven-sh/setup-bun@v2
+    - run: npm install -g @acemarke/diffloupe
+    - env:
+        GH_TOKEN: ${{ github.token }}
+        PR: ${{ github.event.pull_request.number }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        REVIEW_MISSING: >-
+          ${{ (needs.review.result == 'failure' ||
+          (needs.review.outputs.reviewed == 'true' && needs.post.result == 'failure')) && 'yes' || '' }}
+      run: >-
+        diffloupe gate "$GITHUB_REPOSITORY#$PR"
+        --fail-on blocker
+        --override-label ai-review-max-rounds
+        --status "$HEAD_SHA"
+        ${REVIEW_MISSING:+--review-missing}
 ```
 
-This passes when the review job fails, so an outage does not block merges; change the first `exit 0` to `exit 1` for the opposite. Gate on `blocker` only: findings vary between runs, and a lower threshold blocks merges on false positives. `--fail-on` suits a single job or a local script. It exits 3 after writing `--out`, and ignores findings over the comment cap.
+[`examples/github-actions/review.yml`](examples/github-actions/review.yml) is a complete workflow with the review, post and gate jobs and the round limit described below.
 
-Both the gate job and `--fail-on` count only the findings posted in this round. On a re-review, a finding already posted in an earlier round is not posted again, so a later push can pass the check while an earlier blocker is still unfixed. To block merges until every finding is dealt with, turn on "Require conversation resolution before merging" in the branch protection rules instead. It blocks on any unresolved inline comment, from the bot or a person, at any severity.
+A finding is open when:
+
+- it has an inline thread from the bot that is not resolved and that the bot has not settled. The bot settles a thread when it closes the finding out as fixed or withdraws it after a dispute. An outdated thread still counts, since moving the code does not fix it.
+- or it is listed in the bot's latest summary comment and was not withdrawn. With inline comments off, every finding is only in the summary. Earlier summary findings that a review does not post again are carried forward under "Still open from earlier reviews", so they keep counting. That covers files the review did not read (an incremental review of a later push, or a file past a budget or size cap) and findings it found again but cut at the posting cap.
+
+A thread the PR author resolved still counts unless `--count-author-resolved` is given, so the author cannot clear a blocker by closing the thread. An upheld dispute stays open until someone other than the PR author resolves the thread. If an agent resolves threads with a different account than the one that opened the PR, those resolutions count as someone else's. Severity comes from the comment's marker; a finding whose severity cannot be read is listed as `unknown` and never fails the gate. Neither does a pre-existing finding, in code the change did not touch: the gate lists it but does not count it, since the author was not asked to fix it. `--override-label` passes the gate when the PR has that label, for a human to accept the open findings.
+
+With `--status`, the gate also sets a `diffloupe/gate` commit status on the PR head. Make that status the required check if you rerun the gate outside the PR's workflow, for example on `pull_request_review` events or after a dispute is ruled on, since a status on the head commit is replaced by the latest run.
+
+Gate on `blocker` only: findings vary between runs, and a lower threshold blocks merges on false positives. The `if:` above runs the gate even when the review or post job fails, since it reads the PR and sees whatever earlier rounds and this one did get posted. A failed review of a later push therefore does not clear open blockers from earlier rounds. If reviews keep failing, the PR stays blocked on those findings until they are resolved or a human adds the override label. The example workflow also passes `--review-missing` when this push's review or post job failed, so a PR whose first review broke fails the gate instead of merging unreviewed; a PR with an earlier review is judged on what that review left open. The gate is skipped only when the review job is skipped, and GitHub counts a skipped required job as passing. "Require conversation resolution before merging" in the branch protection rules is a simpler option. It blocks on any unresolved inline comment, from the bot or a person, at any severity, but misses findings that are only in the summary.
+
+To stop an automated fix loop from running forever, pass `--max-rounds`. A review past that round is skipped before any model runs, exits 4 under `--headless`, and writes a `result.json` with `skipReason: "round-limit"`. Its `payloads.json` only updates the summary comment: a notice at the top says the push was not reviewed and why, and the rest of the comment, with its findings and rulings, stays as the last review left it. The example workflow posts that notice, labels the PR `ai-review-max-rounds`, and passes the gate with `--override-label`, so the PR can merge after a bounded number of fix attempts and the label marks the PRs that merged with findings still open. Treat exit 4 as success in the review job, and run the post job when `skipReason` is `round-limit` as well as when `reviewed` is true.
 
 Run `diffloupe doctor --strict` before the review to fail fast on a missing tool or credential.
 
@@ -307,6 +377,7 @@ Run `diffloupe doctor --strict` before the review to fail fast on a missing tool
   "effort": "medium",
   "surfaces": { "deploy": ["^infra/"], "tooling": ["^docs/"] },
   "extraExcludes": ["vendor/openssl/"],
+  "post": { "minSeverity": "should-fix", "questions": "drop" },
   "instructions": [
     "## What failure looks like here",
     "A change that breaks runs already saved on disk.",
@@ -336,6 +407,8 @@ Every field is optional.
 **Effort** is passed to OpenCode as the model variant (`provider/model#high`), so it must be a variant the model offers. It is only added when you set it, or when the model is a built-in default. A model from your OpenCode config runs without a variant unless you set an effort. A `#variant` written in the model id always wins.
 
 `surfaces` are regex sources matched against repo-relative paths. They decide which findings count toward "prod risk": anything not matched as deploy or tooling counts as product code. `extraExcludes` are path substrings left out of the code map.
+
+`post` decides what the posted review shows. Findings below `minSeverity` (order: `blocker`, `should-fix`, `nice-to-have`, `question`) get no inline comment and are listed in a collapsed "Minor findings" section of the summary. They don't count toward `findings.posted` in `result.json`; `findings.minor` counts them. `"questions": "drop"` leaves questions out of the review entirely, so they don't take slots under the findings cap. By default every finding is posted.
 
 `instructions` is free text given to every reviewer and the coordinator, either one string or an array of lines. Keep it short and about what the code can't tell a reviewer: what counts as breaking in this repo, invariants that are easy to break and invisible in a diff, and what not to report. Where it conflicts with the built-in review guidance, it wins.
 

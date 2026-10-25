@@ -63,6 +63,11 @@ test("linkDetailArtifact swaps the run link for the artifact", () => {
   expect(linkDetailArtifact(body, " ")).toBe(body);
 });
 
+test("linkDetailArtifact keeps the earlier review's link on a stopped summary", () => {
+  const body = "<!-- ai-review kind=stopped round=4 -->\n📄 **[Full review detail](https://x/artifacts/1)** — download";
+  expect(linkDetailArtifact(body, "https://x/artifacts/9")).toBe(body);
+});
+
 test("linkDetailArtifact keeps the run link when the artifact link would pass the comment limit", () => {
   const link = "📄 **[Full review detail](https://github.com/a/b/actions/runs/1)** — download";
   const body = link + "x".repeat(65536 - link.length);

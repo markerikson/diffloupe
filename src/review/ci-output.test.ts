@@ -42,16 +42,37 @@ describe("buildResult", () => {
       wallMs: 9000,
       budgetStopped: true,
       skippedSlices: 2,
-      findings: { total: 4, posted: 3, bySeverity: { blocker: 1, "should-fix": 0, "nice-to-have": 0, question: 2 } },
+      findings: { total: 4, posted: 3, minor: 0, bySeverity: { blocker: 1, "should-fix": 0, "nice-to-have": 0, question: 2 } },
       round: 2,
       incremental: true,
       version: VERSION,
     });
   });
 
+  test("findings below the posting threshold are counted as minor, not posted", () => {
+    const run: ReviewRun = {
+      ...withFindings([{ severity: "blocker" }, { severity: "nice-to-have" }, { severity: "question" }]),
+      meta: { ...largePr.meta, postMinSeverity: "should-fix" },
+    };
+    const r = buildResult(run, { id: "x", status: "complete", runDir: "/runs/x" });
+    expect(r.findings).toMatchObject({ total: 3, posted: 1, minor: 2 });
+  });
+
+  test("reports where earlier findings stand", () => {
+    const roundProgress = { open: 1, fixed: 2, withdrawn: 1, upheld: 0, fixedThisRound: 1, withdrawnThisRound: 1, new: 0 };
+    const run: ReviewRun = { ...withFindings([]), roundProgress };
+    expect(buildResult(run, { id: "x", status: "complete", runDir: "/runs/x" }).progress).toEqual(roundProgress);
+    expect(buildResult(withFindings([]), { id: "x", status: "complete", runDir: "/runs/x" }).progress).toBeNull();
+  });
+
+  test("a run skipped by --max-rounds", () => {
+    const r = buildResult(withFindings([]), { id: "x", status: "skipped", skipReason: "round-limit", runDir: "/runs/x", round: 4 });
+    expect(r).toMatchObject({ reviewed: false, skipReason: "round-limit", round: 4 });
+  });
+
   test("a run that failed before saving anything", () => {
     const r = buildResult(null, { id: "x", status: "failed", runDir: "/runs/x" });
-    expect(r).toMatchObject({ reviewed: false, pr: null, head: null, artifactName: null, payloads: null, costUsd: 0, round: 1 });
+    expect(r).toMatchObject({ reviewed: false, pr: null, head: null, artifactName: null, payloads: null, costUsd: 0, round: 1, progress: null });
     expect(r.findings.total).toBe(0);
   });
 

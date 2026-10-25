@@ -48,7 +48,7 @@ export function defaultDriver(defaultRepo: string): RunPreparer {
 }
 
 export type RunOutcome =
-  | { status: "complete"; run: ReviewRun; reviewed: boolean }
+  | { status: "complete"; run: ReviewRun; reviewed: boolean; roundLimit?: { maxRounds: number; round: number } }
   | { status: "cancelled" }
   | { status: "failed"; error: string };
 
@@ -160,7 +160,7 @@ export class RunManager {
         log: (message) => emit({ type: "log", message }),
       })
       .then(
-        ({ run, reviewed }): RunOutcome => {
+        ({ run, reviewed, roundLimit }): RunOutcome => {
           emit({
             type: "done",
             status: "complete",
@@ -168,10 +168,10 @@ export class RunManager {
             carriedOver: run.findings.filter((f) => f.carriedFrom).length,
             costUsd: run.meta.costUsd,
             wallMs: run.meta.wallMs,
-            ...(reviewed ? {} : { noChanges: true }),
+            ...(roundLimit ? { roundLimit: roundLimit.maxRounds } : reviewed ? {} : { noChanges: true }),
             ...(run.meta.kind === "diff" ? { kind: "diff" as const, files: run.files.length } : {}),
           });
-          return { status: "complete", run, reviewed };
+          return { status: "complete", run, reviewed, ...(roundLimit ? { roundLimit } : {}) };
         },
         (err: unknown): RunOutcome => {
           if (controller.signal.aborted || err instanceof CancelledError) {

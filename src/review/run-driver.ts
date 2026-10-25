@@ -13,7 +13,7 @@ import type { ReviewRun, ReviewTarget, RunKind } from "../types/review-run.ts";
 import type { ReviewConfig } from "./core/config.ts";
 import { run, text } from "./core/lib/proc.ts";
 import type { Target } from "./core/lib/target.ts";
-import { runReview, type ReviewEvent, type RunReviewOptions } from "./core/pipeline.ts";
+import { runReview, type ReviewEvent, type RunReviewOptions, type RunReviewResult } from "./core/pipeline.ts";
 import { artifactName, FINDINGS_FILE, insertCopyBlock, shortenedNote } from "./core/render.ts";
 import { runMarkdown } from "./export.ts";
 import { VERSION } from "../version.ts";
@@ -100,6 +100,7 @@ export async function requestFromOptions(opts: ReviewCommandOptions): Promise<St
     ...(Object.keys(models).length ? { models } : {}),
     ...(opts.effort ? { effort: opts.effort } : {}),
     ...(opts.maxCost !== undefined ? { maxCostUsd: opts.maxCost } : {}),
+    ...(opts.maxRounds !== undefined ? { maxRounds: opts.maxRounds } : {}),
     ...(opts.config ? { settingsFile: path.resolve(opts.config) } : {}),
     ...(opts.full ? { full: true } : {}),
     ...(opts.github ? { github: true } : {}),
@@ -179,6 +180,7 @@ export interface PreparedRun {
   reviewTarget: ReviewTarget;
   config: Partial<ReviewConfig>;
   maxCostUsd?: number;
+  maxRounds?: number;
   intent?: string;
   instructions?: string;
   patch: string;
@@ -375,6 +377,7 @@ export async function prepareRun(
     reviewTarget,
     config,
     ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
+    ...(!isDiff && req.maxRounds !== undefined ? { maxRounds: req.maxRounds } : {}),
     ...(intent ? { intent } : {}),
     ...(instructions ? { instructions } : {}),
     patch,
@@ -399,8 +402,10 @@ export interface ExecuteRunOptions {
 
 export interface ExecutedRun {
   run: ReviewRun;
-  /** False when the target held no reviewable code and no model was called. Always true for diff runs. */
+  /** False when the target held no reviewable code, or `roundLimit` is set, and no model was called. Always true for diff runs. */
   reviewed: boolean;
+  /** Set when `--max-rounds` stopped the review. */
+  roundLimit?: { maxRounds: number; round: number };
 }
 
 /**
@@ -428,7 +433,7 @@ export async function executeRun(prep: PreparedRun, opts: ExecuteRunOptions): Pr
       }),
     );
   };
-  let result: RunDiffResult & { markdownPath?: string };
+  let result: RunDiffResult & Pick<RunReviewResult, "roundLimit"> & { markdownPath?: string };
   try {
     result =
       prep.kind === "diff"
@@ -449,6 +454,8 @@ export async function executeRun(prep: PreparedRun, opts: ExecuteRunOptions): Pr
             config: prep.config,
             signal: opts.signal,
             ...(prep.maxCostUsd !== undefined ? { maxCostUsd: prep.maxCostUsd } : {}),
+            ...(prep.maxRounds !== undefined ? { maxRounds: prep.maxRounds } : {}),
+            ...(prep.round !== undefined ? { round: prep.round } : {}),
             ...(prep.intent ? { intent: prep.intent } : {}),
             ...(prep.instructions ? { instructions: prep.instructions } : {}),
             ...priorOptions(prep),
@@ -490,11 +497,13 @@ export async function executeRun(prep: PreparedRun, opts: ExecuteRunOptions): Pr
     await writeRun({ ...pending, status: "failed", error: message });
     throw new Error(message, { cause: err });
   }
+  const { roundLimit } = result;
+  if (roundLimit) run = { ...run, round: roundLimit.round, meta: { ...run.meta, roundLimit } };
   await writeRun(run);
   const reviewed = prep.kind === "diff" || result.record !== null;
   if (prep.kind === "review") opts.log(`  anchors: ${describeAnchors(run)}`);
   if (prep.github && prep.kind === "review" && reviewed) await addCopyBlock(dir, run);
-  return { run, reviewed };
+  return { run, reviewed, ...(roundLimit ? { roundLimit } : {}) };
 }
 
 /**
