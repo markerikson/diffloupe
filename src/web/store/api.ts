@@ -5,6 +5,7 @@ import {
   StartRunResponseSchema,
   type ReviewStage,
   type StartRunRequest,
+  type StoredEvent,
 } from "../../server/types.ts";
 import {
   ReviewRunSchema,
@@ -20,11 +21,13 @@ import { followRunEvents } from "./run-events.ts";
 export interface RunProgress {
   stage?: ReviewStage;
   slicesTotal: number;
+  /** Slices that finished successfully; failures are counted separately. */
   slicesDone: number;
   slicesFailed: number;
   /** Titles of slices that have started and not finished. */
   activeSlices: string[];
   costUsd: number;
+  /** Latest detail message since the current stage was announced. */
   lastMessage?: string;
 }
 
@@ -66,6 +69,12 @@ export const api = createApi({
       argSchema: RunIdSchema,
       responseSchema: ReviewRunSchema,
       providesTags: (_result, _error, id) => [{ type: "Run", id }],
+      // HTTP snapshots do not contain the progress reconstructed from SSE.
+      merge(current, incoming) {
+        return incoming.status === "running" && current.progress
+          ? { ...incoming, progress: current.progress }
+          : incoming;
+      },
       async onCacheEntryAdded(id, { cacheDataLoaded, cacheEntryRemoved, updateCachedData, dispatch, getCacheEntry }) {
         try {
           await cacheDataLoaded;
@@ -74,6 +83,8 @@ export const api = createApi({
         }
         if (getCacheEntry().data?.status !== "running") return;
 
+        // Titles are display text, not identities: separate slices may share one.
+        const slices = new Map<number, Extract<StoredEvent, { type: "slice" }>>();
         const stop = followRunEvents(id, {
           onEvent(event) {
             if (event.type === "groups") {
@@ -88,14 +99,18 @@ export const api = createApi({
               const p = (draft.progress ??= emptyProgress());
               switch (event.type) {
                 case "stage":
+                  if (p.stage !== event.stage) delete p.lastMessage;
                   p.stage = event.stage;
                   break;
                 case "slice":
+                  slices.set(event.index, event);
                   p.slicesTotal = event.total;
-                  if (event.status === "started") p.activeSlices.push(event.title);
-                  else {
-                    p.activeSlices = p.activeSlices.filter((t) => t !== event.title);
-                    if (event.status === "ok") p.slicesDone += 1;
+                  p.activeSlices = [];
+                  p.slicesDone = 0;
+                  p.slicesFailed = 0;
+                  for (const slice of slices.values()) {
+                    if (slice.status === "started") p.activeSlices.push(slice.title);
+                    else if (slice.status === "ok") p.slicesDone += 1;
                     else p.slicesFailed += 1;
                   }
                   if (event.costUsd !== undefined) p.costUsd = Math.max(p.costUsd, event.costUsd);
