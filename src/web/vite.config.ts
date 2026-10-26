@@ -71,6 +71,10 @@ function chunkFileNames(chunk: { moduleIds: string[] }): string {
 export default defineConfig({
   plugins: [stubUnusedHighlighterAssets(), react(), Icons({ compiler: "jsx", jsx: "react" })],
   root: import.meta.dirname,
+  resolve: {
+    // Linked dependencies such as @pierre/diffs must share the app renderer's React instance.
+    dedupe: ["react", "react-dom"],
+  },
   worker: {
     format: "es",
     plugins: () => [stubUnusedHighlighterAssets()],
