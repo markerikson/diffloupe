@@ -10,6 +10,10 @@
  * `Plugin.define` is the identity function, so a plain `{ id, setup }` default
  * export is the same thing.
  *
+ * REVIEW_GOVERNOR_SESSIONS=1 selects shared-server mode: metadata.diffloupe
+ * supplies immutable configuration per session, validated before any work or
+ * accounting. The legacy environment configuration remains for standalone runs.
+ *
  * Stopping by killing the process was the obvious approach and is the wrong one:
  * a slice delivers its findings by writing a JSON file as its last act, so a
  * kill throws away everything the turn had already established. Every stage here
@@ -390,10 +394,13 @@ const checkWriteTarget = (tool: string, input: unknown, outFile: string, cwd: st
   }
   if (!PATH_WRITE_TOOLS.has(tool)) return null;
   const fields = (input ?? {}) as { path?: unknown; filePath?: unknown };
-  const target = typeof fields.path === "string" ? fields.path : fields.filePath;
-  if (typeof target === "string" && path.resolve(cwd, target) === path.resolve(cwd, outFile)) return null;
+  const targets = [fields.path, fields.filePath].filter((target) => target !== undefined);
+  // Do not trust one spelling when the call supplies conflicting aliases.
+  if (targets.length > 0 && targets.every((target) =>
+    typeof target === "string" && path.resolve(cwd, target) === path.resolve(cwd, outFile),
+  )) return null;
   return (
-    `Writing to "${String(target)}" is refused. The only file you may write is \`${outFile}\` — ` +
+    `Writing to "${targets.map(String).join(", ") || "undefined"}" is refused. The only file you may write is \`${outFile}\` — ` +
     `copy that path exactly as given, character for character. Nothing else may be written during a review.`
   );
 };
@@ -452,11 +459,62 @@ type Tokens = {
   cache?: { read?: number; write?: number };
 };
 
+/** Metadata attached by the runner before the first prompt of a shared session. */
+export type GovernorSessionConfig = {
+  version: 1;
+  runID: string;
+  tag: string;
+  startedAt: number;
+  budgetUsd: number;
+  deadlineMs: number;
+  maxSteps: number;
+  outFile: string;
+  usageFile: string;
+  logFile: string;
+  system: string;
+  tools: "repo" | "none";
+  waitForTools: string;
+  expectTools: string[];
+};
+
+/** Metadata is an external boundary, even though our runner normally supplies it. */
+const sessionConfig = (value: unknown): GovernorSessionConfig => {
+  const invalid = () => new Error("review-governor: missing or invalid metadata.diffloupe; this session may not run");
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid();
+  const c = value as Record<string, unknown>;
+  const text = (key: string) => typeof c[key] === "string" && c[key].trim().length > 0 && !c[key].includes("\0");
+  const number = (key: string) => typeof c[key] === "number" && Number.isFinite(c[key]) && c[key] >= 0;
+  if (
+    c.version !== 1 ||
+    !["runID", "tag", "outFile", "usageFile", "logFile", "system"].every(text) ||
+    !["startedAt", "budgetUsd", "deadlineMs", "maxSteps"].every(number) ||
+    !Number.isSafeInteger(c.maxSteps) ||
+    (c.tools !== "repo" && c.tools !== "none") ||
+    typeof c.waitForTools !== "string" ||
+    !Array.isArray(c.expectTools) ||
+    !c.expectTools.every((id) => typeof id === "string" && id.trim().length > 0)
+  ) {
+    throw invalid();
+  }
+  // Keep a snapshot: later metadata changes must not reset accounting or change
+  // a session's output permissions after it has started.
+  const config = c as GovernorSessionConfig;
+  return { ...config, expectTools: [...config.expectTools] };
+};
+
 type StepData = { sessionID?: string; cost?: number; tokens?: Tokens };
+type SessionRequest = { sessionID?: string };
+type ContextRequest = SessionRequest & {
+  system?: { type: "text"; text: string }[];
+  messages: RepairableMessage[];
+  tools?: Record<string, unknown>;
+};
+type SessionInfo = { metadata?: Record<string, unknown> };
+type Registration = { dispose(): Promise<void> };
 
 export type ToolBefore = { tool: string; sessionID?: string; id?: string; input: unknown };
 type ToolAfter = { tool: string; sessionID?: string; id?: string; input?: unknown } & (
-  | { status: "completed"; result: { content?: unknown } }
+  | { status: "completed"; result: { readonly content?: unknown } }
   | { status: "error"; error?: unknown }
 );
 
@@ -466,39 +524,73 @@ export type GovernorContext = {
     subscribe(options: { signal: AbortSignal }): AsyncIterable<{ type?: string; data?: unknown }>;
   };
   tool: {
-    hook(name: "execute.before", fn: (e: ToolBefore) => void | Promise<void>): unknown;
-    hook(name: "execute.after", fn: (e: ToolAfter) => void | Promise<void>): unknown;
+    hook(name: "execute.before", fn: (e: ToolBefore) => void | Promise<void>): Promise<Registration>;
+    hook(name: "execute.after", fn: (e: ToolAfter) => void | Promise<void>): Promise<Registration>;
     list(): Promise<readonly { id: string }[]>;
   };
   session: {
-    hook(name: "prompt", fn: (e: unknown) => void | Promise<void>): unknown;
-    hook(name: "context", fn: (e: { messages: RepairableMessage[] }) => void | Promise<void>): unknown;
-    interrupt(input: { sessionID: string }): Promise<unknown>;
+    hook(name: "prompt", fn: (e: SessionRequest) => void | Promise<void>): Promise<Registration>;
+    hook(name: "context", fn: (e: ContextRequest) => void | Promise<void>): Promise<Registration>;
+    get(input: { sessionID: string }): Promise<SessionInfo | { data: SessionInfo }>;
+    interrupt(input: { sessionID: string; resume: false }): Promise<unknown>;
   };
 };
 
 /** Append text to a tool result, whichever of its two shapes the result has. */
-const appendToResult = (result: { content?: unknown }, text: string) => {
-  if (typeof result.content === "string") {
-    result.content += text;
-  } else if (Array.isArray(result.content)) {
-    result.content.push({ type: "text", text });
-  } else {
-    result.content = text;
-  }
-};
+const appendToResult = (result: { readonly content?: unknown }, text: string) => ({
+  ...result,
+  // Native Tool.Result content is readonly; the hook's result itself is mutable.
+  content: typeof result.content === "string"
+    ? result.content + text
+    : Array.isArray(result.content)
+      ? [...result.content, { type: "text", text }]
+      : text,
+});
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+/** The abort signal also wakes tool-readiness waits when the plugin unloads. */
+const sleep = (ms: number, signal: AbortSignal) =>
+  new Promise<void>((resolve) => {
+    if (signal.aborted) return resolve();
+    const done = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal.addEventListener("abort", done, { once: true });
+  });
 
-async function setup(ctx: GovernorContext) {
-  const budget = Number(process.env.REVIEW_GOVERNOR_BUDGET_USD ?? 0);
-  const deadlineMs = Number(process.env.REVIEW_GOVERNOR_DEADLINE_MS ?? 0);
-  const outFile = process.env.REVIEW_GOVERNOR_OUT_FILE ?? "";
-  const logFile = process.env.REVIEW_GOVERNOR_LOG ?? "";
-  const usageFile = process.env.REVIEW_GOVERNOR_USAGE_FILE ?? "";
-  const waitForTools = process.env.REVIEW_GOVERNOR_WAIT_FOR_TOOLS ?? "";
-  const expectTools = (process.env.REVIEW_GOVERNOR_EXPECT_TOOLS ?? "").split(",").filter(Boolean);
-  const maxSteps = Number(process.env.REVIEW_GOVERNOR_MAX_STEPS ?? 0);
+/** Tool discovery itself can stall, so bound the request as well as the polling. */
+const waitBounded = <T>(pending: Promise<T>, ms: number, signal: AbortSignal) =>
+  new Promise<T | undefined>((resolve, reject) => {
+    const cleanup = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", stop);
+    };
+    const stop = () => {
+      cleanup();
+      resolve(undefined);
+    };
+    const timer = setTimeout(stop, Math.max(0, ms));
+    signal.addEventListener("abort", stop, { once: true });
+    pending.then((value) => {
+      cleanup();
+      resolve(value);
+    }, (error) => {
+      cleanup();
+      reject(error);
+    });
+    if (signal.aborted) stop();
+  });
+
+type StateConfig = Pick<
+  GovernorSessionConfig,
+  "startedAt" | "budgetUsd" | "deadlineMs" | "maxSteps" | "outFile" | "usageFile" | "logFile" | "waitForTools" | "expectTools"
+> & Partial<Pick<GovernorSessionConfig, "system" | "tools" | "runID" | "tag">>;
+
+/** Every mutable value below belongs to exactly one reviewer session. */
+function createState(ctx: GovernorContext, config: StateConfig, signal: AbortSignal, initialSessionID = "") {
+  const { budgetUsd: budget, deadlineMs, outFile, logFile, usageFile, waitForTools, expectTools, maxSteps, startedAt } = config;
   /**
    * The step count at which only the findings write is left. OpenCode's own
    * `steps` cap ends the session with a text-only turn, so a reviewer that
@@ -509,16 +601,10 @@ async function setup(ctx: GovernorContext) {
    */
   const stepLimit = maxSteps > STEP_RESERVE ? maxSteps - STEP_RESERVE : 0;
 
-  /**
-   * Taken when the plugin loads, which is process start: the whole point is to
-   * bound the call the pipeline is waiting on, and that clock starts before the
-   * first token.
-   */
-  const startedAt = Date.now();
   let spent = 0;
-  let sessionID = "";
+  let sessionID = initialSessionID;
   let aborted = false;
-  let waited = false;
+  let readiness: Promise<void> | undefined;
   const usage = {
     costUsd: 0,
     numTurns: 0,
@@ -534,11 +620,7 @@ async function setup(ctx: GovernorContext) {
         | undefined,
     },
   };
-  /**
-   * Times each shell rule has been tipped. Plugin-wide rather than keyed by
-   * session, because one pipeline invocation is one process running one
-   * session; the point is to interrupt a habit within a single review.
-   */
+  /** Times each shell rule has been tipped within this session. */
   const warnCounts = new Map<string, number>();
   /** Start times by call ID, so the log can carry how long each tool took. */
   const started = new Map<string, number>();
@@ -551,7 +633,7 @@ async function setup(ctx: GovernorContext) {
   const log = (event: string, extra: Record<string, unknown> = {}) => {
     if (!logFile) return;
     try {
-      appendFileSync(logFile, JSON.stringify({ t: Date.now(), event, spent, ...extra }) + "\n");
+      appendFileSync(logFile, JSON.stringify({ t: Date.now(), event, spent, ...(sessionID ? { sessionID } : {}), ...extra }) + "\n");
     } catch {
       /* diagnostics are never worth failing a review over */
     }
@@ -591,7 +673,7 @@ async function setup(ctx: GovernorContext) {
   const delivered = () => outFile !== "" && existsSync(outFile);
 
   const onStep = async (step: StepData) => {
-    if (step.sessionID) sessionID = step.sessionID;
+    if (!sessionID && step.sessionID) sessionID = step.sessionID;
     const cost = step.cost ?? 0;
     spent += cost;
     usage.costUsd += cost;
@@ -621,37 +703,21 @@ async function setup(ctx: GovernorContext) {
     aborted = true;
     log("abort", { sessionID });
     try {
-      await ctx.session.interrupt({ sessionID });
+      await ctx.session.interrupt({ sessionID, resume: false });
     } catch (error) {
       log("abort-failed", { error: error instanceof Error ? error.message : String(error) });
     }
   };
 
-  const events = new AbortController();
-  void (async () => {
-    try {
-      for await (const event of ctx.event.subscribe({ signal: events.signal })) {
-        // A failed step can still have been billed, and says so when it was.
-        if (event.type === "session.step.ended" || event.type === "session.step.failed") {
-          const data = (event.data ?? {}) as StepData;
-          if (event.type === "session.step.failed" && data.cost === undefined) continue;
-          await onStep(data);
-        }
-      }
-    } catch (error) {
-      if (!events.signal.aborted) {
-        log("events-failed", { error: error instanceof Error ? error.message : String(error) });
-      }
-    }
-  })();
-
-  await ctx.session.hook("prompt", async () => {
-    if (!waitForTools || waited) return;
-    waited = true;
+  const waitForReadyTools = async () => {
+    if (!waitForTools || config.tools === "none") return;
     const begun = Date.now();
-    while (Date.now() - begun < TOOL_WAIT_MS) {
+    while (!signal.aborted && Date.now() - begun < TOOL_WAIT_MS) {
       try {
-        const ids = (await ctx.tool.list()).map((t) => t.id);
+        const tools = await waitBounded(ctx.tool.list(), TOOL_WAIT_MS - (Date.now() - begun), signal);
+        if (signal.aborted) return;
+        if (tools === undefined) break;
+        const ids = tools.map((t) => t.id);
         const matched = ids.filter((id) => id.startsWith(waitForTools));
         if (matched.length) {
           // Builds of one tool can share a version number and differ in what
@@ -664,12 +730,19 @@ async function setup(ctx: GovernorContext) {
       } catch {
         /* keep waiting; the timeout below still bounds it */
       }
-      await sleep(250);
+      await sleep(250, signal);
     }
-    log("tools-missing", { prefix: waitForTools, ms: Date.now() - begun });
-  });
+    if (!signal.aborted) log("tools-missing", { prefix: waitForTools, ms: Date.now() - begun });
+  };
+  // A second prompt must join the first wait, rather than bypass it while MCP
+  // is still connecting. Both the promise and its result belong to the session.
+  const prompt = () => (readiness ??= waitForReadyTools());
 
-  await ctx.session.hook("context", (request) => {
+  const context = (request: ContextRequest) => {
+    if (config.system !== undefined) request.system = [{ type: "text", text: config.system }];
+    if (config.tools === "none" && request.tools) {
+      request.tools = Object.fromEntries(Object.entries(request.tools).filter(([id]) => id === "write"));
+    }
     // Mutating the message list is not the same as mutating the system
     // prompt: these are the turns after the cached prefix, so a repair here
     // does not invalidate the cache.
@@ -679,15 +752,15 @@ async function setup(ctx: GovernorContext) {
     } catch (error) {
       log("repair-failed", { error: error instanceof Error ? error.message : String(error) });
     }
-  });
+  };
 
-  await ctx.tool.hook("execute.after", (call) => {
+  const after = (call: ToolAfter) => {
     const begun = call.id ? started.get(call.id) : undefined;
     if (call.id) started.delete(call.id);
     // Logged here rather than only in `before`, so that the next command that
     // spends two minutes returning nothing is one line in this file instead of
     // an afternoon decoding the event stream.
-    log("tool-done", { tool: call.tool, status: call.status, ms: begun ? Date.now() - begun : null });
+    log("tool-done", { tool: call.tool, status: call.status, ms: begun !== undefined ? Date.now() - begun : null });
     if (call.status !== "completed") return;
 
     const input = (call.input ?? {}) as { command?: unknown };
@@ -700,7 +773,7 @@ async function setup(ctx: GovernorContext) {
       const n = warnCounts.get(hit.rule) ?? 0;
       // Appended to the tool's own result rather than pushed into the system
       // prompt: same words, no cache invalidation.
-      appendToResult(
+      call.result = appendToResult(
         call.result,
         `\n\n[tool tip ${advise ? n : `${n}/${WARN_LIMIT}`}] ${hit.tip}` +
           (!advise && n >= WARN_LIMIT ? " Further uses this session will be refused." : ""),
@@ -717,7 +790,7 @@ async function setup(ctx: GovernorContext) {
         : b === "time"
           ? `You have used ${Math.round(elapsedMs() / 1000)}s of a ${Math.round(deadlineMs / 1000)}s time limit.`
           : `You have spent $${spent.toFixed(2)} of a $${budget.toFixed(2)} budget.`;
-    appendToResult(
+    call.result = appendToResult(
       call.result,
       `\n\n[WRAP UP] ${used} ` +
         `Begin wrapping up: finish the investigation you are in the middle of, and write your ` +
@@ -725,10 +798,13 @@ async function setup(ctx: GovernorContext) {
         `than no file at all.`,
     );
     log("nudge", { tool: call.tool, binding: binding() });
-  });
+  };
 
-  await ctx.tool.hook("execute.before", (call) => {
-    if (call.sessionID) sessionID = call.sessionID;
+  const before = (call: ToolBefore) => {
+    if (!sessionID && call.sessionID) sessionID = call.sessionID;
+    if (config.tools === "none" && call.tool !== "write") {
+      throw new Error(`The "${call.tool}" tool is not available in this session. Only writing your output file is permitted.`);
+    }
     if (call.id) started.set(call.id, Date.now());
 
     if (call.tool === "shell") {
@@ -795,10 +871,118 @@ async function setup(ctx: GovernorContext) {
             `is switched off. Write your findings file now with what you have already established — ` +
             `that is the only tool still available, and an unwritten file means this review is lost.`,
     );
-  });
+  };
 
-  log("setup", { budget, deadlineMs, stepLimit, cwd: process.cwd() });
-  return () => events.abort();
+  log("setup", { budget, deadlineMs, stepLimit, cwd: process.cwd(), runID: config.runID, tag: config.tag });
+  return { onStep, prompt, context, before, after, log };
+}
+
+type GovernorState = ReturnType<typeof createState>;
+
+async function setup(ctx: GovernorContext) {
+  const shared = process.env.REVIEW_GOVERNOR_SESSIONS === "1";
+  const events = new AbortController();
+  const disposers: (() => Promise<void>)[] = [];
+  const legacy = shared ? undefined : createState(ctx, {
+    budgetUsd: Number(process.env.REVIEW_GOVERNOR_BUDGET_USD ?? 0),
+    deadlineMs: Number(process.env.REVIEW_GOVERNOR_DEADLINE_MS ?? 0),
+    maxSteps: Number(process.env.REVIEW_GOVERNOR_MAX_STEPS ?? 0),
+    outFile: process.env.REVIEW_GOVERNOR_OUT_FILE ?? "",
+    logFile: process.env.REVIEW_GOVERNOR_LOG ?? "",
+    usageFile: process.env.REVIEW_GOVERNOR_USAGE_FILE ?? "",
+    waitForTools: process.env.REVIEW_GOVERNOR_WAIT_FOR_TOOLS ?? "",
+    expectTools: (process.env.REVIEW_GOVERNOR_EXPECT_TOOLS ?? "").split(",").filter(Boolean),
+    startedAt: Date.now(),
+  }, events.signal);
+  const sessions = new Map<string, Promise<GovernorState>>();
+  const stepQueues = new Map<string, Promise<void>>();
+  const stateFor = (sessionID?: string): Promise<GovernorState> => {
+    if (events.signal.aborted) return Promise.reject(new Error("review-governor: plugin disposed"));
+    if (!sessionID) return Promise.reject(new Error("review-governor: missing sessionID; this session may not run"));
+    let pending = sessions.get(sessionID);
+    if (!pending) {
+      // Cache before fetching metadata: overlapping prompts, tools, and final
+      // step events must all initialize and charge the same state exactly once.
+      pending = Promise.resolve().then(async () => {
+        const info = await ctx.session.get({ sessionID });
+        // The promise client returns Session.Info directly. Also accept the
+        // response envelope used by callers of the underlying service API.
+        const config = sessionConfig(("data" in info ? info.data : info).metadata?.diffloupe);
+        if (events.signal.aborted) throw new Error("review-governor: plugin disposed");
+        return createState(ctx, config, events.signal, sessionID);
+      });
+      sessions.set(sessionID, pending);
+    }
+    return pending;
+  };
+  const withState = <T extends SessionRequest>(action: (state: GovernorState, request: T) => void | Promise<void>) =>
+    (request: T) => {
+      // Keep the standalone hooks synchronous where they were synchronous.
+      if (legacy) return action(legacy, request);
+      return stateFor(request.sessionID).then((state) => {
+        if (events.signal.aborted) throw new Error("review-governor: plugin disposed");
+        return action(state, request);
+      });
+    };
+  const register = async (registration: Promise<Registration>) => {
+    const registered = await registration;
+    disposers.push(() => registered.dispose());
+  };
+  const cleanup = async () => {
+    events.abort();
+    sessions.clear();
+    stepQueues.clear();
+    await Promise.allSettled(disposers.splice(0).reverse().map(async (dispose) => dispose()));
+  };
+  try {
+    await register(ctx.session.hook("prompt", withState((state) => state.prompt())));
+    await register(ctx.session.hook("context", withState<ContextRequest>((state, request) => state.context(request))));
+    await register(ctx.tool.hook("execute.after", withState<ToolAfter>((state, call) => state.after(call))));
+    await register(ctx.tool.hook("execute.before", withState<ToolBefore>((state, call) => state.before(call))));
+  } catch (error) {
+    await cleanup();
+    throw error;
+  }
+
+  void (async () => {
+    try {
+      for await (const event of ctx.event.subscribe({ signal: events.signal })) {
+        if (events.signal.aborted) break;
+        if (event.type !== "session.step.ended" && event.type !== "session.step.failed") continue;
+        const data = (event.data ?? {}) as StepData;
+        // Failed steps without billing/usage are not turns. Final text-only steps
+        // arrive here too, unlike the CLI's stdout stream.
+        if (event.type === "session.step.failed" && data.cost === undefined && data.tokens === undefined) continue;
+        const charge = async () => {
+          try {
+            const state = legacy ?? await stateFor(data.sessionID);
+            if (!events.signal.aborted) await state.onStep(data);
+          } catch {
+            // Parent and unregistered sessions never own reviewer accounting.
+            // One invalid session must not stop the shared event subscription.
+          }
+        };
+        if (legacy) {
+          await charge();
+          continue;
+        }
+        if (!data.sessionID) continue;
+        const sessionID = data.sessionID;
+        // Preserve billing order within each reviewer, but never hold another
+        // reviewer's accounting behind a metadata lookup or interrupt request.
+        const pending = (stepQueues.get(sessionID) ?? Promise.resolve()).then(charge);
+        stepQueues.set(sessionID, pending);
+        void pending.then(() => {
+          if (stepQueues.get(sessionID) === pending) stepQueues.delete(sessionID);
+        });
+      }
+    } catch (error) {
+      if (!events.signal.aborted) {
+        legacy?.log("events-failed", { error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+  })();
+  return cleanup;
 }
 
 /** Exposed for the tests. Not a plugin; OpenCode loads only the default export. */
