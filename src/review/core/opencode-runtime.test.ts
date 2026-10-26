@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { subscriptionCommand, subscriptionEnv, withSubscriptionProfile } from "../subscription.ts";
 import { startOpenCodeRuntime, type OpenCodeRuntime, type OpenCodeRuntimeOptions } from "./opencode-runtime.ts";
 
 // This process is the external native CLI/HTTP boundary. Nothing inside the
@@ -13,9 +14,14 @@ const fs = require("node:fs");
 const http = require("node:http");
 const { spawn } = require("node:child_process");
 const mode = process.env.FAKE_MODE;
+const auth = process.argv[2] === "auth";
 const record = (event) => fs.appendFileSync(process.env.FAKE_RECORD, JSON.stringify(event) + "\n");
-record({ event: "started", pid: process.pid, cwd: process.cwd(),
+record({ event: auth ? "auth" : "started", pid: process.pid, cwd: process.cwd(),
   env: Object.fromEntries(Object.entries(process.env).filter(([key]) => key.startsWith("OPENCODE_"))) });
+if (auth) {
+  console.log(JSON.stringify([{ id: "openai", connections: [{ type: "credential", method: "oauth" }] }]));
+  process.exit(0);
+}
 if (mode === "startup-failure") {
   process.stderr.write("native startup failed\n");
   process.exit(17);
@@ -42,7 +48,12 @@ process.stdin.on("end", () => {
   if (mode !== "stubborn" && mode !== "startup-hang") process.exit(0);
 });
 if (mode === "startup-hang") {
-  setInterval(() => {}, 1000);
+  // Native output must not suspend or repeatedly reset a startup deadline,
+  // including when a real subscription worker has already acquired its lock.
+  setInterval(() => {
+    console.log(JSON.stringify({ diffloupe: "waiting-for-profile" }));
+    console.log(JSON.stringify({ diffloupe: "profile-acquired" }));
+  }, 100);
 } else {
 let url;
 let sequence = 0;
@@ -135,6 +146,18 @@ async function start(opts: OpenCodeRuntimeOptions): Promise<OpenCodeRuntime> {
   const runtime = await startOpenCodeRuntime(opts);
   runtimes.push(runtime);
   return runtime;
+}
+
+async function subscriptionFixture(mode = "normal", home?: string) {
+  const opts = await fixture(mode);
+  home ??= path.join(opts.cwd, "profile");
+  await writeFile(path.join(opts.cwd, "opencode"), `#!${process.execPath}\n${FAKE}`, { mode: 0o755 });
+  return {
+    ...opts,
+    ...subscriptionCommand(home, opts.args.slice(1), "review"),
+    env: subscriptionEnv(home, { ...opts.env, PATH: `${opts.cwd}:${opts.env.PATH ?? ""}` }),
+    home,
+  };
 }
 
 async function events(file: string): Promise<Event[]> {
@@ -342,18 +365,64 @@ describe("OpenCode private runtime", () => {
     expect(existsSync(opts.record)).toBe(false);
   });
 
-  test("bounds startup and incomplete HTTP response bodies with real deadlines", async () => {
-    const stalled = await fixture("startup-hang");
-    const starting = startOpenCodeRuntime(stalled).catch((error: unknown) => error);
-    const opts = await fixture();
-    const runtime = await start(opts);
-    const requesting = runtime.createSession({ title: "partial-response" }).catch((error: unknown) => error);
-    const [startupError, requestError] = await Promise.all([starting, requesting]);
-    expect(startupError).toBeInstanceOf(Error);
-    expect((startupError as Error).message).toContain("startup timed out");
-    expect(requestError).toBeInstanceOf(Error);
-    expect((requestError as Error).message).toContain("timed out");
-    await expectProcessesGone(stalled.record);
-    expect((await events(opts.record)).filter((event) => event.event === "create")).toHaveLength(1);
+  test("waits beyond 30 seconds for a busy profile while bounding native startup and HTTP requests", async () => {
+    // Real workers in separate processes contend on the same SQLite profile.
+    // Run the long queue regression alongside the existing real deadline checks.
+    const holder = await subscriptionFixture();
+    const owner = await start(holder);
+    const queued = await subscriptionFixture("normal", holder.home);
+    const cancelled = await subscriptionFixture("normal", holder.home);
+    const cleanup = new AbortController();
+    const cancel = new AbortController();
+    const signal = AbortSignal.any([cleanup.signal, AbortSignal.timeout(35_000)]);
+    let queueSettled = false;
+    const queueing = start({ ...queued, signal }).then((runtime) => ({ runtime }), (error: unknown) => ({ error }))
+      .finally(() => { queueSettled = true; });
+    let cancelSettled = false;
+    const cancelling = start({ ...cancelled, signal: AbortSignal.any([signal, cancel.signal]) })
+      .finally(() => { cancelSettled = true; }).catch((error: unknown) => error);
+    const starting: Promise<unknown>[] = [];
+    try {
+      await until(async () => (await readFile(queued.logFile!, "utf8")).includes('"waiting-for-profile"'));
+      await until(async () => (await readFile(cancelled.logFile!, "utf8")).includes('"waiting-for-profile"'));
+      const waitingSince = Date.now();
+      const stalled = await fixture("startup-hang");
+      starting.push(start({ ...stalled, signal }).catch((error: unknown) => error));
+      const wrappedStall = await subscriptionFixture("startup-hang");
+      starting.push(start({ ...wrappedStall, signal }).catch((error: unknown) => error));
+      const requesting = owner.createSession({ title: "partial-response" }).catch((error: unknown) => error);
+      const [startupError, wrappedStartupError, requestError] = await Promise.all([...starting, requesting]);
+      for (const error of [startupError, wrappedStartupError]) {
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toContain("startup timed out");
+      }
+      expect(requestError).toBeInstanceOf(Error);
+      expect((requestError as Error).message).toContain("timed out");
+      await expectProcessesGone(stalled.record);
+      await expectProcessesGone(wrappedStall.record);
+      expect((await events(holder.record)).filter((event) => event.event === "create")).toHaveLength(1);
+
+      expect(Date.now() - waitingSince).toBeGreaterThanOrEqual(30_000);
+      expect(queueSettled).toBe(false);
+      expect(cancelSettled).toBe(false);
+      expect(await events(queued.record)).toEqual([]);
+      expect(await events(cancelled.record)).toEqual([]);
+      cancel.abort();
+      expect(await cancelling).toBeInstanceOf(Error);
+      expect(await events(cancelled.record)).toEqual([]);
+      expect(await readFile(cancelled.logFile!, "utf8")).not.toContain('"profile-acquired"');
+
+      await owner.stop();
+      const next = await queueing;
+      if ("error" in next) throw next.error;
+      expect(await next.runtime.createSession({ title: "after the long wait" })).toBe("ses_1");
+      await next.runtime.stop();
+      expect((await events(queued.record)).filter((event) => event.event === "started")).toHaveLength(1);
+      expect(await events(cancelled.record)).toEqual([]);
+      expect(await withSubscriptionProfile(holder.home, async () => "unlocked", AbortSignal.timeout(1_000))).toBe("unlocked");
+    } finally {
+      cleanup.abort();
+      await Promise.all([queueing, cancelling, ...starting]);
+    }
   }, 40_000);
 });

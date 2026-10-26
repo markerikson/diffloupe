@@ -2,6 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { closeSync, constants, fchmodSync, openSync, writeSync } from "node:fs";
 import { request } from "node:http";
+import { subscriptionCommand } from "../subscription.ts";
 
 export interface OpenCodeRuntime {
   url: string;
@@ -61,6 +62,13 @@ export async function startOpenCodeRuntime(opts: OpenCodeRuntimeOptions): Promis
   // contract. A Windows implementation needs process-tree/job-object support.
   if (process.platform === "win32") throw new Error("OpenCode private runtime requires POSIX process groups");
   requirePrivateServerArgs(opts.args);
+  // Only our exact worker invocation can suspend startup for a profile lock.
+  // Reuse its command builder so source and bundled worker paths stay in sync.
+  const home = opts.args[2];
+  const wrapper = home && opts.args[4] === "serve" ? subscriptionCommand(home, opts.args.slice(4), "review") : undefined;
+  let profilePhase: "starting" | "waiting" | "acquired" | undefined = wrapper && opts.command === wrapper.command &&
+    opts.args.length === wrapper.args.length && opts.args.every((arg, index) => arg === wrapper.args[index])
+    ? "starting" : undefined;
   const password = randomBytes(32).toString("hex");
   const authorization = `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`;
   const env = { ...opts.env };
@@ -107,7 +115,14 @@ export async function startOpenCodeRuntime(opts: OpenCodeRuntimeOptions): Promis
   let resolveAddress!: (url: string) => void;
   let rejectAddress!: (error: Error) => void;
   const address = new Promise<string>((resolve, reject) => { resolveAddress = resolve; rejectAddress = reject; });
+  let startupTimer: ReturnType<typeof setTimeout> | undefined;
 
+  function startStartupTimer(): void {
+    startupTimer = setTimeout(() => {
+      beginShutdown(new Error("OpenCode server startup timed out"));
+      signalGroup("SIGKILL");
+    }, STARTUP_TIMEOUT_MS);
+  }
   function signalGroup(signal: NodeJS.Signals): void {
     if (child.pid === undefined || processClosed) return;
     try {
@@ -116,6 +131,7 @@ export async function startOpenCodeRuntime(opts: OpenCodeRuntimeOptions): Promis
   }
   function beginShutdown(error: Error): void {
     stopping = true;
+    clearTimeout(startupTimer);
     lifetime.abort(error);
     rejectAddress(error);
   }
@@ -200,7 +216,26 @@ export async function startOpenCodeRuntime(opts: OpenCodeRuntimeOptions): Promis
       if (!stdout || url || stopping) return;
       let message: unknown;
       try { message = JSON.parse(text); } catch { return; }
-      if (!object(message) || typeof message.url !== "string") return;
+      if (!object(message)) return;
+      // Accept each transition once. Native output after acquisition (or a
+      // plain CLI impersonating these messages) cannot extend the deadline.
+      if (Object.keys(message).length === 1) {
+        if (profilePhase === "starting" && message.diffloupe === "waiting-for-profile") {
+          profilePhase = "waiting";
+          clearTimeout(startupTimer);
+          return;
+        }
+        if (profilePhase === "waiting" && message.diffloupe === "profile-acquired") {
+          profilePhase = "acquired";
+          startStartupTimer();
+          return;
+        }
+      }
+      if (typeof message.url !== "string") return;
+      if (profilePhase === "waiting") {
+        rejectAddress(new Error("OpenCode announced its server before acquiring the subscription profile"));
+        return;
+      }
       try {
         const parsed = new URL(message.url);
         if (parsed.protocol !== "http:" || parsed.hostname !== "127.0.0.1" || !parsed.port || parsed.port === "0" ||
@@ -252,10 +287,7 @@ export async function startOpenCodeRuntime(opts: OpenCodeRuntimeOptions): Promis
   process.once("exit", killNow);
   opts.signal?.addEventListener("abort", onAbort, { once: true });
   if (opts.signal?.aborted) onAbort();
-  const startupTimer = setTimeout(() => {
-    beginShutdown(new Error("OpenCode server startup timed out"));
-    signalGroup("SIGKILL");
-  }, STARTUP_TIMEOUT_MS);
+  if (!stopping) startStartupTimer();
 
   try {
     await address;

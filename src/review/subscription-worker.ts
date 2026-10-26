@@ -72,8 +72,11 @@ async function main(): Promise<void> {
   process.on("SIGINT", interrupt);
   process.on("SIGTERM", terminate);
   const cwd = mode === "review" ? process.cwd() : home;
+  const reportProfile = mode === "review" && args[0] === "serve" && args.includes("--stdio");
   try {
+    if (reportProfile) console.log(JSON.stringify({ diffloupe: "waiting-for-profile" }));
     const code = await withSubscriptionProfile(home, async () => {
+      if (reportProfile) console.log(JSON.stringify({ diffloupe: "profile-acquired" }));
       if (mode === "review") await requireSubscription(cwd, controller.signal);
       // A queued probe may wait behind a whole review call. Its timeout starts
       // only after acquiring the lock, so a busy profile is not a failed login.

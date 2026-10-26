@@ -63,8 +63,11 @@ afterEach(async () => {
   await rm(tmp, { recursive: true, force: true });
 });
 
-function worker(mode: "review" | "manage" | "login" = "review", overrides: NodeJS.ProcessEnv = {}) {
-  const args = mode === "review" ? ["run", "--standalone"] : ["auth", mode === "login" ? "login" : "list", "--standalone"];
+function worker(
+  mode: "review" | "manage" | "login" = "review",
+  overrides: NodeJS.ProcessEnv = {},
+  args = mode === "review" ? ["run", "--standalone"] : ["auth", mode === "login" ? "login" : "list", "--standalone"],
+) {
   const command = subscriptionCommand(home, args, mode);
   return Bun.spawn([command.command, ...command.args], {
     cwd: tmp, env: { ...env, ...overrides }, stdin: "ignore", stdout: "pipe", stderr: "pipe",
@@ -96,7 +99,7 @@ describe("subscription worker", () => {
     const config = path.join(tmp, "review-config");
     const child = worker("review", { OPENCODE_CONFIG_DIR: config });
     expect(await child.exited).toBe(0);
-    expect(await new Response(child.stdout).text()).toContain("review complete");
+    expect(await new Response(child.stdout).text()).toBe("review complete\n");
     const commands = await events();
     expect(commands.map((event) => event.args)).toEqual([
       ["auth", "list", "--standalone", "--format", "json"], ["run", "--standalone"],
@@ -106,10 +109,45 @@ describe("subscription worker", () => {
     expect(commands.every((event) => event.cwd === cwd)).toBe(true);
   });
 
+  test("announces stdio profile phases around acquisition", async () => {
+    let child: ReturnType<typeof worker> | undefined;
+    try {
+      await withSubscriptionProfile(home, async () => {
+        child = worker("review", {}, ["serve", "--stdio", "--hostname", "127.0.0.1", "--port", "0"]);
+        const reader = child.stdout.getReader();
+        const timeout = setTimeout(() => child!.kill("SIGKILL"), 3_000);
+        try {
+          let firstLine = "";
+          const decoder = new TextDecoder();
+          while (!firstLine.includes("\n")) {
+            // eslint-disable-next-line no-await-in-loop -- A pipe may split a line across several reads.
+            const chunk = await reader.read();
+            if (chunk.done) throw new Error("Worker exited before announcing its profile wait");
+            firstLine += decoder.decode(chunk.value, { stream: true });
+          }
+          expect(firstLine).toBe('{"diffloupe":"waiting-for-profile"}\n');
+          expect(await events()).toEqual([]);
+        } finally {
+          clearTimeout(timeout);
+          reader.releaseLock();
+        }
+      });
+      expect(await child!.exited).toBe(0);
+      let remaining = "";
+      for await (const chunk of child!.stdout) remaining += new TextDecoder().decode(chunk);
+      expect(remaining).toBe('{"diffloupe":"profile-acquired"}\nreview complete\n');
+      expect((await events()).map((event) => event.args?.[0])).toEqual(["auth", "serve"]);
+    } finally {
+      if (child?.exitCode === null) child.kill("SIGKILL");
+      await child?.exited;
+    }
+  });
+
   test("refuses to run when the profile has changed to an API key", async () => {
     await writeFile(env.FIXTURE_ACCOUNT!, "key");
-    const child = worker();
+    const child = worker("review", {}, ["serve", "--stdio", "--hostname", "127.0.0.1", "--port", "0"]);
     expect(await child.exited).toBe(1);
+    expect(await new Response(child.stdout).text()).toBe('{"diffloupe":"waiting-for-profile"}\n{"diffloupe":"profile-acquired"}\n');
     expect(await new Response(child.stderr).text()).toContain("diffloupe auth login");
     expect((await events()).map((event) => event.args?.[0])).toEqual(["auth"]);
   });
