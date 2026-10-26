@@ -57,6 +57,11 @@
   border-bottom: 1px solid var(--border);
 }
 
+.loadingLabel {
+  padding: 1rem;
+  color: var(--fg-fade);
+}
+
 .skeletonBody {
   display: flex;
   flex: auto;
@@ -92,4 +97,8 @@
   .skeletonAside {
     display: none;
   }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeletonMain div { animation: none; }
 }

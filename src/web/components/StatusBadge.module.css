@@ -34,3 +34,7 @@
     transform: rotate(360deg);
   }
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .badge[data-status="running"] .icon { animation: none; }
+}
