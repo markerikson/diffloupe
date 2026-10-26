@@ -22,6 +22,8 @@ import {
 } from "./config.ts";
 import { run } from "./lib/proc.ts";
 import { subscriptionCommand, subscriptionEnv } from "../subscription.ts";
+import { startOpenCodeRuntime, type OpenCodeRuntime } from "./opencode-runtime.ts";
+import type { GovernorSessionConfig } from "./opencode/governor.ts";
 
 // ---------------------------------------------------------------- cancellation
 
@@ -33,14 +35,19 @@ export class CancelledError extends Error {
 }
 
 /**
- * Live agent processes. Each is spawned detached, so it leads its own process
- * group: OpenCode starts `tilth --mcp` and shell tools as children, and killing
- * only the direct child would leave those running inside the worktree. The
- * flip side is that a terminal's Ctrl+C no longer reaches them, so whoever
- * handles SIGINT has to call `killAgents()`.
+ * Attached clients and owned servers are tracked separately. Servers own MCP
+ * and shell descendants; shutdown drains both before releasing the checkout.
+ * Detached process groups require explicit forwarding of terminal cancellation.
  */
 const liveAgents = new Map<ChildProcess, Promise<void>>();
+const liveServers = new Set<OpenCodeRuntime>();
 let exitHookInstalled = false;
+
+function installExitHook(): void {
+  if (exitHookInstalled) return;
+  exitHookInstalled = true;
+  process.on("exit", killAgentsNow);
+}
 
 function signalGroup(child: ChildProcess, sig: NodeJS.Signals): void {
   if (child.pid === undefined) return;
@@ -54,21 +61,36 @@ function signalGroup(child: ChildProcess, sig: NodeJS.Signals): void {
 /** Sends SIGKILL to every live agent group without waiting. */
 export function killAgentsNow(): void {
   for (const child of liveAgents.keys()) signalGroup(child, "SIGKILL");
+  for (const server of liveServers) server.killNow();
 }
 
 /**
  * SIGTERM to every live agent's process group, then SIGKILL after `graceMs`
  * for any that have not closed. Resolves when all have closed.
  */
-export async function killAgents(graceMs = 5000): Promise<void> {
-  const pending = [...liveAgents];
-  if (!pending.length) return;
-  for (const [child] of pending) signalGroup(child, "SIGTERM");
-  const timer = setTimeout(() => {
-    for (const [child] of pending) if (liveAgents.has(child)) signalGroup(child, "SIGKILL");
-  }, graceMs);
-  await Promise.all(pending.map(([, closed]) => closed));
-  clearTimeout(timer);
+export function killAgents(graceMs = 5000): Promise<void> {
+  if (stopping) return stopping;
+  runtimeAbort.abort();
+  return stopping = (async () => {
+    const pending = [...liveAgents];
+    for (const [child] of pending) signalGroup(child, "SIGTERM");
+    const timer = setTimeout(() => {
+      for (const [child] of pending) if (liveAgents.has(child)) signalGroup(child, "SIGKILL");
+    }, graceMs);
+    try {
+      await Promise.allSettled([...runtimes.values()].map(async (ready) => (await ready).server.stop(graceMs)));
+      await Promise.allSettled([...pendingAgents]);
+      await Promise.all(pending.map(([, closed]) => closed));
+      // Only disposable run data lives here. The subscription database is
+      // outside this directory and stays with OpenCode after shutdown.
+      if (configHome && process.env.DIFFLOUPE_KEEP_SCRATCH !== "1") {
+        const home = await configHome.catch(() => undefined);
+        if (home) await rm(home, { recursive: true, force: true });
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  })();
 }
 
 export function liveAgentCount(): number {
@@ -80,10 +102,8 @@ export function liveAgentCount(): number {
 /**
  * How to spawn one agent invocation, and how to read its accounting back.
  *
- * The two runners disagree on nearly everything mechanical — flags, where the
- * system prompt lives, how tools are restricted, whether spend is capped for
- * you, what shape the metadata comes back in — so each builds one of these and
- * `agent()` stays indifferent to which it got.
+ * The attached CLI preserves OpenCode's NDJSON format while the owned server
+ * manages authentication and all of the run's native child sessions.
  */
 export type Invocation = {
   command: string;
@@ -255,66 +275,34 @@ export function summarizeOpenCodeTools(stdout: string, cwd = ""): ToolSummary {
 export type AgentTools = "repo" | "none";
 
 /**
- * A system prompt other than the reviewer contract, for a call that is not a
- * review. `name` picks its config directory, so it must be unique per prompt.
+ * A named system prompt other than the reviewer contract. Its text belongs to
+ * the child session, so concurrent tasks can use different instructions.
  */
 export interface AgentSystem {
   name: string;
   text: string;
 }
 
-const openCodeHomes = new Map<string, { home: Promise<string>; key: string }>();
+let configHome: Promise<string> | undefined;
 
-/**
- * Write the configuration directory the OpenCode runner reads, once per run.
- *
- * Every invocation in a run wants byte-identical configuration, and OpenCode
- * installs its plugin package into whichever directory it is pointed at the
- * first time it sees one. Given a directory per invocation that install ran
- * five times at about five seconds each; shared, it runs once. The result is
- * memoised rather than merely written to a fixed path because slices run
- * concurrently, and one install racing five others in the same directory is not
- * something to find out about during a paid review.
- *
- * Memoising a prompt is worth a guard, though. If a caller ever wanted
- * different instructions it would silently get the first caller's, and the
- * symptom — a reviewer following a prompt nobody sent it — would be very hard
- * to read back from the output.
- */
-export function openCodeConfig(
-  system: string,
-  guidance: string,
-  tools: AgentTools = "repo",
-  name?: string,
-): Promise<string> {
-  const key = `${system}\u0000${guidance}`;
-  const dir = `${tools === "repo" ? "shared" : "no-tools"}${name ? `-${name}` : ""}`;
-  const memo = openCodeHomes.get(dir);
-  if (memo && memo.key !== key) {
-    throw new Error("openCodeConfig called with a different prompt after the config was written");
-  }
-  if (memo) return memo.home;
-  const home = (async () => {
-    const home = path.join(OUT, "oc", dir);
+/** One isolated configuration for the run; child prompts and limits live on sessions. */
+export function openCodeConfig(): Promise<string> {
+  return configHome ??= (async () => {
+    const home = path.join(OUT, "oc", "shared");
     const configDir = path.join(home, "config");
-    await writeJson(path.join(configDir, "opencode.json"), openCodeSettings(system, guidance, tools));
-    await writeText(
-      path.join(configDir, "plugin", "governor.ts"),
-      await readText(path.join(DIR, "opencode", "governor.ts")),
-    );
+    await writeJson(path.join(configDir, "opencode.json"), openCodeSettings());
+    await writeText(path.join(configDir, "plugin", "governor.ts"), await readText(path.join(DIR, "opencode", "governor.ts")));
     return home;
   })();
-  openCodeHomes.set(dir, { home, key });
-  return home;
 }
 
-/**
- * Forget the memoised configuration. Called when a run ends, because a
- * long-lived server's next run can have a different repository name in its
- * prompt, a different scratch directory, or different providers.
- */
+/** Called only after killAgents has drained the run's sessions and servers. */
 export function resetOpenCodeConfig() {
-  openCodeHomes.clear();
+  configHome = undefined;
+  runtimes.clear();
+  liveServers.clear();
+  runtimeAbort = new AbortController();
+  stopping = undefined;
 }
 
 /** `provider/model` for a model name that may or may not carry its provider. */
@@ -322,180 +310,213 @@ export function qualifiedModel(model: string): string {
   return model.includes("/") ? model : `${PROVIDER}/${model}`;
 }
 
-export function openCodeSettings(system: string, guidance: string, tools: AgentTools = "repo") {
+/** Session rules are complete: children must not inherit another agent's access. */
+export function reviewPermissions(tools: AgentTools) {
   const allowed = tools === "repo" ? ["read", "glob", "grep", "shell", "tilth_*"] : [];
+  return [
+    { action: "*", resource: "*", effect: "deny" },
+    ...allowed.map((action) => ({ action, resource: "*", effect: "allow" })),
+    // The governor restricts edit to the exact output file and the write tool.
+    { action: "edit", resource: "*", effect: "allow" },
+    { action: "external_directory", resource: "*", effect: "allow" },
+  ];
+}
+
+export function openCodeSettings() {
   return {
     $schema: "https://opencode.ai/config.json",
-    // A formatter would rewrite the findings file after the agent wrote it.
     formatter: false,
     snapshots: false,
     share: "disabled",
-    // A compaction is an unbudgeted model call that rewrites the reviewer's
-    // context in the middle of an investigation. The step cap ends a slice long
-    // before its context fills, so there is nothing for it to rescue.
     compaction: { auto: false },
-    // Custom providers and provider settings from the user's own config, so a
-    // model defined there resolves here too.
     ...(Object.keys(PROVIDERS).length ? { providers: PROVIDERS } : {}),
-    mcp: {
-      servers: tools === "none" ? {} : {
-        // Without this the reviewer has no structural reader, and it shows:
-        // given only shell tools it sampled eighty lines out of the file the PR
-        // changed and missed every defect in the rest of it.
-        //
-        // `codemode: false` exposes the tools directly as `tilth_tilth_search`
-        // and so on, which is what tools.md and the governor's tips name.
-        // Under Code Mode they would only be reachable through `execute`.
-        tilth: {
-          type: "local",
-          command: ["tilth", "--mcp"],
-          codemode: false,
-          timeout: { catalog: 60000, execution: 60000 },
-        },
+    mcp: { servers: {
+      tilth: {
+        type: "local",
+        command: ["tilth", "--mcp"],
+        codemode: false,
+        timeout: { catalog: 60000, execution: 60000 },
       },
-    },
+    } },
     agents: {
-      reviewer: {
-        description: "code review pipeline",
+      // This root records ownership; DiffLoupe schedules its children without
+      // spending a model call on deciding when to delegate.
+      review: {
+        description: "DiffLoupe review",
         mode: "primary",
+        permissions: [{ action: "*", resource: "*", effect: "deny" }],
+      },
+      reviewer: {
+        description: "DiffLoupe review task",
+        mode: "subagent",
         steps: MAX_STEPS,
-        // Replaces the built-in coding-agent prompt outright rather than adding
-        // to it, which is what `--system-prompt` did on the other runner. That
-        // includes the built-in tool guidance, which is why ours is appended
-        // here: without it the reviewer gets no instruction on what tools exist
-        // and falls back to shelling out for everything.
-        system: guidance ? `${system}\n\n${guidance}` : system,
-        // Ordered, last match wins. Denying everything first turns off every
-        // tool this list does not name, including ones a later OpenCode adds:
-        // subagents, questions, skills, web access and Code Mode.
-        permissions: [
-          { action: "*", resource: "*", effect: "deny" },
-          ...allowed.map((action) => ({
-            action,
-            resource: "*",
-            effect: "allow",
-          })),
-          // One action gates write, edit and patch together, and the config is
-          // shared by every call while the output path is per call. The
-          // governor's checkWriteTarget narrows this to the call's output file.
-          { action: "edit", resource: "*", effect: "allow" },
-          // Findings and artifacts both land outside the checkout under review.
-          { action: "external_directory", resource: "*", effect: "allow" },
-        ],
+        // The governor replaces this with the child's immutable system prompt.
+        system: "Follow the review task supplied by DiffLoupe.",
+        permissions: reviewPermissions("repo"),
       },
     },
   };
 }
 
-/**
- * Spawn plan for the OpenCode runner.
- *
- * Everything `claude` took as a flag is configuration here, so this points the
- * binary at a config directory we wrote. That directory is also the isolation:
- * run unconfigured, OpenCode loads the developer's own config, skills and
- * plugins, and one such plugin injected three and a half thousand tokens of
- * unrelated repository map into the prompt. Beyond the waste, prompts here are
- * built from attacker-controlled pull request text, and third-party prose has
- * no business in them. Isolated, the same call read a third of the input
- * tokens.
- *
- * `--pure` looks like the way to get that isolation and is not: it suppresses
- * our own governor plugin along with everyone else's, which removes the spend
- * cap. The relocated config and data directories do the job instead.
- *
- * `--standalone` gives each invocation a private server. Without it every
- * invocation attaches to one shared background service, which would run all
- * of them under whichever configuration started it first.
- */
-export async function openCodeInvocation(
-  system: string,
-  opts: {
-    budget: number;
-    model: string;
-    effort: string;
-    tag: string;
-    outFile: string;
-    tools?: AgentTools;
-    /** Names a system prompt other than the reviewer contract; see `AgentSystem`. */
-    systemName?: string | undefined;
-  },
-): Promise<Invocation> {
+interface ReviewRuntime {
+  server: OpenCodeRuntime;
+  parentID: string;
+  home: string;
+  env: NodeJS.ProcessEnv;
+  subscription: boolean;
+}
+
+const runtimes = new Map<boolean, Promise<ReviewRuntime>>();
+let runtimeAbort = new AbortController();
+let stopping: Promise<void> | undefined;
+const pendingAgents = new Set<Promise<unknown>>();
+
+function runtimeSignal(): AbortSignal {
+  return SIGNAL ? AbortSignal.any([runtimeAbort.signal, SIGNAL]) : runtimeAbort.signal;
+}
+
+function checkRunning(): void {
+  if (runtimeSignal().aborted) throw new CancelledError();
+}
+
+/** API credentials and subscription credentials have separate native owners. */
+function reviewRuntime(subscription: boolean): Promise<ReviewRuntime> {
+  checkRunning();
+  const existing = runtimes.get(subscription);
+  if (existing) return existing;
+  const pending = (async () => {
+    const home = await openCodeConfig();
+    checkRunning();
+    const profile = subscription ? subscriptionEnv(SUBSCRIPTION_HOME) : undefined;
+    const data = profile?.XDG_DATA_HOME ?? path.join(home, "data");
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      ...CHILD_ENV,
+      PWD: SUBJECT,
+      XDG_CONFIG_HOME: path.join(home, "xdg"),
+      XDG_DATA_HOME: data,
+      XDG_STATE_HOME: path.join(home, subscription ? "subscription-state" : "state"),
+      XDG_CACHE_HOME: path.join(home, "cache"),
+      OPENCODE_CONFIG_DIR: path.join(home, "config"),
+      OPENCODE_DISABLE_PROJECT_CONFIG: "1",
+      OPENCODE_DISABLE_AUTOUPDATE: "1",
+      REVIEW_GOVERNOR_SESSIONS: "1",
+    };
+    for (const key of Object.keys(env)) {
+      if (["OPENCODE_DB", "OPENCODE_CONFIG", "OPENCODE_CONFIG_CONTENT", "OPENCODE_CLI_CONFIG_CONTENT"].includes(key) ||
+        (key.startsWith("REVIEW_GOVERNOR_") && key !== "REVIEW_GOVERNOR_SESSIONS") ||
+        (subscription && key === "OPENAI_API_KEY")) delete env[key];
+    }
+    if (!subscription) await importCredentials(env, data);
+    await ensureDir(path.join(ARTIFACTS, "logs"));
+    checkRunning();
+    const args = ["serve", "--stdio", "--hostname", "127.0.0.1", "--port", "0"];
+    // One server holds the persistent profile, while all of its child sessions
+    // run concurrently. The lock no longer surrounds individual agent calls.
+    const command = subscription ? subscriptionCommand(SUBSCRIPTION_HOME, args, "review") : { command: "opencode", args };
+    // Stop unfinished startup immediately. Once ready, normal teardown uses
+    // stop() so the subscription worker can await its server before unlocking.
+    const startupAbort = new AbortController();
+    const cancelStartup = () => startupAbort.abort();
+    runtimeAbort.signal.addEventListener("abort", cancelStartup, { once: true });
+    if (runtimeAbort.signal.aborted) cancelStartup();
+    let server: OpenCodeRuntime | undefined;
+    try {
+      server = await startOpenCodeRuntime({ ...command, cwd: SUBJECT, env,
+        signal: SIGNAL ? AbortSignal.any([SIGNAL, startupAbort.signal]) : startupAbort.signal,
+        logFile: path.join(ARTIFACTS, "logs", subscription ? "opencode-subscription.log" : "opencode-server.log") });
+      liveServers.add(server);
+      const ownedServer = server;
+      void server.closed.then(() => liveServers.delete(ownedServer));
+      checkRunning();
+      const parentID = await server.createSession({
+        title: `DiffLoupe: ${repoName || path.basename(SUBJECT)}`,
+        agent: "review",
+        location: { directory: SUBJECT },
+        metadata: { diffloupeRun: true },
+        permissions: [{ action: "*", resource: "*", effect: "deny" }],
+      });
+      return { server, parentID, home, env, subscription };
+    } catch (error) {
+      await server?.stop();
+      throw error;
+    } finally {
+      runtimeAbort.signal.removeEventListener("abort", cancelStartup);
+    }
+  })();
+  runtimes.set(subscription, pending);
+  return pending;
+}
+
+interface AgentOptions {
+  budget: number;
+  outFile: string;
+  tag: string;
+  model?: string;
+  effort?: string;
+  tools?: AgentTools;
+  system?: AgentSystem;
+  answerKeys?: readonly string[];
+}
+
+/** Build one native child session with independent instructions and accounting. */
+async function childInvocation(system: string, opts: AgentOptions): Promise<{
+  spec: Invocation;
+  runtime: ReviewRuntime;
+  sessionID: string;
+}> {
   const tools = opts.tools ?? "repo";
+  const model = qualifiedModel(opts.model ?? MODEL);
+  const subscription = Boolean(SUBSCRIPTION_HOME && model.startsWith("openai/"));
+  const runtime = await reviewRuntime(subscription);
+  checkRunning();
   const guidance = tools === "repo" ? await readText(path.join(DIR, "opencode", "tools.md")) : "";
-  const home = await openCodeConfig(system, guidance, tools, opts.systemName);
-  const configDir = path.join(home, "config");
   const usageFile = path.join(ARTIFACTS, "logs", `${opts.tag}.usage.json`);
   await ensureDir(path.dirname(usageFile));
   await removeIfPresent(usageFile);
-
-  // Thinking is a property of the model variant in this runner: `#medium` and
-  // so on, whose meaning the model catalog defines.
-  const variant = opts.effort;
-  const model = qualifiedModel(opts.model);
-  const subscription = SUBSCRIPTION_HOME && model.startsWith("openai/")
-    ? subscriptionEnv(SUBSCRIPTION_HOME)
-    : undefined;
-  const args = [
-    "run",
-    "--standalone",
-    "--format", "json",
-    "--agent", "reviewer",
-    "--model", variant && !model.includes("#") ? `${model}#${variant}` : model,
-    // Naming the session stops a second, unbudgeted model call being made to
-    // invent a title for it.
-    "--title", opts.tag,
-  ];
-
+  const slash = model.indexOf("/");
+  const hash = model.indexOf("#", slash);
+  const variant = hash < 0 ? (opts.effort ?? EFFORT) : model.slice(hash + 1);
+  const metadata: GovernorSessionConfig = {
+    version: 1,
+    runID: runtime.parentID,
+    tag: opts.tag,
+    startedAt: Date.now(),
+    budgetUsd: opts.budget,
+    deadlineMs: DEADLINE_MS,
+    maxSteps: MAX_STEPS,
+    outFile: path.resolve(opts.outFile),
+    usageFile,
+    logFile: path.join(ARTIFACTS, "logs", `${opts.tag}.governor.jsonl`),
+    system: guidance ? `${system}\n\n${guidance}` : system,
+    tools,
+    waitForTools: tools === "repo" ? "tilth_" : "",
+    expectTools: [...new Set(guidance.match(/\btilth_tilth_\w+/g) ?? [])],
+  };
+  checkRunning();
+  const sessionID = await runtime.server.createSession({
+    parentID: runtime.parentID,
+    agent: "reviewer",
+    title: opts.tag,
+    model: { providerID: model.slice(0, slash), id: model.slice(slash + 1, hash < 0 ? undefined : hash),
+      ...(variant ? { variant } : {}) },
+    permissions: reviewPermissions(tools),
+    metadata: { diffloupe: metadata },
+  });
+  checkRunning();
+  const env = { ...runtime.env, OPENCODE_PASSWORD: runtime.server.password };
   return {
-    ...(subscription ? subscriptionCommand(SUBSCRIPTION_HOME, args, "review") : { command: "opencode", args }),
-    cwd: SUBJECT,
-    env: {
-      // OpenCode reads $PWD rather than the process's actual working directory
-      // when it decides which project it is looking at. The inherited value is
-      // the shell that launched the pipeline, so without this every review reads
-      // the checkout the pipeline is running from instead of the PR's code, and
-      // reports on the wrong source while being shown the right diff. It is set
-      // from the same field the child is spawned in so the two cannot disagree.
-      PWD: SUBJECT,
-      XDG_CONFIG_HOME: path.join(home, "xdg"),
-      // The configuration is shared but the data directory cannot be, because
-      // it holds a SQLite session database and invocations run concurrently:
-      // the coordinator and the walkthrough always overlap, and slices run six
-      // at a time. Sharing it cost a whole coordinator phase to "database is
-      // locked", which the pipeline absorbed as a silent fall back to
-      // deterministic merging. A private directory costs about a second of
-      // startup; the install that made sharing worth doing is in the config
-      // directory, which is still shared.
-      // Subscription calls hold the profile lock for their entire lifetime;
-      // OpenCode owns and persists token refresh in this dedicated database.
-      XDG_DATA_HOME: subscription?.XDG_DATA_HOME ?? path.join(home, "data", opts.tag),
-      XDG_STATE_HOME: path.join(home, "state", opts.tag),
-      XDG_CACHE_HOME: path.join(home, "cache"),
-      OPENCODE_CONFIG_DIR: configDir,
-      // Also stops AGENTS.md files in the checkout reaching the prompt. Those
-      // come from the pull request under review.
-      OPENCODE_DISABLE_PROJECT_CONFIG: "1",
-      OPENCODE_DISABLE_AUTOUPDATE: "1",
-      REVIEW_GOVERNOR_BUDGET_USD: String(opts.budget),
-      REVIEW_GOVERNOR_DEADLINE_MS: String(DEADLINE_MS),
-      REVIEW_GOVERNOR_MAX_STEPS: String(MAX_STEPS),
-      REVIEW_GOVERNOR_OUT_FILE: opts.outFile,
-      REVIEW_GOVERNOR_LOG: path.join(ARTIFACTS, "logs", `${opts.tag}.governor.jsonl`),
-      REVIEW_GOVERNOR_USAGE_FILE: usageFile,
-      // MCP servers connect in the background, and without the wait the first
-      // turns are taken with no tilth tools on offer.
-      REVIEW_GOVERNOR_WAIT_FOR_TOOLS: tools === "repo" ? "tilth_" : "",
-      // tilth builds that report the same version expose different tools, and
-      // guidance pointing at a missing one is advice the model cannot follow.
-      REVIEW_GOVERNOR_EXPECT_TOOLS: [...new Set(guidance.match(/\btilth_tilth_\w+/g) ?? [])].join(","),
+    runtime, sessionID,
+    spec: {
+      command: "opencode",
+      args: ["run", "--server", runtime.server.url, "--session", sessionID, "--format", "json"],
+      cwd: SUBJECT,
+      env: Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
+      unsetEnv: [],
+      rawExt: "stdout.ndjson",
+      parse: (stdout) => readOpenCodeUsage(usageFile) ?? sumOpenCodeStream(stdout),
+      tools: (stdout) => summarizeOpenCodeTools(stdout, SUBJECT),
     },
-    unsetEnv: [
-      "OPENCODE_DB", "OPENCODE_CONFIG", "OPENCODE_CONFIG_CONTENT", "OPENCODE_CLI_CONFIG_CONTENT",
-      ...(subscription ? ["OPENAI_API_KEY"] : []),
-    ],
-    rawExt: "stdout.ndjson",
-    parse: (stdout) => readOpenCodeUsage(usageFile) ?? sumOpenCodeStream(stdout),
-    tools: (stdout) => summarizeOpenCodeTools(stdout, SUBJECT),
   };
 }
 
@@ -678,50 +699,36 @@ export function answerFromText(text: string, keys: readonly string[]): unknown {
   return undefined;
 }
 
-export async function agent(
-  prompt: string,
-  opts: {
-    budget: number;
-    outFile: string;
-    tag: string;
-    model?: string;
-    effort?: string;
-    tools?: AgentTools;
-    /** Replaces the reviewer contract in `system.md`, for a call that does not review. */
-    system?: AgentSystem;
-    /**
-     * Top-level keys the answer has, at least one of which must be present for
-     * JSON in the final reply to stand in for a missing output file.
-     */
-    answerKeys?: readonly string[];
-  },
-) {
-  if (SIGNAL?.aborted) throw new CancelledError();
-  const system = opts.system?.text ?? (await readText(path.join(DIR, "system.md"))).replaceAll("{{repo}}", repoName);
-  const model = opts.model ?? MODEL;
-  const effort = opts.effort ?? EFFORT;
-  const spec: Invocation = await openCodeInvocation(system, { ...opts, model, effort, systemName: opts.system?.name });
-  const env: Record<string, string | undefined> = { ...process.env, ...CHILD_ENV, ...spec.env };
-  for (const key of spec.unsetEnv) delete env[key];
-  const subscription = SUBSCRIPTION_HOME && qualifiedModel(model).startsWith("openai/");
-  const privateDirs = [subscription ? undefined : spec.env.XDG_DATA_HOME, spec.env.XDG_STATE_HOME]
-    .filter((d) => d !== undefined);
+/** Each scheduled task is a native child session on the run's owned server. */
+export function agent(prompt: string, opts: AgentOptions) {
+  const pending = invokeAgent(prompt, opts);
+  pendingAgents.add(pending);
+  void pending.finally(() => pendingAgents.delete(pending)).catch(() => {});
+  return pending;
+}
+
+async function invokeAgent(prompt: string, opts: AgentOptions) {
+  checkRunning();
+  installExitHook();
+  let child: Awaited<ReturnType<typeof childInvocation>> | undefined;
   try {
-    if (SIGNAL?.aborted) throw new CancelledError();
-    if (!subscription) await importCredentials(env, spec.env.XDG_DATA_HOME);
-    const result = await runAgent(prompt, opts, spec, env);
-    if (SIGNAL?.aborted) throw new CancelledError();
+    const system = opts.system?.text ?? (await readText(path.join(DIR, "system.md"))).replaceAll("{{repo}}", repoName);
+    child = await childInvocation(system, opts);
+    const { spec, runtime, sessionID } = child;
+    checkRunning();
+    const result = await runAgent(prompt, opts, spec, spec.env);
+    checkRunning();
+    // An attached client's failure must not leave a paid session running.
+    if (result.exitCode !== 0) await runtime.server.interrupt(sessionID);
     return result;
-  } finally {
-    // Keep subscription credentials and their refreshed tokens. Ordinary
-    // session data and imported API keys can be removed after each call.
-    if (process.env.DIFFLOUPE_KEEP_SCRATCH !== "1") {
-      await Promise.all(privateDirs.map((d) => rm(d, { recursive: true, force: true }).catch(() => {})));
-    }
+  } catch (error) {
+    await child?.runtime.server.interrupt(child.sessionID).catch(() => {});
+    if (runtimeSignal().aborted) throw new CancelledError();
+    throw error;
   }
 }
 
-/** Imports the run's saved credentials into a call's fresh data directory. */
+/** Imports saved API credentials once, before their review server starts. */
 async function importCredentials(env: Record<string, string | undefined>, dataDir: string | undefined): Promise<void> {
   if (!AUTH_IMPORT || !dataDir) return;
   await mkdir(dataDir, { recursive: true, mode: 0o700 });
@@ -732,6 +739,7 @@ async function importCredentials(env: Record<string, string | undefined>, dataDi
     input: AUTH_IMPORT,
     allowFail: true,
     timeoutMs: 60_000,
+    signal: runtimeSignal(),
   });
   if (res.code !== 0) {
     throw new Error(`opencode auth import failed (exit ${res.code}). Run diffloupe doctor to check credentials.`);
@@ -745,10 +753,7 @@ async function runAgent(
   env: Record<string, string | undefined>,
 ) {
   if (SIGNAL?.aborted) throw new CancelledError();
-  if (!exitHookInstalled) {
-    exitHookInstalled = true;
-    process.on("exit", killAgentsNow);
-  }
+  installExitHook();
   const started = Date.now();
   const { stdout, stderr, exitCode } = await new Promise<{
     stdout: string;
@@ -771,7 +776,7 @@ async function runAgent(
       markClosed();
     };
     // A child can close stdin while it is still running. Wait for close before
-    // releasing resources or letting another subscription call use its DB.
+    // interrupting its native session and releasing resources.
     let inputError: Error | undefined;
     child.stdin.on("error", (error) => {
       inputError = error;

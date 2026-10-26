@@ -220,7 +220,7 @@ export let PROVIDERS: Record<string, unknown> = {};
 /** Extra environment for every OpenCode child: provider keys that must not reach this process's env. */
 export let CHILD_ENV: Record<string, string> = {};
 /**
- * `opencode auth import` input for every call's data directory, as JSON. Empty
+ * `opencode auth import` input for the review's temporary profile, as JSON. Empty
  * imports nothing. Holds API keys, so it is never written anywhere but stdin.
  */
 export let AUTH_IMPORT = "";

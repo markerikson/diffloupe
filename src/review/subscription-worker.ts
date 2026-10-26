@@ -1,7 +1,7 @@
 /**
- * Own the subscription lock in the same lifetime as the OpenCode command, not
- * the requesting DiffLoupe process. If that parent dies, this worker continues
- * waiting for OpenCode before releasing the profile to another review.
+ * Own the subscription lock for the OpenCode command's lifetime. During a
+ * review this is one server with concurrent child sessions. Its --stdio lease
+ * closes when DiffLoupe exits; wait for that server before unlocking the profile.
  */
 import { spawn } from "node:child_process";
 import { hasSubscriptionLogin, withSubscriptionProfile } from "./subscription.ts";

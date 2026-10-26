@@ -421,7 +421,7 @@ DiffLoupe supports API keys and ChatGPT subscriptions through OpenCode 2.x. For 
 1. The provider's environment variable, such as `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`. A `providers.<id>.env` list in your OpenCode config is honored.
 2. `apiKeys.<provider>` in `~/.config/diffloupe/config.json`. It is passed to the OpenCode processes only, not to DiffLoupe's own environment.
 3. For OpenAI, a ChatGPT subscription saved with `diffloupe auth login`.
-4. An API key you saved with `opencode auth login`. DiffLoupe reads it with `opencode auth export` and imports it into each agent's data directory, which is deleted when the agent exits.
+4. An API key you saved with `opencode auth login`. DiffLoupe reads it with `opencode auth export` and imports it into the review's temporary OpenCode profile, which is deleted after the review server exits.
 
 To use your ChatGPT subscription, sign in and select a ChatGPT subscription method from OpenCode's prompts:
 
@@ -455,7 +455,13 @@ diffloupe doctor      # Check which credential and model each stage will use
 diffloupe auth logout # Remove a DiffLoupe subscription login
 ```
 
-Explicit API keys take precedence over a subscription. Unset `OPENAI_API_KEY` and remove any `apiKeys.openai` if you want subscription access instead. A DiffLoupe subscription login takes precedence over API keys saved in your ordinary OpenCode profile. Subscription agents share one persistent profile and run one at a time, including across simultaneous DiffLoupe processes, so OpenCode can safely refresh the login. API-key agents keep their separate data directories and run in parallel. Subscription usage has no dollar cost reported to DiffLoupe, so `--max-cost` cannot enforce a dollar limit for it; your subscription's usage limits still apply.
+Explicit API keys take precedence over a subscription. Unset `OPENAI_API_KEY` and remove any `apiKeys.openai` if you want subscription access instead. A DiffLoupe subscription login takes precedence over API keys saved in your ordinary OpenCode profile.
+
+Review tasks run as native OpenCode child sessions on an isolated review server. Subscription reviewers run concurrently using the same review pool as API-key reviewers; each has its own context, output file, permissions, and limits. DiffLoupe controls scheduling and cancellation, so no extra model call is needed to delegate the work. A mixed-provider review keeps API-key and subscription profiles on separate servers.
+
+Only one review server may own a subscription profile at a time. Separate DiffLoupe processes using that profile must wait for its current review server to exit; this does not serialize the reviewers inside a run. OpenCode owns the login and token refresh. OpenCode 2.1.2 has no refresh deduplication across concurrent sessions, including its built-in subagents, so this uses its native concurrency behavior rather than copying or refreshing OAuth tokens in DiffLoupe.
+
+Subscription usage has no dollar cost reported to DiffLoupe, so `--max-cost` cannot enforce a dollar limit for it; your subscription's usage limits still apply.
 
 Subscriptions for other providers, including Claude, are not supported. Providers that authenticate from the machine, such as Amazon Bedrock, Google Vertex, Ollama and LM Studio, are not checked. If a provider has no credential, the review stops before it starts and names the provider, the stage, and the ways to add one.
 

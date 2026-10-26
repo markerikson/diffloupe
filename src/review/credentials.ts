@@ -8,7 +8,7 @@
  *    provider's environment variable on the child only
  * 3. the dedicated ChatGPT profile created by `diffloupe auth login`
  * 4. an API key saved with `opencode auth login`, read with `opencode auth export`
- *    and imported into each call's private data directory
+ *    and imported into the review's temporary OpenCode profile
  *
  * OAuth logins are never copied: OpenCode refreshes them in the persistent
  * subscription profile. Providers that authenticate from the machine
@@ -67,7 +67,7 @@ export interface ProviderCoverage {
 export interface CredentialPlan {
   /** Added to the environment of every OpenCode child. */
   childEnv: Record<string, string>;
-  /** Imported into every call's data directory before OpenCode starts. */
+  /** Imported into the temporary API-key profile before the review server starts. */
   imports: SavedCredential[];
   /** Persistent OpenCode profile; no subscription tokens are passed to workers. */
   subscriptionHome?: string;
@@ -189,7 +189,7 @@ export function planCredentials(inputs: CredentialInputs): CredentialPlan {
       plan.subscriptionHome = inputs.subscriptionHome;
       cover("subscription", "ChatGPT login from diffloupe auth login");
       plan.warnings.push(
-        "ChatGPT subscription calls run one at a time. Subscription cost is not reported, so --max-cost cannot limit that usage.",
+        "ChatGPT subscription cost is not reported, so --max-cost cannot limit that usage.",
       );
       continue;
     }
