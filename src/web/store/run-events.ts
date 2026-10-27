@@ -1,7 +1,7 @@
 import { type } from "arktype";
 import { StoredEventSchema, type StoredEvent } from "../../server/types.ts";
 
-const EVENT_TYPES = ["stage", "slice", "log", "cost", "budget", "done", "cancelled", "error"] as const;
+const EVENT_TYPES = ["stage", "groups", "slice", "log", "cost", "budget", "done", "cancelled", "error"] as const satisfies readonly StoredEvent["type"][];
 const TERMINAL = new Set<string>(["done", "cancelled", "error"]);
 
 export interface RunEventHandlers {
@@ -17,6 +17,7 @@ export interface RunEventHandlers {
 export function followRunEvents(id: string, handlers: RunEventHandlers): () => void {
   const source = new EventSource(`/api/runs/${encodeURIComponent(id)}/events`);
   let ended = false;
+  let lastSeq = 0;
 
   const finish = () => {
     if (ended) return;
@@ -26,6 +27,7 @@ export function followRunEvents(id: string, handlers: RunEventHandlers): () => v
   };
 
   const onMessage = (e: Event) => {
+    if (ended) return;
     // A connection failure also fires "error", as a plain Event without data.
     if (!(e instanceof MessageEvent)) {
       if (source.readyState === EventSource.CLOSED) finish();
@@ -43,6 +45,8 @@ export function followRunEvents(id: string, handlers: RunEventHandlers): () => v
       console.warn(`[diffloupe] run ${id}: skipping malformed event: ${event.summary}`);
       return;
     }
+    if (event.seq <= lastSeq) return;
+    lastSeq = event.seq;
     handlers.onEvent(event);
     if (TERMINAL.has(event.type)) finish();
   };

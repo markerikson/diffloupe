@@ -24,30 +24,44 @@ export interface RunOptions {
   input?: string;
   /** Kill the child with SIGKILL after this long. */
   timeoutMs?: number;
+  /** Stop the command and its descendants, waiting for close before rejecting. */
+  signal?: AbortSignal;
 }
 
 export function run(cmd: string, args: string[], opts: RunOptions = {}): Promise<RunResult> {
+  if (opts.signal?.aborted) return Promise.reject(opts.signal.reason);
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, {
       cwd: opts.cwd,
       env: opts.env ?? process.env,
       stdio: [opts.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+      detached: opts.signal !== undefined && process.platform !== "win32",
     });
+    const kill = () => {
+      if (opts.signal && process.platform !== "win32" && child.pid !== undefined) {
+        try { process.kill(-child.pid, "SIGKILL"); } catch { /* Already exited. */ }
+      } else child.kill("SIGKILL");
+    };
+    opts.signal?.addEventListener("abort", kill, { once: true });
+    if (opts.signal?.aborted) kill();
     if (opts.input !== undefined) {
       child.stdin?.on("error", () => {});
       child.stdin?.end(opts.input);
     }
-    const timer = opts.timeoutMs ? setTimeout(() => child.kill("SIGKILL"), opts.timeoutMs) : undefined;
+    const timer = opts.timeoutMs ? setTimeout(kill, opts.timeoutMs) : undefined;
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     child.stdout?.on("data", (c: Buffer) => out.push(c));
     child.stderr?.on("data", (c: Buffer) => err.push(c));
     child.on("error", (e) => {
       clearTimeout(timer);
+      opts.signal?.removeEventListener("abort", kill);
       reject(e);
     });
     child.on("close", (code, signal) => {
       clearTimeout(timer);
+      opts.signal?.removeEventListener("abort", kill);
+      if (opts.signal?.aborted) { reject(opts.signal.reason); return; }
       // A child killed by a signal reports a null exit code. Defaulting that to
       // 0 turns an OOM kill, a timeout or a SIGPIPE into an apparent success
       // carrying whatever partial output was collected — which for a `git diff`

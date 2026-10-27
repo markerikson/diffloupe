@@ -391,18 +391,20 @@ Every field is optional.
 
 | Setting | User config | Per-repo settings | CLI | Environment | Default |
 |---------|-------------|-------------------|-----|-------------|---------|
-| Reviewer model | `models.review` | `models.review` | `--model review=<id>` | `REVIEW_MODEL` | OpenCode default model, else `anthropic/claude-opus-5-5` |
-| Coordinator model | `models.coordinator` | `models.coordinator` | `--model coordinator=<id>` | `REVIEW_MODEL_MERGE` | OpenCode default model, else `anthropic/claude-opus-5-5` |
-| Walkthrough model | `models.walkthrough` | `models.walkthrough` | `--model walkthrough=<id>` | `REVIEW_MODEL_WALK` | OpenCode default model, else `anthropic/claude-sonnet-5-5` |
+| Reviewer model | `models.review` | `models.review` | `--model review=<id>` | `REVIEW_MODEL` | OpenCode default or configured provider's available model; Anthropic fallback: `claude-opus-5-5` |
+| Coordinator model | `models.coordinator` | `models.coordinator` | `--model coordinator=<id>` | `REVIEW_MODEL_MERGE` | OpenCode default or configured provider's available model; Anthropic fallback: `claude-opus-5-5` |
+| Walkthrough model | `models.walkthrough` | `models.walkthrough` | `--model walkthrough=<id>` | `REVIEW_MODEL_WALK` | OpenCode default or configured provider's available model; Anthropic fallback: `claude-sonnet-5-5` |
 | Intent draft model | `models.intent` | `models.intent` | `--model intent=<id>` | `REVIEW_MODEL_INTENT` | `anthropic/claude-haiku-5-5` when the walkthrough model is Anthropic, else the walkthrough model |
-| Provider for bare model ids | `provider` | `provider` | | `REVIEW_PROVIDER` | `anthropic` |
+| Provider for default models and bare model ids | `provider` | `provider` | | `REVIEW_PROVIDER` | Sole configured provider, else `anthropic` |
 | Effort | `effort` | `effort` | `--effort` | `REVIEW_EFFORT`, `REVIEW_EFFORT_AUX` | `medium` for built-in default models only |
 | Use the OpenCode default model | `opencode.useDefaultModel` | | | | `true` |
 | API keys by provider id | `apiKeys.<provider>` | | | | |
 | Cost limit (USD) | `maxCostUsd` | | `--max-cost` | | none |
 | Server address | `host`, `port` | | `--host`, `--port` | | `127.0.0.1:4517` |
 
-**Model lookup.** Each stage is looked up on its own. `REVIEW_*` environment variables win, then command-line options, then the per-repo settings file, then the user config, then the `model` in your global OpenCode config (`~/.config/opencode/opencode.json(c)`), then the built-in defaults. A model id without a `/` gets the provider prefix, so `claude-opus-5-5` means `anthropic/claude-opus-5-5`.
+**Model lookup.** Each stage is looked up on its own. `REVIEW_*` environment variables win, then command-line options, then the per-repo settings file, then the user config, then the `model` in your global OpenCode config (`~/.config/opencode/opencode.json(c)`). For stages still needing a default, DiffLoupe uses the sole provider with configured credentials, including a ChatGPT subscription. With a non-Anthropic provider, it selects the first available text model with tool support from that provider's OpenCode model list, without adding a reasoning variant. Subscription models come from the subscription profile's own list.
+
+Set `provider` to choose a provider when several are configured. If Anthropic is among them, its built-in defaults remain the fallback; otherwise DiffLoupe asks you to choose. Explicit model choices are preserved even when their credentials are missing. A model id without a `/` gets the selected provider prefix.
 
 **Effort** is passed to OpenCode as the model variant (`provider/model#high`), so it must be a variant the model offers. It is only added when you set it, or when the model is a built-in default. A model from your OpenCode config runs without a variant unless you set an effort. A `#variant` written in the model id always wins.
 
@@ -414,13 +416,54 @@ Every field is optional.
 
 ### Credentials
 
-Each review agent runs OpenCode with its own data directory, so DiffLoupe has to hand it a credential for every provider the chosen models use. For each provider, the first of these that exists is used:
+DiffLoupe supports API keys and ChatGPT subscriptions through OpenCode 2.x. For each provider the chosen models use, the first available credential source is used:
 
 1. The provider's environment variable, such as `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`. A `providers.<id>.env` list in your OpenCode config is honored.
 2. `apiKeys.<provider>` in `~/.config/diffloupe/config.json`. It is passed to the OpenCode processes only, not to DiffLoupe's own environment.
-3. An API key you saved with `opencode auth login`. DiffLoupe reads it with `opencode auth export` and imports it into each agent's data directory, which is deleted when the agent exits.
+3. For OpenAI, a ChatGPT subscription saved with `diffloupe auth login`.
+4. An API key you saved with `opencode auth login`. DiffLoupe reads it with `opencode auth export` and imports it into the review's temporary OpenCode profile, which is deleted after the review server exits.
 
-OAuth logins (such as a Claude or ChatGPT subscription) are not shared with the agents; use an API key for those providers. Providers that authenticate from the machine, such as Amazon Bedrock, Google Vertex, Ollama and LM Studio, are not checked. If a provider has no credential, the review stops before it starts and names the provider, the stage, and the ways to add one.
+To use your ChatGPT subscription, sign in and select a ChatGPT subscription method from OpenCode's prompts:
+
+```bash
+diffloupe auth login
+```
+
+This saves a separate login for DiffLoupe. Existing OAuth logins from your ordinary OpenCode profile are not copied; sign in again through DiffLoupe even if you already use ChatGPT in OpenCode. OpenCode manages sign-in and token refresh. Subscription reviews use OpenCode's native OpenAI provider settings; `providers.openai` overrides from your ordinary OpenCode config are not copied into subscription reviews.
+
+If ChatGPT is your only configured provider and you have no model overrides, signing in is enough: `diffloupe review` automatically uses an available OpenAI model for all four stages. `diffloupe doctor` shows the selected model and credential source.
+
+To choose particular OpenAI models instead, set your review stages in `~/.config/diffloupe/config.json`, replacing `<model-id>` with a model available to your subscription in OpenCode:
+
+```json
+{
+  "provider": "openai",
+  "models": {
+    "review": "openai/<model-id>",
+    "coordinator": "openai/<model-id>",
+    "walkthrough": "openai/<model-id>",
+    "intent": "openai/<model-id>"
+  }
+}
+```
+
+You can also inherit an OpenAI default model from your global OpenCode config, or set `"provider": "openai"` to select OpenAI's available default when several providers are configured. Environment variables and explicit stage model settings still take precedence over automatic model selection.
+
+```bash
+diffloupe auth status  # List the accounts in DiffLoupe's subscription profile
+diffloupe doctor      # Check which credential and model each stage will use
+diffloupe auth logout # Remove a DiffLoupe subscription login
+```
+
+Explicit API keys take precedence over a subscription. Unset `OPENAI_API_KEY` and remove any `apiKeys.openai` if you want subscription access instead. A DiffLoupe subscription login takes precedence over API keys saved in your ordinary OpenCode profile.
+
+Review tasks run as native OpenCode child sessions on an isolated review server. Subscription reviewers run concurrently using the same review pool as API-key reviewers; each has its own context, output file, permissions, and limits. DiffLoupe controls scheduling and cancellation, so no extra model call is needed to delegate the work. A mixed-provider review keeps API-key and subscription profiles on separate servers.
+
+Only one review server may own a subscription profile at a time. Separate DiffLoupe processes using that profile must wait for its current review server to exit; this does not serialize the reviewers inside a run. OpenCode owns the login and token refresh. OpenCode 2.1.2 has no refresh deduplication across concurrent sessions, including its built-in subagents, so this uses its native concurrency behavior rather than copying or refreshing OAuth tokens in DiffLoupe.
+
+Subscription usage has no dollar cost reported to DiffLoupe, so `--max-cost` cannot enforce a dollar limit for it; your subscription's usage limits still apply.
+
+Subscriptions for other providers, including Claude, are not supported. Providers that authenticate from the machine, such as Amazon Bedrock, Google Vertex, Ollama and LM Studio, are not checked. If a provider has no credential, the review stops before it starts and names the provider, the stage, and the ways to add one.
 
 The `diffloupe` command does not load `.env` files, so a `.env` in the repo you review cannot supply or override a key. `diffloupe doctor` shows which source each provider's credential comes from.
 

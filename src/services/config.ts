@@ -16,7 +16,7 @@ export interface DiffLoupeConfig {
    * environment.
    */
   apiKeys?: Record<string, string>;
-  /** Provider prefix for a bare model name. Default `anthropic`. */
+  /** Provider for default models and bare names; otherwise inferred from configured credentials. */
   provider?: string;
   opencode?: {
     /**

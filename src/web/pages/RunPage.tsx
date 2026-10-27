@@ -3,6 +3,7 @@ import { VirtualizerContext } from "@pierre/diffs/react";
 import { getRouteApi } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RunFile, RunFinding } from "../../types/review-run.ts";
+import { AnalysisProgress } from "../components/AnalysisProgress.tsx";
 import { CopyFallbackDialog } from "../components/CopyFallbackDialog.tsx";
 import { ChapterBand, type FileSelection, UnitSection } from "../components/GroupSection.tsx";
 import { Header } from "../components/Header.tsx";
@@ -303,7 +304,7 @@ export function RunPage() {
             </aside>
           )}
           <main className={styles.main}>
-            <SummaryBlock run={run} />
+            {run.status === "running" ? <AnalysisProgress run={run} /> : <SummaryBlock run={run} />}
             {virtualizer && (
               <VirtualizerContext.Provider value={virtualizer}>
                 {tree.chapters.map(({ chapter, units }, i) => {
@@ -371,9 +372,10 @@ const EMPTY_FINDINGS: readonly RunFinding[] = [];
 
 export function RunPageSkeleton() {
   return (
-    <div className={styles.skeleton} aria-busy="true">
-      <div className={styles.skeletonHeader} />
-      <div className={styles.skeletonBody}>
+    <div className={styles.skeleton}>
+      <p className={styles.loadingLabel} role="status">Loading review and diff…</p>
+      <div className={styles.skeletonHeader} aria-hidden />
+      <div className={styles.skeletonBody} aria-hidden>
         <div className={styles.skeletonAside} />
         <div className={styles.skeletonMain}>
           <div />

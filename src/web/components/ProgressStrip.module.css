@@ -1,5 +1,6 @@
 .strip {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 1rem;
   min-width: 0;
@@ -63,4 +64,16 @@
   margin-left: auto;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fill { transition: none; }
+}
+
+@media (max-width: 600px) {
+  .strip { gap: 0.5rem 1rem; }
+  /* Full task names and updates remain visible in the analysis panel. */
+  .active,
+  .message { display: none; }
+  .bar { width: 4rem; }
 }

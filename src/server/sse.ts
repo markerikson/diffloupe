@@ -55,7 +55,8 @@ export function streamRunEvents(c: Context, runs: RunManager, id: string): Respo
       return;
     }
 
-    const queue: StoredEvent[] = [];
+    // Preserve events buffered while the initial batch's writes were awaited.
+    const queue = buffered;
     live = (e) => {
       queue.push(e);
       wake?.();

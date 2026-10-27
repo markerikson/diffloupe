@@ -7,7 +7,8 @@
  * 3. the settings file passed to `--config`
  * 4. ~/.config/diffloupe/config.json
  * 5. the `model` in the user's global OpenCode config, unless `opencode.useDefaultModel` is false
- * 6. the built-in defaults
+ * 6. an available model from the sole configured provider
+ * 7. the built-in defaults
  *
  * The intent stage skips step 5: a small model drafts the intent, so it
  * defaults to Haiku while the walkthrough runs on an Anthropic model, and to
@@ -20,7 +21,7 @@
  */
 import type { ReviewModelStage } from "./options.ts";
 
-export type ModelSource = "env" | "cli" | "settings" | "config" | "opencode" | "default";
+export type ModelSource = "env" | "cli" | "settings" | "config" | "opencode" | "available" | "default";
 
 /** `intent` comes after `walkthrough`, whose model it falls back to. */
 export const MODEL_STAGES: ReviewModelStage[] = ["review", "coordinator", "walkthrough", "intent"];
@@ -49,6 +50,7 @@ const SOURCE_LABELS: Record<ModelSource, string> = {
   settings: "settings file",
   config: "~/.config/diffloupe/config.json",
   opencode: "OpenCode default model",
+  available: "available model from configured provider",
   default: "built-in default",
 };
 
@@ -77,6 +79,8 @@ export interface ModelInputs {
   config?: { provider?: string; models?: StageModels; effort?: string; opencode?: { useDefaultModel?: boolean } };
   /** `model` from the user's global OpenCode config. */
   openCodeModel?: string;
+  /** Fills unspecified stages after credentials identify the default provider. */
+  fallback?: { provider: string; model: string };
 }
 
 function nonEmpty(v: string | undefined): string | undefined {
@@ -113,13 +117,16 @@ export function parseModelName(name: string, provider: string): { provider: stri
   return { provider: p, id, ...(variant ? { variant } : {}) };
 }
 
-export function resolveProvider(inputs: ModelInputs): string {
+export function configuredProvider(inputs: ModelInputs): string | undefined {
   return (
     nonEmpty(inputs.env?.REVIEW_PROVIDER) ??
     nonEmpty(inputs.settings?.provider) ??
-    nonEmpty(inputs.config?.provider) ??
-    DEFAULT_PROVIDER
+    nonEmpty(inputs.config?.provider)
   );
+}
+
+export function resolveProvider(inputs: ModelInputs): string {
+  return configuredProvider(inputs) ?? inputs.fallback?.provider ?? DEFAULT_PROVIDER;
 }
 
 export function resolveModels(inputs: ModelInputs): ResolvedModels {
@@ -138,6 +145,9 @@ export function resolveModels(inputs: ModelInputs): ResolvedModels {
       ["config", inputs.config?.models?.[stage]],
     ];
     if (stage !== "intent") candidates.push(["opencode", openCodeModel]);
+    // Intent follows the chosen walkthrough below, including its provider's
+    // available model. Explicit stage choices always keep their precedence.
+    if (stage !== "intent") candidates.push(["available", inputs.fallback?.model]);
     let source: ModelSource = "default";
     let name = BUILTIN_MODELS[stage];
     let picked = false;

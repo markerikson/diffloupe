@@ -6,10 +6,12 @@
  * 1. an environment variable OpenCode reads for that provider, inherited by the child
  * 2. `apiKeys.<provider>` in ~/.config/diffloupe/config.json, set as that
  *    provider's environment variable on the child only
- * 3. an API key saved with `opencode auth login`, read with `opencode auth export`
- *    and imported into each call's private data directory
+ * 3. the dedicated ChatGPT profile created by `diffloupe auth login`
+ * 4. an API key saved with `opencode auth login`, read with `opencode auth export`
+ *    and imported into the review's temporary OpenCode profile
  *
- * OAuth logins are not copied. Providers that authenticate from the machine
+ * OAuth logins are never copied: OpenCode refreshes them in the persistent
+ * subscription profile. Providers that authenticate from the machine
  * (Bedrock, Vertex, local servers) are not checked.
  */
 import { run } from "./core/lib/proc.ts";
@@ -52,7 +54,7 @@ export interface SavedCredential {
   value: { type: string; key?: string; [field: string]: unknown };
 }
 
-export type CredentialSource = "env" | "config" | "opencode" | "providers" | "ambient" | "none";
+export type CredentialSource = "env" | "config" | "subscription" | "opencode" | "providers" | "ambient" | "none";
 
 export interface ProviderCoverage {
   provider: string;
@@ -65,8 +67,10 @@ export interface ProviderCoverage {
 export interface CredentialPlan {
   /** Added to the environment of every OpenCode child. */
   childEnv: Record<string, string>;
-  /** Imported into every call's data directory before OpenCode starts. */
+  /** Imported into the temporary API-key profile before the review server starts. */
   imports: SavedCredential[];
+  /** Persistent OpenCode profile; no subscription tokens are passed to workers. */
+  subscriptionHome?: string;
   coverage: ProviderCoverage[];
   warnings: string[];
   /** One per provider with no credential; preflight fails on any. */
@@ -81,6 +85,10 @@ export interface CredentialInputs {
   userProviders?: Record<string, unknown>;
   /** `opencode auth export`; undefined when it was not read or failed. */
   saved?: SavedCredential[];
+  /** The dedicated profile has an active OpenAI OAuth login. */
+  subscriptionHome?: string;
+  /** Fail closed if an existing profile could not be checked. */
+  subscriptionError?: string;
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -110,9 +118,25 @@ export function needsSavedCredentials(inputs: Omit<CredentialInputs, "saved">): 
     if (AMBIENT_PROVIDERS.has(provider)) continue;
     if (envNamesFor(provider, inputs.userProviders).some((n) => inputs.env[n])) continue;
     if (inputs.apiKeys?.[provider]) continue;
+    if (provider === "openai" && (inputs.subscriptionHome || inputs.subscriptionError)) continue;
     return true;
   }
   return false;
+}
+
+/** Providers with usable credentials, not every provider OpenCode can list. */
+export function configuredProviders(inputs: Omit<CredentialInputs, "providers">): string[] {
+  const candidates = new Set([
+    ...Object.keys(PROVIDER_ENV),
+    ...Object.keys(inputs.apiKeys ?? {}),
+    ...Object.keys(inputs.userProviders ?? {}),
+    ...(inputs.saved ?? []).map((credential) => credential.integrationID),
+  ]);
+  const plan = planCredentials({
+    ...inputs,
+    providers: new Map([...candidates].map((provider) => [provider, []])),
+  });
+  return plan.coverage.filter((entry) => entry.source !== "none").map((entry) => entry.provider);
 }
 
 function missingMessage(provider: string, stages: ReviewModelStage[], envNames: string[]): string {
@@ -120,7 +144,8 @@ function missingMessage(provider: string, stages: ReviewModelStage[], envNames: 
   const envHint = envNames[0] ? `set ${envNames[0]}, ` : "";
   return (
     `No credential for provider \`${provider}\` (used by ${used}). ` +
-    `Run \`opencode auth login ${provider}\`, ${envHint}or add apiKeys.${provider} to ~/.config/diffloupe/config.json.`
+    (provider === "openai" ? "Run `diffloupe auth login` for ChatGPT, " : `Run \`opencode auth login ${provider}\`, `) +
+    `${envHint}or add apiKeys.${provider} to ~/.config/diffloupe/config.json.`
   );
 }
 
@@ -155,6 +180,20 @@ export function planCredentials(inputs: CredentialInputs): CredentialPlan {
       continue;
     }
 
+    if (provider === "openai" && inputs.subscriptionError) {
+      cover("none", "");
+      plan.errors.push(inputs.subscriptionError);
+      continue;
+    }
+    if (provider === "openai" && inputs.subscriptionHome) {
+      plan.subscriptionHome = inputs.subscriptionHome;
+      cover("subscription", "ChatGPT login from diffloupe auth login");
+      plan.warnings.push(
+        "ChatGPT subscription cost is not reported, so --max-cost cannot limit that usage.",
+      );
+      continue;
+    }
+
     const saved = (inputs.saved ?? []).filter((c) => c.integrationID === provider);
     const keys = saved.filter((c) => c.value?.type === "key" && typeof c.value.key === "string");
     if (keys.length) {
@@ -166,8 +205,10 @@ export function planCredentials(inputs: CredentialInputs): CredentialPlan {
     const hasOAuth = saved.length > 0;
     if (hasOAuth) {
       plan.warnings.push(
-        `OpenCode has a ${provider} login that is not an API key; DiffLoupe does not copy those. ` +
-          `Set ${envNames[0] ?? "an API key"} or add apiKeys.${provider} to ~/.config/diffloupe/config.json.`,
+        provider === "openai"
+          ? "OpenCode has a ChatGPT login. Run `diffloupe auth login` to sign in to DiffLoupe's separate subscription profile; rotating OAuth credentials are not copied."
+          : `OpenCode has a ${provider} login that is not an API key; DiffLoupe does not copy those. ` +
+            `Set ${envNames[0] ?? "an API key"} or add apiKeys.${provider} to ~/.config/diffloupe/config.json.`,
       );
     }
 

@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
+import { SSEStreamingApi } from "hono/streaming";
 import { createApp } from "./index.ts";
 import { FakeDriver, fakeContext, useTempDataDir } from "./test-helpers.ts";
 
@@ -102,6 +103,69 @@ describe("GET /api/runs/:id/events", () => {
     const ids = (await reading).filter((m) => m.id).map((m) => Number(m.id));
     expect(ids).toEqual(Array.from({ length: 101 }, (_, i) => i + 1));
   });
+
+  test("events emitted while draining the replay buffer are not lost", async () => {
+    const { driver, ctx, app } = setup();
+    const { id, done } = await ctx.runs.start({});
+    driver.emit({ type: "log", message: "stored before connecting" });
+
+    const writeSSE = SSEStreamingApi.prototype.writeSSE;
+    const writing = spyOn(SSEStreamingApi.prototype, "writeSSE").mockImplementation(
+      async function (this: SSEStreamingApi, message) {
+        // The file snapshot is already read: this event can only reach the buffer.
+        if (message.id === "1") driver.emit({ type: "log", message: "during replay" });
+        // This arrives after the buffer's first batch has been taken for writing.
+        if (message.id === "2") driver.emit({ type: "log", message: "during buffer drain" });
+        await writeSSE.call(this, message);
+        if (message.id === "2") {
+          // Finishing persists the run asynchronously, allowing the handoff to complete.
+          driver.finish({ ...ctx.runs.pendingRun(id)!, status: "complete" });
+        }
+      },
+    );
+
+    try {
+      const msgs = await readAll(await app.request(`/api/runs/${id}/events`));
+      await done;
+      expect(msgs.map((m) => m.id)).toEqual(["1", "2", "3", "4", undefined]);
+      expect(msgs.map((m) => m.event)).toEqual(["log", "log", "log", "done", "end"]);
+    } finally {
+      writing.mockRestore();
+    }
+  });
+
+  test.each(["done", "cancelled", "error"] as const)(
+    "delivers %s emitted during the buffer drain before ending",
+    async (terminal) => {
+      const { driver, ctx, app } = setup();
+      const { id, done } = await ctx.runs.start({});
+      driver.emit({ type: "log", message: "stored before connecting" });
+
+      const writeSSE = SSEStreamingApi.prototype.writeSSE;
+      const writing = spyOn(SSEStreamingApi.prototype, "writeSSE").mockImplementation(
+        async function (this: SSEStreamingApi, message) {
+          if (message.id === "1") driver.emit({ type: "log", message: "during replay" });
+          if (message.id === "2") {
+            driver.emit({ type: "log", message: "before the terminal event" });
+            if (terminal === "done") driver.finish({ ...ctx.runs.pendingRun(id)!, status: "complete" });
+            else if (terminal === "cancelled") void ctx.runs.cancel(id);
+            else driver.fail("test failure");
+            // Keep the buffered write pending until the terminal event is also buffered.
+            await done;
+          }
+          await writeSSE.call(this, message);
+        },
+      );
+
+      try {
+        const msgs = await readAll(await app.request(`/api/runs/${id}/events`));
+        expect(msgs.map((m) => m.id)).toEqual(["1", "2", "3", "4", undefined]);
+        expect(msgs.map((m) => m.event)).toEqual(["log", "log", "log", terminal, "end"]);
+      } finally {
+        writing.mockRestore();
+      }
+    },
+  );
 
   test("404 for an unknown run", async () => {
     const { app } = setup();

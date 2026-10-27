@@ -67,13 +67,57 @@ describe("planCredentials", () => {
     expect(plan.coverage[0]?.source).toBe("opencode");
   });
 
-  test("OAuth logins are skipped with a warning and fail preflight", () => {
+  test("an ordinary OpenCode OAuth login directs the user to a separate subscription login", () => {
     const plan = planCredentials({ providers: providers([["openai", ["walkthrough"]]]), env: {}, saved });
     expect(plan.imports).toEqual([]);
-    expect(plan.warnings.join("\n")).toMatch(/openai login that is not an API key/);
+    expect(plan.warnings.join("\n")).toMatch(/diffloupe auth login/);
     expect(plan.errors).toEqual([
-      "No credential for provider `openai` (used by models.walkthrough). Run `opencode auth login openai`, set OPENAI_API_KEY, or add apiKeys.openai to ~/.config/diffloupe/config.json.",
+      "No credential for provider `openai` (used by models.walkthrough). Run `diffloupe auth login` for ChatGPT, set OPENAI_API_KEY, or add apiKeys.openai to ~/.config/diffloupe/config.json.",
     ]);
+  });
+
+  test("a dedicated subscription covers OpenAI without copying tokens or using a saved API key", () => {
+    const plan = planCredentials({
+      providers: providers([["openai", ["review", "walkthrough"]], ["anthropic", ["intent"]]]),
+      env: {}, subscriptionHome: "/private/chatgpt",
+      saved: [...saved, { id: "paid", integrationID: "openai", active: true, value: { type: "key", key: "paid-key" } }],
+    });
+    expect(plan.errors).toEqual([]);
+    expect(plan.subscriptionHome).toBe("/private/chatgpt");
+    expect(plan.coverage[0]).toMatchObject({ provider: "openai", source: "subscription" });
+    expect(plan.imports.map((c) => c.id)).toEqual(["cred_1"]);
+    expect(plan.childEnv).toEqual({});
+    expect(plan.warnings.join(" ")).toContain("--max-cost");
+  });
+
+  test("an explicit environment key takes precedence over the subscription", () => {
+    const plan = planCredentials({
+      providers: providers([["openai", ["review"]]]), env: { OPENAI_API_KEY: "key" },
+      subscriptionHome: "/private/chatgpt", saved,
+    });
+    expect(plan.subscriptionHome).toBeUndefined();
+    expect(plan.coverage[0]?.source).toBe("env");
+    expect(plan.imports).toEqual([]);
+  });
+
+  test("an explicit configured key takes precedence over the subscription", () => {
+    const plan = planCredentials({
+      providers: providers([["openai", ["review"]]]), env: {}, apiKeys: { openai: "key" },
+      subscriptionHome: "/private/chatgpt", saved,
+    });
+    expect(plan.subscriptionHome).toBeUndefined();
+    expect(plan.childEnv).toEqual({ OPENAI_API_KEY: "key" });
+    expect(plan.coverage[0]?.source).toBe("config");
+  });
+
+  test("a subscription is not used for unrelated providers or their OAuth logins", () => {
+    const plan = planCredentials({
+      providers: providers([["anthropic", ["review"]]]), env: {}, subscriptionHome: "/private/chatgpt",
+      saved: [{ id: "claude", integrationID: "anthropic", value: { type: "oauth", access: "test" } }],
+    });
+    expect(plan.subscriptionHome).toBeUndefined();
+    expect(plan.imports).toEqual([]);
+    expect(plan.errors).toHaveLength(1);
   });
 
   test("a missing credential for a known provider names it", () => {

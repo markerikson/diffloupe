@@ -1,10 +1,9 @@
-
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import * as governorModule from "./governor.ts";
-import governor, { helpers, type GovernorContext, type ToolBefore } from "./governor.ts";
+import governor, { helpers, type GovernorContext, type GovernorSessionConfig, type ToolBefore } from "./governor.ts";
 
 const { checkShellCommand } = helpers;
 
@@ -27,41 +26,61 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
  * hooks are captured so the tests can call them the way OpenCode would, and
  * events are fed through a queue the governor subscribes to.
  */
-const fakeContext = (toolIds: () => string[] = () => []) => {
+const fakeContext = (
+  toolIds: () => string[] | Promise<string[]> = () => [],
+  getSession: GovernorContext["session"]["get"] = async () => ({ data: {} }),
+) => {
   const hooks = new Map<string, Handler>();
   const interrupted: string[] = [];
+  const interruptions: { sessionID: string; resume: false }[] = [];
+  const disposed: string[] = [];
+  let subscribedSignal: AbortSignal | undefined;
+  const hookRegistration = (name: string, fn: Handler) => {
+    hooks.set(name, fn);
+    return Promise.resolve({
+      async dispose() {
+        disposed.push(name);
+        hooks.delete(name);
+      },
+    });
+  };
   const queue: { type: string; data: unknown }[] = [];
   let wake: (() => void) | undefined;
   const ctx: GovernorContext = {
     event: {
-      subscribe: ({ signal }) => ({
-        async *[Symbol.asyncIterator]() {
-          while (!signal.aborted) {
-            const next = queue.shift();
-            if (next) {
-              yield next;
-              continue;
+      subscribe: ({ signal }) => {
+        subscribedSignal = signal;
+        return {
+          async *[Symbol.asyncIterator]() {
+            while (!signal.aborted) {
+              const next = queue.shift();
+              if (next) {
+                yield next;
+                continue;
+              }
+              await new Promise<void>((resolve) => {
+                const done = () => {
+                  signal.removeEventListener("abort", done);
+                  resolve();
+                };
+                wake = done;
+                signal.addEventListener("abort", done, { once: true });
+              });
             }
-            await new Promise<void>((resolve) => {
-              wake = resolve;
-              signal.addEventListener("abort", () => resolve(), { once: true });
-            });
-          }
-        },
-      }),
+          },
+        };
+      },
     },
     tool: {
-      hook: (name: string, fn: Handler) => {
-        hooks.set(`tool.${name}`, fn);
-      },
-      list: async () => toolIds().map((id) => ({ id })),
+      hook: (name: string, fn: Handler) => hookRegistration(`tool.${name}`, fn),
+      list: async () => (await toolIds()).map((id) => ({ id })),
     },
     session: {
-      hook: (name: string, fn: Handler) => {
-        hooks.set(`session.${name}`, fn);
-      },
-      async interrupt({ sessionID }) {
-        interrupted.push(sessionID);
+      hook: (name: string, fn: Handler) => hookRegistration(`session.${name}`, fn),
+      get: getSession,
+      async interrupt(input) {
+        interrupted.push(input.sessionID);
+        interruptions.push(input);
       },
     },
   } as GovernorContext;
@@ -71,7 +90,7 @@ const fakeContext = (toolIds: () => string[] = () => []) => {
     await flush();
   };
   const hook = (name: string) => hooks.get(name) as (e: unknown) => unknown;
-  return { ctx, hooks, hook, emit, interrupted };
+  return { ctx, hooks, hook, emit, interrupted, interruptions, disposed, get subscribedSignal() { return subscribedSignal; } };
 };
 
 const setup = async (
@@ -94,6 +113,7 @@ const setup = async (
   process.env.REVIEW_GOVERNOR_USAGE_FILE = opts.usageFile ?? "";
   process.env.REVIEW_GOVERNOR_WAIT_FOR_TOOLS = opts.waitFor ?? "";
   delete process.env.REVIEW_GOVERNOR_LOG;
+  delete process.env.REVIEW_GOVERNOR_SESSIONS;
   const fake = fakeContext();
   const cleanup = await governor.setup(fake.ctx);
   process.env = env;
@@ -159,6 +179,365 @@ const deliveredFile = () => {
   return p;
 };
 
+const sessionFixture = (tag: string, overrides: Partial<GovernorSessionConfig> = {}): GovernorSessionConfig => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "gov-session-"));
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
+  return {
+    version: 1,
+    runID: "run-1",
+    tag,
+    startedAt: 1_000_000,
+    budgetUsd: 10,
+    deadlineMs: 0,
+    maxSteps: 80,
+    outFile: path.join(dir, "findings.json"),
+    usageFile: path.join(dir, "usage.json"),
+    logFile: path.join(dir, "governor.jsonl"),
+    system: `Stable system for ${tag}`,
+    tools: "repo",
+    waitForTools: "",
+    expectTools: [],
+    ...overrides,
+  };
+};
+
+const setupShared = async (
+  configs: Record<string, unknown>,
+  options: {
+    toolIds?: () => string[] | Promise<string[]>;
+    getSession?: GovernorContext["session"]["get"];
+  } = {},
+) => {
+  let clock = 1_000_000;
+  Date.now = () => clock;
+  const getSession = vi.fn(options.getSession ?? (async ({ sessionID }: { sessionID: string }) => ({
+    metadata: { diffloupe: configs[sessionID] },
+  })));
+  const fake = fakeContext(options.toolIds, getSession);
+  const env = { ...process.env };
+  process.env.REVIEW_GOVERNOR_SESSIONS = "1";
+  let cleanup: Awaited<ReturnType<typeof governor.setup>>;
+  try {
+    cleanup = await governor.setup(fake.ctx);
+  } finally {
+    process.env = env;
+  }
+  onTestFinished(() => cleanup());
+  const before = async (sessionID: string, tool: string, input: unknown = {}, id = "call-1") =>
+    fake.hook("tool.execute.before")({ sessionID, tool, input, id });
+  const after = async (sessionID: string, tool = "tilth_tilth_read", input: unknown = {}, id = "call-1") => {
+    const call = { sessionID, tool, input, id, status: "completed", result: { content: "TOOL RESULT" } };
+    await fake.hook("tool.execute.after")(call);
+    return call.result.content;
+  };
+  return { ...fake, getSession, cleanup, before, after, advance: (ms: number) => { clock += ms; } };
+};
+
+describe("shared session governor", () => {
+  it("isolates interleaved billing, final steps, budget exhaustion, and interrupts", async () => {
+    const a = sessionFixture("A", { budgetUsd: 1 });
+    const b = sessionFixture("B", { budgetUsd: 10 });
+    const g = await setupShared({ a, b });
+    await g.hook("session.prompt")({ sessionID: "a" });
+    await g.hook("session.prompt")({ sessionID: "b" });
+    await g.emit("session.step.ended", {
+      sessionID: "a", cost: 0.8, tokens: { input: 10, output: 1, cache: { read: 900, write: 40 } },
+    });
+    await g.emit("session.step.ended", { sessionID: "b", cost: 0.2, tokens: { input: 20, output: 2 } });
+    expect(await g.after("a")).toContain("WRAP UP");
+    expect(await g.after("b")).toBe("TOOL RESULT");
+    await g.emit("session.step.failed", { sessionID: "a", cost: 0.3, tokens: { input: 5, output: 3 } });
+    await expect(g.before("a", "tilth_tilth_read")).rejects.toThrow("Budget exhausted: $1.10 of $1.00");
+    await g.before("b", "tilth_tilth_read");
+    await g.before("a", "write", { filePath: a.outFile });
+    // A final text-only step is billed even though it performs no tool call.
+    await g.emit("session.step.ended", { sessionID: "b", cost: 0.4, tokens: { output: 8 } });
+    await g.emit("session.step.failed", { sessionID: "b" });
+    await g.emit("session.usage.updated", { sessionID: "a", cost: 100 });
+    await g.emit("session.step.ended", { sessionID: "parent", cost: 100 });
+    await g.emit("session.step.ended", { cost: 100 });
+    // A sibling's output does not protect A from its own abort threshold.
+    writeFileSync(b.outFile, "{}");
+    await g.emit("session.step.ended", { sessionID: "a", cost: 1, tokens: { output: 4, reasoning: 2 } });
+    expect(g.interruptions).toEqual([{ sessionID: "a", resume: false }]);
+    await g.before("b", "tilth_tilth_read");
+    expect(JSON.parse(readFileSync(a.usageFile, "utf8"))).toEqual({
+      costUsd: 2.1,
+      numTurns: 3,
+      usage: {
+        input_tokens: 15, output_tokens: 8, reasoning_tokens: 2,
+        cache_read_input_tokens: 900, cache_creation_input_tokens: 40,
+        first_step: { input_tokens: 10, cache_read_input_tokens: 900, cache_creation_input_tokens: 40 },
+      },
+    });
+    const usageB = JSON.parse(readFileSync(b.usageFile, "utf8"));
+    expect(usageB.costUsd).toBeCloseTo(0.6);
+    expect(usageB).toMatchObject({
+      numTurns: 2,
+      usage: { input_tokens: 20, output_tokens: 10, first_step: { input_tokens: 20 } },
+    });
+    const linesA = readFileSync(a.logFile, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    const linesB = readFileSync(b.logFile, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    expect(linesA.every((line) => line.sessionID === "a")).toBe(true);
+    expect(linesB.every((line) => line.sessionID === "b")).toBe(true);
+    expect(linesA.some((line) => line.event === "abort")).toBe(true);
+    expect(linesB.some((line) => line.event === "abort")).toBe(false);
+  });
+
+  it("uses each session's start time and deadline and preserves its stable system prefix", async () => {
+    const a = sessionFixture("A", { startedAt: 998_800, deadlineMs: 1_000 });
+    const b = sessionFixture("B", { startedAt: 999_900, deadlineMs: 2_000 });
+    const g = await setupShared({ a, b });
+    const contextA = { sessionID: "a", system: [{ type: "text", text: "Native defaults" }], messages: [] };
+    const contextB = { sessionID: "b", system: [{ type: "text", text: "Native defaults" }], messages: [] };
+    await Promise.all([g.hook("session.context")(contextA), g.hook("session.context")(contextB)]);
+    expect(contextA.system).toEqual([{ type: "text", text: a.system }]);
+    expect(contextB.system).toEqual([{ type: "text", text: b.system }]);
+    await expect(g.before("a", "read")).rejects.toThrow("Time limit reached: 1s of 1s");
+    await g.before("b", "read");
+    g.advance(1_000);
+    await g.emit("session.step.ended", { sessionID: "b", cost: 0.01 });
+    expect(g.interrupted).toEqual([]);
+    await g.emit("session.step.ended", { sessionID: "a", cost: 0.01 });
+    expect(g.interrupted).toEqual(["a"]);
+    await g.hook("session.context")(contextA);
+    expect(contextA.system).toEqual([{ type: "text", text: a.system }]);
+    expect(contextB.system).toEqual([{ type: "text", text: b.system }]);
+  });
+
+  it("refuses another session's output and keeps the owning write reachable", async () => {
+    const a = sessionFixture("A");
+    const b = sessionFixture("B");
+    const g = await setupShared({ a, b });
+    await expect(g.before("a", "write", { filePath: b.outFile })).rejects.toThrow(a.outFile);
+    await expect(g.before("a", "write", { path: a.outFile, filePath: b.outFile })).rejects.toThrow(a.outFile);
+    await expect(g.before("b", "edit", { path: a.outFile })).rejects.toThrow(b.outFile);
+    await expect(g.before("a", "apply_patch", { patchText: b.outFile })).rejects.toThrow("not available");
+    await g.before("a", "write", { path: a.outFile });
+    await g.before("b", "write", { filePath: b.outFile });
+    await g.emit("session.step.ended", { sessionID: "a", cost: 11 });
+    await expect(g.before("a", "write", { path: b.outFile })).rejects.toThrow(a.outFile);
+    await g.before("a", "write", { filePath: a.outFile });
+  });
+
+  it("blocks repo, MCP, and delegation tools for a no-tools session, retaining only its exact write", async () => {
+    const a = sessionFixture("A", { tools: "none", waitForTools: "tilth_" });
+    const b = sessionFixture("B");
+    const toolIds = vi.fn(() => []);
+    const g = await setupShared({ a, b }, { toolIds });
+    await g.hook("session.prompt")({ sessionID: "a" });
+    expect(toolIds).not.toHaveBeenCalled();
+    const context = {
+      sessionID: "a", messages: [], system: [],
+      tools: { write: { description: "write output" }, read: {}, shell: {}, tilth_tilth_read: {}, task: {} },
+    };
+    await g.hook("session.context")(context);
+    expect(Object.keys(context.tools)).toEqual(["write"]);
+    for (const tool of ["shell", "bash", "read", "grep", "glob", "edit", "multiedit", "apply_patch", "tilth_tilth_read", "task", "unknown_mcp"]) {
+      await expect(g.before("a", tool, { path: a.outFile })).rejects.toThrow("Only writing your output file is permitted");
+    }
+    await expect(g.before("a", "write", { filePath: b.outFile })).rejects.toThrow(a.outFile);
+    await expect(g.before("a", "write")).rejects.toThrow(a.outFile);
+    await g.before("a", "write", { filePath: a.outFile });
+    await g.before("b", "tilth_tilth_read");
+  });
+
+  it("initializes concurrent hooks and billing once without resetting counters or accepting metadata changes", async () => {
+    const a = sessionFixture("A", { budgetUsd: 1 });
+    let release!: () => void;
+    const ready = new Promise<void>((resolve) => { release = resolve; });
+    const g = await setupShared({ a }, { getSession: async () => {
+      await ready;
+      return { data: { metadata: { diffloupe: a } } };
+    } });
+    const prompt = g.hook("session.prompt")({ sessionID: "a" });
+    const context = { sessionID: "a", messages: [], system: [{ type: "text", text: "Native defaults" }] };
+    const request = g.hook("session.context")(context);
+    const tool = g.before("a", "tilth_tilth_read");
+    await g.emit("session.step.ended", { sessionID: "a", cost: 0.8 });
+    expect(g.getSession).toHaveBeenCalledTimes(1);
+    release();
+    await Promise.all([prompt, request, tool]);
+    await flush();
+    expect(await g.after("a")).toContain("WRAP UP");
+    a.budgetUsd = 100;
+    a.system = "Changed metadata";
+    await g.hook("session.prompt")({ sessionID: "a" });
+    await g.hook("session.context")(context);
+    await g.emit("session.step.ended", { sessionID: "a", cost: 0.3 });
+    await expect(g.before("a", "read")).rejects.toThrow("Budget exhausted: $1.10 of $1.00");
+    expect(context.system).toEqual([{ type: "text", text: "Stable system for A" }]);
+    expect(JSON.parse(readFileSync(a.usageFile, "utf8")).numTurns).toBe(2);
+    expect(g.getSession).toHaveBeenCalledTimes(1);
+    expect(readFileSync(a.logFile, "utf8").split('"event":"setup"')).toHaveLength(2);
+  });
+
+  it("makes concurrent prompts join readiness, while another session can prompt independently", async () => {
+    const a = sessionFixture("A", { waitForTools: "tilth_", expectTools: ["tilth_tilth_read"] });
+    const b = sessionFixture("B");
+    let release!: (ids: string[]) => void;
+    const ready = new Promise<string[]>((resolve) => { release = resolve; });
+    const toolIds = vi.fn(() => ready);
+    const g = await setupShared({ a, b }, { toolIds });
+    const finished: string[] = [];
+    const first = Promise.resolve(g.hook("session.prompt")({ sessionID: "a" })).then(() => { finished.push("first"); });
+    const second = Promise.resolve(g.hook("session.prompt")({ sessionID: "a" })).then(() => { finished.push("second"); });
+    await g.hook("session.prompt")({ sessionID: "b" });
+    expect(finished).toEqual([]);
+    expect(toolIds).toHaveBeenCalledTimes(1);
+    release(["tilth_tilth_read"]);
+    await Promise.all([first, second]);
+    expect(finished.sort()).toEqual(["first", "second"]);
+    await g.hook("session.prompt")({ sessionID: "a" });
+    expect(toolIds).toHaveBeenCalledTimes(1);
+    expect(readFileSync(a.logFile, "utf8")).toContain('"event":"tools-ready"');
+    expect(readFileSync(b.logFile, "utf8")).not.toContain('"event":"tools-ready"');
+  });
+
+  it("isolates warning ladders, step reserves, and timing even when tool call IDs collide", async () => {
+    const a = sessionFixture("A", { maxSteps: 7 });
+    const b = sessionFixture("B", { maxSteps: 80 });
+    const g = await setupShared({ a, b });
+    await g.before("a", "tilth_tilth_read");
+    g.advance(10);
+    await g.before("b", "tilth_tilth_read");
+    g.advance(20);
+    await g.after("a");
+    g.advance(5);
+    await g.after("b");
+    const logA = readFileSync(a.logFile, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    const logB = readFileSync(b.logFile, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    expect(logA.find((line) => line.event === "tool-done").ms).toBe(30);
+    expect(logB.find((line) => line.event === "tool-done").ms).toBe(25);
+    for (let i = 0; i < 3; i++) await g.before("a", "grep");
+    await expect(g.before("a", "grep")).rejects.toThrow("tilth_tilth_search");
+    await g.before("b", "grep");
+    expect(await g.after("b", "grep")).toContain("tool tip 1/3");
+    await g.emit("session.step.ended", { sessionID: "a", cost: 0.001 });
+    await g.emit("session.step.ended", { sessionID: "b", cost: 0.001 });
+    await g.emit("session.step.ended", { sessionID: "a", cost: 0.001 });
+    await expect(g.before("a", "tilth_tilth_read")).rejects.toThrow("Step limit reached: 2 of 2 steps");
+    await g.before("b", "tilth_tilth_read");
+  });
+
+  it("fails closed on unregistered, malformed, and missing identities without charging a reviewer", async () => {
+    const a = sessionFixture("A");
+    const bad = sessionFixture("malformed", { budgetUsd: Number.NaN });
+    const g = await setupShared({ a, bad });
+    await expect(Promise.resolve(g.hook("session.prompt")({ sessionID: "parent" }))).rejects.toThrow("metadata.diffloupe");
+    await expect(Promise.resolve(g.hook("session.context")({ sessionID: "bad", messages: [], system: [] }))).rejects.toThrow("metadata.diffloupe");
+    await expect(g.before("parent", "write", { path: a.outFile })).rejects.toThrow("metadata.diffloupe");
+    await expect(g.before("bad", "write", { path: bad.outFile })).rejects.toThrow("metadata.diffloupe");
+    await expect(Promise.resolve(g.hook("tool.execute.before")({ tool: "write", input: { path: a.outFile } }))).rejects.toThrow("missing sessionID");
+    await g.emit("session.step.ended", { sessionID: "parent", cost: 99 });
+    await g.emit("session.step.ended", { sessionID: "bad", cost: 99 });
+    expect(existsSync(bad.logFile)).toBe(false);
+    expect(existsSync(bad.usageFile)).toBe(false);
+    expect(existsSync(a.usageFile)).toBe(false);
+    await g.emit("session.step.ended", { sessionID: "a", cost: 0.1 });
+    expect(JSON.parse(readFileSync(a.usageFile, "utf8")).costUsd).toBe(0.1);
+    expect(g.interrupted).toEqual([]);
+  });
+
+  it("validates every permission, limit, and artifact field before allowing a write", async () => {
+    const a = sessionFixture("A");
+    const invalid: unknown[] = [
+      undefined, null, [], {}, { ...a, version: 2 }, { ...a, runID: "" }, { ...a, tag: "" },
+      { ...a, startedAt: -1 }, { ...a, budgetUsd: "1" }, { ...a, deadlineMs: Infinity },
+      { ...a, maxSteps: 1.5 }, { ...a, outFile: "" }, { ...a, usageFile: "" },
+      { ...a, logFile: "" }, { ...a, system: "" }, { ...a, tools: "all" },
+      { ...a, waitForTools: null }, { ...a, expectTools: [1] },
+    ];
+    const g = await setupShared(Object.fromEntries(invalid.map((config, i) => [String(i), config])));
+    for (let i = 0; i < invalid.length; i++) {
+      await expect(g.before(String(i), "write", { path: a.outFile })).rejects.toThrow("metadata.diffloupe");
+    }
+    expect(existsSync(a.logFile)).toBe(false);
+    expect(existsSync(a.usageFile)).toBe(false);
+    expect(g.interrupted).toEqual([]);
+  });
+
+  it("accounts for failed-step tokens even when no dollar cost is reported", async () => {
+    const a = sessionFixture("A");
+    const g = await setupShared({ a });
+    await g.emit("session.step.failed", { sessionID: "a", tokens: { input: 10, output: 2 } });
+    expect(JSON.parse(readFileSync(a.usageFile, "utf8"))).toMatchObject({
+      costUsd: 0, numTurns: 1, usage: { input_tokens: 10, output_tokens: 2 },
+    });
+  });
+
+  it("continues billing B while A's interrupt is pending, preserving A's final-step order", async () => {
+    const a = sessionFixture("A", { budgetUsd: 1 });
+    const b = sessionFixture("B", { budgetUsd: 1 });
+    const g = await setupShared({ a, b });
+    let release!: () => void;
+    const interrupted = new Promise<void>((resolve) => { release = resolve; });
+    const interrupt = g.ctx.session.interrupt;
+    g.ctx.session.interrupt = async (input) => {
+      await interrupt(input);
+      await interrupted;
+    };
+    await g.emit("session.step.ended", { sessionID: "a", cost: 2.1 });
+    await g.emit("session.step.ended", { sessionID: "a", cost: 0.2 });
+    await g.emit("session.step.ended", { sessionID: "b", cost: 1.2 });
+    await expect(g.before("b", "tilth_tilth_read")).rejects.toThrow("Budget exhausted: $1.20 of $1.00");
+    expect(g.interruptions).toEqual([{ sessionID: "a", resume: false }]);
+    expect(JSON.parse(readFileSync(b.usageFile, "utf8")).costUsd).toBe(1.2);
+    expect(JSON.parse(readFileSync(a.usageFile, "utf8")).numTurns).toBe(1);
+    release();
+    await flush();
+    expect(JSON.parse(readFileSync(a.usageFile, "utf8")).numTurns).toBe(2);
+  });
+
+  it("continues billing B while another session's metadata lookup is pending", async () => {
+    const a = sessionFixture("A");
+    const b = sessionFixture("B", { budgetUsd: 1 });
+    let release!: () => void;
+    const ready = new Promise<void>((resolve) => { release = resolve; });
+    const g = await setupShared({ a, b }, { getSession: async ({ sessionID }) => {
+      if (sessionID === "a") await ready;
+      return { metadata: { diffloupe: sessionID === "a" ? a : b } };
+    } });
+    await g.emit("session.step.ended", { sessionID: "a", cost: 0.5 });
+    await g.emit("session.step.ended", { sessionID: "b", cost: 1.2 });
+    await expect(g.before("b", "tilth_tilth_read")).rejects.toThrow("Budget exhausted");
+    expect(existsSync(a.usageFile)).toBe(false);
+    release();
+    await flush();
+    expect(JSON.parse(readFileSync(a.usageFile, "utf8")).costUsd).toBe(0.5);
+  });
+
+  it("releases prompts on disposal even when tool discovery never responds", async () => {
+    const a = sessionFixture("A", { waitForTools: "tilth_" });
+    const toolIds = vi.fn(() => new Promise<string[]>(() => {}));
+    const g = await setupShared({ a }, { toolIds });
+    const prompt = g.hook("session.prompt")({ sessionID: "a" });
+    await flush();
+    expect(toolIds).toHaveBeenCalledTimes(1);
+    await g.cleanup();
+    await prompt;
+    expect(readFileSync(a.logFile, "utf8")).not.toContain('"event":"tools-ready"');
+    expect(g.disposed).toHaveLength(4);
+  });
+
+  it("disposes native hook registrations, aborts subscriptions, and ends pending readiness waits", async () => {
+    const a = sessionFixture("A", { waitForTools: "tilth_" });
+    const g = await setupShared({ a });
+    const pending = g.hook("session.prompt")({ sessionID: "a" });
+    await flush();
+    await g.cleanup();
+    await pending;
+    expect(g.subscribedSignal?.aborted).toBe(true);
+    expect(g.hooks.size).toBe(0);
+    expect(g.disposed.sort()).toEqual(["session.context", "session.prompt", "tool.execute.after", "tool.execute.before"]);
+    await g.emit("session.step.ended", { sessionID: "a", cost: 100 });
+    expect(existsSync(a.usageFile)).toBe(false);
+    expect(g.interrupted).toEqual([]);
+    await g.cleanup();
+    expect(g.disposed).toHaveLength(4);
+  });
+});
+
 describe("opencode spend governor", () => {
   it("does nothing at all without a budget, so an unconfigured run is not throttled", async () => {
     const g = await setup({ budget: 0 });
@@ -192,10 +571,12 @@ describe("opencode spend governor", () => {
   it("appends to a result made of content parts as well as to a plain string", async () => {
     const g = await setup({ budget: 1 });
     await g.spend(0.8);
-    const content: unknown[] = [{ type: "text", text: "FILE" }];
-    g.hook("tool.execute.after")({ tool: "tilth_tilth_read", id: "c5", status: "completed", result: { content } });
-    expect(content).toHaveLength(2);
-    expect(JSON.stringify(content[1])).toContain("WRAP UP");
+    const content = Object.freeze([{ type: "text", text: "FILE" }]);
+    const call = { tool: "tilth_tilth_read", id: "c5", status: "completed", result: Object.freeze({ content }) };
+    g.hook("tool.execute.after")(call);
+    expect(call.result.content).toHaveLength(2);
+    expect(JSON.stringify(call.result.content[1])).toContain("WRAP UP");
+    expect(content).toHaveLength(1);
   });
 
   it("stops nudging above the budget, where the tool refusal carries the message", async () => {

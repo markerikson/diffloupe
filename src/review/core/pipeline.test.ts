@@ -1,5 +1,5 @@
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -30,7 +30,6 @@ import {
   saidFingerprints,
   stoppedSummary,
   openCodeConfig,
-  openCodeInvocation,
   openCodeSettings,
   otherSites,
   resetOpenCodeConfig,
@@ -40,10 +39,10 @@ import {
   type Finding,
   type PriorComment,
 } from "./pipeline.ts";
-import { diagnoseMissingOutput } from "./runner.ts";
+import { diagnoseMissingOutput, reviewPermissions } from "./runner.ts";
 import { COPY_BLOCK_END, COPY_BLOCK_START, findMarker, isOwnComment, marker, readMarkers, settledIds } from "./lib/marker.ts";
 import type { DisputeRuling } from "./disputes.ts";
-import { ARTIFACTS, OUT, applyConfig } from "./config.ts";
+import { ARTIFACTS, DIR, OUT, applyConfig } from "./config.ts";
 
 // Repo-specific surface patterns that the classifySurface assertions below rely on.
 applyConfig({ surfaces: { deploy: ["^(infra|charts)/"], tooling: ["^(docs|toolchains)/"] } });
@@ -1567,208 +1566,123 @@ describe("sumOpenCodeStream", () => {
   });
 });
 
-describe("openCodeInvocation", () => {
-  const build = () =>
-    openCodeInvocation("system prompt", {
-      budget: 3,
-      model: "claude-opus-5",
-      effort: "medium",
-      tag: "unit-pwd",
-      outFile: "/tmp/unit-pwd-findings.json",
-    });
+describe("openCodeConfig", () => {
+  let tmp: string;
+  let saved: { out: string; artifacts: string };
 
-  it("passes a wall-clock deadline to the governor, which the spend cap does not bound", async () => {
-    // On a cheap model the budget never binds: one measured slice ran thirteen
-    // minutes on a dime of a three dollar cap. Time is the only stage that stops it.
-    const spec = await build();
-    expect(Number(spec.env.REVIEW_GOVERNOR_DEADLINE_MS)).toBeGreaterThan(0);
+  beforeEach(() => {
+    saved = { out: OUT, artifacts: ARTIFACTS };
+    tmp = mkdtempSync(path.join(os.tmpdir(), "diffloupe-config-"));
+    applyConfig({ out: path.join(tmp, "out"), artifacts: path.join(tmp, "artifacts") });
+    resetOpenCodeConfig();
   });
 
-  it("points $PWD at the directory it spawns in, or the review reads the wrong checkout", async () => {
-    // OpenCode resolves its project from $PWD, not from the process's working
-    // directory. Inheriting the launching shell's value sent every slice of one
-    // run to read the pipeline's own checkout while being shown the PR's diff.
-    const spec = await build();
-    expect(spec.env.PWD).toBe(spec.cwd);
+  afterEach(() => {
+    resetOpenCodeConfig();
+    applyConfig(saved);
+    rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("names the model with its provider and effort variant, since a bare name does not resolve", async () => {
-    const spec = await build();
-    expect(spec.args).toContain("anthropic/claude-opus-5#medium");
-    expect(spec.args).not.toContain("--variant");
+  it("shares a fully written configuration across concurrent and later callers", async () => {
+    const [first, second] = await Promise.all([openCodeConfig(), openCodeConfig()]);
+    expect(second).toBe(first);
+    expect(await openCodeConfig()).toBe(first);
+    expect(JSON.parse(readFileSync(path.join(first, "config", "opencode.json"), "utf8"))).toEqual(openCodeSettings());
   });
 
-  it("runs a private server, so concurrent invocations cannot share one configuration", async () => {
-    const spec = await build();
-    expect(spec.args).toContain("--standalone");
-  });
-
-  it("asks the governor for usage totals, because the stream leaves out the final step", async () => {
-    const spec = await build();
-    expect(spec.env.REVIEW_GOVERNOR_USAGE_FILE).toContain("unit-pwd");
-    expect(spec.env.REVIEW_GOVERNOR_WAIT_FOR_TOOLS).toBe("tilth_");
-    expect(spec.env.REVIEW_GOVERNOR_EXPECT_TOOLS?.split(",")).toEqual(
-      expect.arrayContaining(["tilth_tilth_search", "tilth_tilth_files"]),
+  it("installs the governor beside the isolated run config, so every native child uses it", async () => {
+    const home = await openCodeConfig();
+    expect(home.startsWith(`${OUT}${path.sep}`)).toBe(true);
+    const configDir = path.join(home, "config");
+    expect(readdirSync(configDir).sort()).toEqual(["opencode.json", "plugin"]);
+    expect(readdirSync(path.join(configDir, "plugin"))).toEqual(["governor.ts"]);
+    expect(readFileSync(path.join(configDir, "plugin", "governor.ts"), "utf8")).toBe(
+      readFileSync(path.join(DIR, "opencode", "governor.ts"), "utf8"),
     );
   });
 
-  it("reads the governor's totals in preference to the stream", async () => {
-    const spec = await build();
-    const totals = {
-      costUsd: 1.5,
-      numTurns: 4,
-      usage: {
-        input_tokens: 1,
-        output_tokens: 2,
-        reasoning_tokens: 3,
-        cache_read_input_tokens: 4,
-        cache_creation_input_tokens: 5,
-      },
-    };
-    const file = spec.env.REVIEW_GOVERNOR_USAGE_FILE;
-    mkdirSync(path.dirname(file), { recursive: true });
-    writeFileSync(file, JSON.stringify(totals));
-    try {
-      expect(spec.parse("")).toEqual(totals);
-    } finally {
-      rmSync(file, { force: true });
-    }
-    expect(spec.parse("").numTurns).toBe(0);
-  });
-
-  it("passes the budget to the governor rather than the binary, which has no such flag", async () => {
-    const spec = await build();
-    expect(spec.env.REVIEW_GOVERNOR_BUDGET_USD).toBe("3");
-    expect(spec.args).not.toContain("--max-budget-usd");
-  });
-
-  it("clears the ambient config variables, so a developer's own setup cannot leak in", async () => {
-    const spec = await build();
-    expect(spec.unsetEnv).toContain("OPENCODE_CONFIG");
-    expect(spec.unsetEnv).toContain("OPENCODE_CONFIG_CONTENT");
-  });
-
-  it("does not pass --pure, which would suppress the governor plugin with the rest", async () => {
-    const spec = await build();
-    expect(spec.args).not.toContain("--pure");
-  });
-
-  it("reuses one config directory across invocations, so the plugin install runs once", async () => {
-    const first = await build();
-    const second = await openCodeInvocation("system prompt", {
-      budget: 3,
-      model: "claude-opus-5",
-      effort: "medium",
-      tag: "unit-other-tag",
-      outFile: "/tmp/unit-other-findings.json",
-    });
-    expect(second.env.OPENCODE_CONFIG_DIR).toBe(first.env.OPENCODE_CONFIG_DIR);
-    // The per-invocation state still has to differ, or every slice would log
-    // and report over the top of the last one.
-    expect(second.env.REVIEW_GOVERNOR_OUT_FILE).not.toBe(first.env.REVIEW_GOVERNOR_OUT_FILE);
-    expect(second.env.REVIEW_GOVERNOR_LOG).not.toBe(first.env.REVIEW_GOVERNOR_LOG);
-  });
-
-  it("gives every invocation its own data directory, because concurrent runs share a session database", async () => {
-    const first = await build();
-    const second = await openCodeInvocation("system prompt", {
-      budget: 3,
-      model: "claude-opus-5",
-      effort: "medium",
-      tag: "unit-other-tag",
-      outFile: "/tmp/unit-other-findings.json",
-    });
-    expect(second.env.XDG_DATA_HOME).not.toBe(first.env.XDG_DATA_HOME);
-    expect(first.env.XDG_DATA_HOME).toContain("unit-pwd");
-    expect(second.env.XDG_DATA_HOME).toContain("unit-other-tag");
+  it("forgets the shared config even when a review fails, so the next run uses its own directory", async () => {
+    const first = await openCodeConfig();
+    const nextOut = path.join(tmp, "next-out");
+    await expect(
+      runReview({
+        repo: path.join(tmp, "missing-clone"),
+        target: { base: "a".repeat(40), head: "b".repeat(40), slug: "owner/repo-two" },
+        tag: "unit-config-reset",
+        config: { out: nextOut, artifacts: path.join(tmp, "next-artifacts") },
+      }),
+    ).rejects.toThrow();
+    const second = await openCodeConfig();
+    expect(second).not.toBe(first);
+    expect(second.startsWith(`${nextOut}${path.sep}`)).toBe(true);
+    expect(JSON.parse(readFileSync(path.join(second, "config", "opencode.json"), "utf8"))).toEqual(openCodeSettings());
   });
 });
 
-describe("openCodeConfig", () => {
-  beforeEach(() => resetOpenCodeConfig());
-  afterEach(() => resetOpenCodeConfig());
-
-  it("writes the settings once and hands every later caller the same directory", async () => {
-    const first = await openCodeConfig("system", "guidance");
-    const second = await openCodeConfig("system", "guidance");
-    expect(second).toBe(first);
+describe("openCodeSettings", () => {
+  it("registers the reviewer as a native subagent under a root that cannot call tools", () => {
+    const { review, reviewer } = openCodeSettings().agents;
+    expect(review.mode).toBe("primary");
+    expect(review.permissions).toEqual([{ action: "*", resource: "*", effect: "deny" }]);
+    expect(reviewer.mode).toBe("subagent");
+    expect(reviewer.permissions).toEqual(reviewPermissions("repo"));
   });
 
-  it("refuses a second, different prompt rather than silently serving the first", async () => {
-    await openCodeConfig("system", "guidance");
-    expect(() => openCodeConfig("different system", "guidance")).toThrow(/different prompt/);
-  });
-
-  it("keeps a named system prompt in its own directory beside the reviewer contract", async () => {
-    const reviewer = await openCodeConfig("system", "", "none");
-    const named = await openCodeConfig("intent system", "", "none", "intent");
-    expect(named).not.toBe(reviewer);
-    expect(path.basename(named)).toBe("no-tools-intent");
-  });
-
-  it("forgets the config when a run ends, so a server's next run can review another repository", async () => {
-    const saved = { out: OUT, artifacts: ARTIFACTS };
-    const tmp = mkdtempSync(path.join(os.tmpdir(), "diffloupe-config-reset-"));
-    try {
-      await openCodeConfig("system for repo one", "guidance");
-      await expect(
-        runReview({
-          repo: path.join(tmp, "missing-clone"),
-          target: { base: "a".repeat(40), head: "b".repeat(40), slug: "owner/repo-two" },
-          tag: "unit-config-reset",
-          config: { out: path.join(tmp, "out"), artifacts: path.join(tmp, "artifacts") },
-        }),
-      ).rejects.toThrow();
-      await openCodeConfig("system for repo two", "guidance");
-    } finally {
-      applyConfig(saved);
-      rmSync(tmp, { recursive: true, force: true });
+  it("leaves task instructions and model choices to the child session instead of shared globals", () => {
+    const settings = openCodeSettings();
+    expect(settings).not.toHaveProperty("model");
+    expect(settings).not.toHaveProperty("system");
+    expect(settings.agents.review).not.toHaveProperty("system");
+    // This neutral fallback is replaced by each child's immutable session prompt.
+    expect(settings.agents.reviewer.system).toBe("Follow the review task supplied by DiffLoupe.");
+    for (const agent of Object.values(settings.agents)) {
+      expect(agent).not.toHaveProperty("model");
+      expect(agent).not.toHaveProperty("temperature");
     }
   });
 
-  it("gives the reviewer tool guidance, which replacing the built-in prompt removed", async () => {
-    const settings = openCodeSettings("SYSTEM TEXT", "GUIDANCE TEXT");
-    expect(settings.agents.reviewer.system).toContain("SYSTEM TEXT");
-    expect(settings.agents.reviewer.system).toContain("GUIDANCE TEXT");
+  it("registers tilth outside Code Mode, so its tools are called by the names the guidance uses", () => {
+    const settings = openCodeSettings();
+    expect(settings.mcp.servers.tilth.command).toContain("tilth");
+    expect(settings.mcp.servers.tilth.codemode).toBe(false);
   });
 
-  it("registers tilth outside Code Mode, so its tools are called by the names the guidance uses", async () => {
-    const settings = openCodeSettings("system", "guidance");
-    expect(settings.mcp.servers.tilth?.command).toContain("tilth");
-    expect(settings.mcp.servers.tilth?.codemode).toBe(false);
+  it("turns off automatic compaction, an unbudgeted call that rewrites the context mid-review", () => {
+    expect(openCodeSettings().compaction).toEqual({ auto: false });
   });
 
-  it("gives a no-tools agent no MCP servers and no read tools", async () => {
-    const settings = openCodeSettings("system", "", "none");
-    expect(Object.keys(settings.mcp.servers)).toEqual([]);
-    const allowed = settings.agents.reviewer.permissions.filter((p) => p.effect === "allow").map((p) => p.action);
-    expect(allowed).not.toContain("read");
-    expect(allowed).toContain("edit");
+  it("disables the formatter, which would rewrite the findings file after the agent wrote it", () => {
+    expect(openCodeSettings().formatter).toBe(false);
   });
 
-  it("denies every tool it does not name, with the deny first so later allows win", async () => {
-    const { permissions } = openCodeSettings("system", "guidance").agents.reviewer;
-    expect(permissions[0]).toEqual({ action: "*", resource: "*", effect: "deny" });
-    const allowed = permissions.filter((p) => p.effect === "allow").map((p) => p.action);
-    expect(allowed).toEqual(
-      expect.arrayContaining(["read", "glob", "grep", "shell", "tilth_*", "edit", "external_directory"]),
-    );
-    for (const action of ["execute", "subagent", "question", "skill", "webfetch", "websearch"]) {
-      expect(allowed).not.toContain(action);
-    }
+  it("does not snapshot or share the checkout being reviewed", () => {
+    const settings = openCodeSettings();
+    expect(settings.snapshots).toBe(false);
+    expect(settings.share).toBe("disabled");
+  });
+});
+
+describe("reviewPermissions", () => {
+  it("starts repo sessions with a deny-all rule and grants only review and answer tools", () => {
+    expect(reviewPermissions("repo")).toEqual([
+      { action: "*", resource: "*", effect: "deny" },
+      { action: "read", resource: "*", effect: "allow" },
+      { action: "glob", resource: "*", effect: "allow" },
+      { action: "grep", resource: "*", effect: "allow" },
+      { action: "shell", resource: "*", effect: "allow" },
+      { action: "tilth_*", resource: "*", effect: "allow" },
+      { action: "edit", resource: "*", effect: "allow" },
+      { action: "external_directory", resource: "*", effect: "allow" },
+    ]);
   });
 
-  it("turns off automatic compaction, an unbudgeted call that rewrites the context mid-review", async () => {
-    expect(openCodeSettings("system", "guidance").compaction).toEqual({ auto: false });
-  });
-
-  it("sets no temperature, which this model rejects", async () => {
-    const settings = openCodeSettings("system", "guidance");
-    expect(settings.agents.reviewer).not.toHaveProperty("temperature");
-  });
-
-  it("disables the formatter, which would rewrite the findings file after the agent wrote it", async () => {
-    expect(openCodeSettings("system", "guidance").formatter).toBe(false);
+  it("overrides inherited repo access for no-tools sessions while allowing answer delivery", () => {
+    // An empty rules list would inherit the reviewer's read, shell and MCP access.
+    expect(reviewPermissions("none")).toEqual([
+      { action: "*", resource: "*", effect: "deny" },
+      { action: "edit", resource: "*", effect: "allow" },
+      { action: "external_directory", resource: "*", effect: "allow" },
+    ]);
   });
 });
 
