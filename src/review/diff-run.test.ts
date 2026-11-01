@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { writeFakeCommand } from "./__fixtures__/fake-command.ts";
 import { text } from "./core/lib/proc.ts";
 import { executeRun, parseOpenCodeVersion, prepareRun, supportedOpenCode } from "./run-driver.ts";
 import { deleteRun, listRuns } from "./run-store.ts";
@@ -33,11 +34,18 @@ describe("diff runs", () => {
     await writeFile(path.join(repo, "README.md"), "# demo\n\nNow doubles.\n");
     await git("commit", "-q", "-am", "second");
 
-    // Only git on PATH: a diff run must not need opencode, tilth or gh.
+    // Only git on PATH: a diff run must not need opencode, tilth or gh. Git for
+    // Windows' git.exe needs the DLLs beside it, so there its own directory goes
+    // on PATH instead of a link to it.
     const bin = path.join(tmp, "bin");
     await mkdir(bin);
-    await symlink(Bun.which("git")!, path.join(bin, "git"));
-    process.env.PATH = bin;
+    const gitBin = Bun.which("git")!;
+    if (process.platform === "win32") {
+      process.env.PATH = `${bin}${path.delimiter}${path.dirname(gitBin)}`;
+    } else {
+      await symlink(gitBin, path.join(bin, "git"));
+      process.env.PATH = bin;
+    }
     process.env.XDG_DATA_HOME = path.join(tmp, "data");
     process.env.XDG_CONFIG_HOME = path.join(tmp, "config");
   });
@@ -118,8 +126,7 @@ describe("diff runs", () => {
   });
 
   it("refuses to start a walkthrough with an OpenCode older than 2.x", async () => {
-    const fake = path.join(tmp, "bin", "opencode");
-    await writeFile(fake, "#!/bin/sh\necho 1.18.26+local.dba0415e16\n", { mode: 0o755 });
+    const fake = await writeFakeCommand(path.join(tmp, "bin"), "opencode", "#!/bin/sh\necho 1.18.26+local.dba0415e16\n");
     await expect(prepareRun({ kind: "diff", repo, target: "HEAD", walkthrough: true }, repo, () => {})).rejects.toThrow(
       `needs OpenCode 2.x, but the opencode on PATH (${fake}) is 1.18.26`,
     );

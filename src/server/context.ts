@@ -34,7 +34,7 @@ export async function probeOpenCode(): Promise<HealthResponse["opencode"]> {
   const bin = Bun.which("opencode");
   if (!bin) return { path: null, version: null };
   try {
-    const r = await run(bin, ["--version"], { allowFail: true });
+    const r = await run("opencode", ["--version"], { allowFail: true });
     return { path: bin, version: r.code === 0 ? r.stdout.trim() || null : null };
   } catch {
     return { path: bin, version: null };

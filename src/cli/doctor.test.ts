@@ -76,7 +76,7 @@ describe("doctor", () => {
     expect(byName(loggedOut, "gh")?.detail).toContain("gh auth login");
   });
 
-  test("OpenCode 1.x, old Bun, and Windows fail", async () => {
+  test("OpenCode 1.x and old Bun fail, Windows warns", async () => {
     const checks = await runDoctorChecks(
       deps({
         platform: "win32",
@@ -84,7 +84,7 @@ describe("doctor", () => {
         exec: async (cmd) => ({ code: 0, output: cmd === "opencode" ? "1.14.2" : (VERSIONS[cmd] ?? "") }),
       }),
     );
-    expect(byName(checks, "platform")?.detail).toContain("WSL");
+    expect(byName(checks, "platform")?.status).toBe("warn");
     expect(byName(checks, "bun")?.status).toBe("fail");
     expect(byName(checks, "opencode")?.status).toBe("fail");
   });

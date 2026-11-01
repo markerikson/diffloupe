@@ -55,7 +55,7 @@ Run `diffloupe doctor` to check all of this, along with which models a review wi
 
 **Cost.** With the built-in defaults (Claude Opus 5.5 for the reviewers and the coordinator, Claude Sonnet 5.5 for the walkthrough and group naming, Claude Haiku 5.5 for the intent draft at about $0.01), real runs so far cost about $0.10 for a one-file commit, about $1 for a small PR, and $4–5 for a large one. If your OpenCode config sets a default model, DiffLoupe uses it for every stage instead, which changes the cost. Use `--max-cost` or `maxCostUsd` to set a limit. The run page and `diffloupe runs` show what each run cost. Models whose provider reports no price show "cost not reported", and `--max-cost` cannot be enforced for them.
 
-**Platforms.** Developed and tested on Linux and WSL2. On WSL the server binds `127.0.0.1` and the Windows browser reaches it through `localhost`. macOS should work but has not been tried. Native Windows is not supported; use WSL.
+**Platforms.** Developed and tested on Linux and WSL2. On WSL the server binds `127.0.0.1` and the Windows browser reaches it through `localhost`. macOS should work but has not been tried. Native Windows works but is less tested than WSL. One known gap: cancelling a review on Windows stops the agents and their tilth servers, but a program an agent started through Git Bash can keep running until it finishes.
 
 ## Install
 

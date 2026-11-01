@@ -79,8 +79,9 @@ export async function runDoctorChecks(deps: DoctorDeps): Promise<Check[]> {
   if (deps.platform === "win32") {
     checks.push({
       name: "platform",
-      status: "fail",
-      detail: "Windows is not supported natively. Run DiffLoupe inside WSL.",
+      status: "warn",
+      detail:
+        "native Windows is best-effort (WSL is better tested). Cancelling a review can leave behind programs an agent started through Git Bash.",
     });
   }
   checks.push({

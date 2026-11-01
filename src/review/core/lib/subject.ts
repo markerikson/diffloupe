@@ -26,14 +26,16 @@ import { run, text } from "./proc.ts";
  * `git rev-parse --show-toplevel` reports a physical path with every symlinked
  * component resolved; `path.resolve` folds `.` and `..` and stops there. On
  * macOS `os.tmpdir()` sits under `/var`, which is a link to `/private/var`, so
- * the default subject directory takes that difference on every run.
+ * the default subject directory takes that difference on every run. On Windows
+ * `os.tmpdir()` can be an 8.3 short name (`MARKER~1`) while git reports the long
+ * name with forward slashes; the native realpath gives both the same spelling.
  *
  * A path that does not exist yet is not the same file as anything, and cannot be
  * resolved, so it falls back to lexical normalisation.
  */
 function realPath(p: string): string {
   try {
-    return realpathSync(p);
+    return realpathSync.native(p);
   } catch {
     return path.resolve(p);
   }

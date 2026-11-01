@@ -159,7 +159,8 @@ export function parseOpenCodeVersion(output: string): string | null {
 export async function checkOpenCodeVersion(): Promise<void> {
   const bin = Bun.which("opencode", { PATH: process.env.PATH ?? "" });
   if (!bin) return;
-  const res = await run(bin, ["--version"], { allowFail: true }).catch(() => null);
+  // By name, as the agents run it: spawning a `.cmd` shim by its full path fails on Windows.
+  const res = await run("opencode", ["--version"], { allowFail: true }).catch(() => null);
   const version = res && res.code === 0 ? parseOpenCodeVersion(res.stdout) : null;
   if (supportedOpenCode(version)) return;
   throw new TargetError(

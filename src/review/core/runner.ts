@@ -1,5 +1,5 @@
 import path from "node:path";
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { chmod, mkdir, rm } from "node:fs/promises";
 import { ensureDir, exists, readText, removeIfPresent, writeJson, writeText } from "./lib/io.ts";
@@ -36,12 +36,24 @@ export class CancelledError extends Error {
  * only the direct child would leave those running inside the worktree. The
  * flip side is that a terminal's Ctrl+C no longer reaches them, so whoever
  * handles SIGINT has to call `killAgents()`.
+ *
+ * Windows has no process groups, so agents there are not detached (a detached
+ * child gets no console, and each console tool it starts would open a window)
+ * and the whole tree is killed with `taskkill /T /F`. Console programs ignore
+ * taskkill's graceful close, so SIGTERM and SIGKILL both force-kill there.
+ * Programs an agent's shell tool runs under Git Bash can outlive it: MSYS
+ * starts them without a live Windows parent, so `/T` can't find them.
  */
 const liveAgents = new Map<ChildProcess, Promise<void>>();
 let exitHookInstalled = false;
+const isWindows = process.platform === "win32";
 
 function signalGroup(child: ChildProcess, sig: NodeJS.Signals): void {
   if (child.pid === undefined) return;
+  if (isWindows) {
+    spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+    return;
+  }
   try {
     process.kill(-child.pid, sig);
   } catch {
@@ -750,7 +762,8 @@ async function runAgent(
       cwd: spec.cwd,
       env,
       stdio: ["pipe", "pipe", "pipe"],
-      detached: true,
+      detached: !isWindows,
+      windowsHide: true,
     });
     let markClosed = () => {};
     liveAgents.set(child, new Promise<void>((r) => (markClosed = r)));
