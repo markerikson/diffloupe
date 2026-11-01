@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { pathWith, writeFakeCommand } from "./__fixtures__/fake-command.ts";
 import { run, text } from "./core/lib/proc.ts";
 import { executeRun, prepareRun } from "./run-driver.ts";
 import { deleteRun, remoteCopyDir } from "./run-store.ts";
@@ -70,8 +72,9 @@ describe("remote copies", () => {
     const bin = path.join(tmp, "bin");
     await mkdir(bin);
     await writeFile(path.join(tmp, "pr.json"), JSON.stringify(pr));
-    await writeFile(
-      path.join(bin, "gh"),
+    await writeFakeCommand(
+      bin,
+      "gh",
       [
         "#!/bin/sh",
         'case "$1 $2" in',
@@ -82,15 +85,14 @@ describe("remote copies", () => {
         "",
       ].join("\n"),
     );
-    await chmod(path.join(bin, "gh"), 0o755);
 
     // The remote copy fetches from https://github.com/acme/widget.git; point
     // that URL at the local source repository.
     const gitconfig = path.join(tmp, "gitconfig");
-    await writeFile(gitconfig, `[url "file://${source}"]\n\tinsteadOf = https://github.com/acme/widget.git\n`);
+    await writeFile(gitconfig, `[url "${pathToFileURL(source).href}"]\n\tinsteadOf = https://github.com/acme/widget.git\n`);
     process.env.GIT_CONFIG_GLOBAL = gitconfig;
     process.env.GIT_CONFIG_NOSYSTEM = "1";
-    process.env.PATH = `${bin}:${saved.PATH ?? ""}`;
+    process.env.PATH = pathWith(bin);
     process.env.XDG_DATA_HOME = path.join(tmp, "data");
     process.env.XDG_CONFIG_HOME = path.join(tmp, "config");
   });

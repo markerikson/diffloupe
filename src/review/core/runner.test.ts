@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathWith, writeFakeCommand } from "../__fixtures__/fake-command.ts";
 import { applyConfig, resetRunState, setRunState } from "./config.ts";
 import { agent, answerFromText, lastReplyText, parseAgentJson, resetOpenCodeConfig } from "./runner.ts";
 
@@ -62,9 +63,8 @@ beforeAll(async () => {
   tmp = await mkdtemp(path.join(os.tmpdir(), "diffloupe-runner-"));
   const bin = path.join(tmp, "bin");
   await mkdir(bin);
-  await writeFile(path.join(bin, "opencode"), FAKE);
-  await chmod(path.join(bin, "opencode"), 0o755);
-  process.env.PATH = `${bin}:${savedPath}`;
+  await writeFakeCommand(bin, "opencode", FAKE);
+  process.env.PATH = pathWith(bin);
   process.env.FAKE_RECORD = path.join(tmp, "record");
   await mkdir(path.join(tmp, "artifacts", "logs"), { recursive: true });
   await mkdir(path.join(tmp, "artifacts", "raw"), { recursive: true });
